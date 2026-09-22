@@ -1,0 +1,13 @@
+# Contract viewer only. Application services have not been implemented yet.
+name: aat-m1-contracts
+services:
+  api-docs:
+    image: docker.swagger.io/swaggerapi/swagger-ui:v5.33.0
+    ports:
+      - "127.0.0.1:${API_DOCS_PORT:-8090}:8080"
+    volumes:
+      - ./contracts/openapi:/usr/share/nginx/html/contracts:ro
+    environment:
+      URLS: '[{"url":"/contracts/gateway.yaml","name":"BNPB Gateway"},{"url":"/contracts/bmkg.yaml","name":"BMKG Mock"},{"url":"/contracts/pvmbg.yaml","name":"PVMBG Mock"}]'
+      URLS_PRIMARY_NAME: BNPB Gateway
+      VALIDATOR_URL: none

@@ -1,0 +1,19 @@
+extends:
+  - recommended
+apis:
+  bmkg:
+    root: contracts/openapi/bmkg.yaml
+  pvmbg:
+    root: contracts/openapi/pvmbg.yaml
+  gateway:
+    root: contracts/openapi/gateway.yaml
+rules:
+  # Local-only mock and gateway endpoints are the documented M1 targets.
+  no-server-example.com: off
+  # Private coursework: no public license has been granted.
+  info-license-strict: off
+  # SSE event schemas are referenced through x-sse-events (OpenAPI 3.1 has no
+  # native SSE event model); Redocly does not traverse that extension.
+  no-unused-components: off
+  # M1 intentionally serves HTTP on the local development network.
+  no-server-trailing-slash: error

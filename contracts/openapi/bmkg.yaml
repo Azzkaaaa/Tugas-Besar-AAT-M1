@@ -1,0 +1,301 @@
+openapi: 3.1.0
+info:
+  title: BMKG Mock Gateway API
+  version: 1.0.0
+  summary: Raw seismic events and tsunami warnings for aggregator polling.
+  description: |
+    The BMKG mock uses its own X-BMKG-Key API key, distinct from both PVMBG
+    credentials and BNPB client tokens. All timestamps use RFC 3339 with a timezone.
+    Unknown additive fields are allowed and must not break the aggregator parser.
+
+    Data reads incur a fixed configurable delay: 100 ms by default, constrained
+    to 50–150 ms (BMKG_RESPONSE_DELAY_MS). Health checks bypass artificial latency.
+    Collections contain every matching item in a consistent read snapshot; there
+    is no pagination or silent limit in this milestone mock. Inclusive since
+    filtering requires consumers to deduplicate by the source record identifier.
+    No since parameter means the complete retained collection.
+  license:
+    name: UNLICENSED
+servers:
+  - url: http://localhost:8081
+    description: Local BMKG mock; internal container address may differ.
+tags:
+  - name: Seismic
+    description: Raw earthquake records.
+  - name: Tsunami
+    description: Raw tsunami warnings associated with seismic events.
+  - name: Health
+    description: Mock process health.
+security:
+  - BmkgApiKey: []
+paths:
+  /seismic-events:
+    get:
+      tags: [Seismic]
+      operationId: listSeismicEvents
+      summary: Read incremental seismic events
+      description: |
+        Select records with occurred_at >= since, ordered by occurred_at ascending
+        then event_id ascending. Every matching record is returned without a cap.
+      parameters:
+        - $ref: '#/components/parameters/CorrelationId'
+        - name: since
+          in: query
+          description: Inclusive lower bound on occurred_at; RFC 3339 with timezone.
+          schema:
+            type: string
+            format: date-time
+      responses:
+        '200':
+          description: Matching raw seismic events.
+          headers:
+            X-Correlation-ID:
+              $ref: '#/components/headers/CorrelationId'
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/SeismicEvent'
+              example:
+                items:
+                  - event_id: bmkg-eq-001
+                    magnitude: 6.8
+                    depth_km: 20.0
+                    epicenter_lat: -6.2
+                    epicenter_lon: 129.4
+                    region_name: Laut Banda
+                    occurred_at: '2026-09-22T06:00:00Z'
+                    potential_tsunami: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+  /tsunami-warnings:
+    get:
+      tags: [Tsunami]
+      operationId: listTsunamiWarnings
+      summary: Read incremental tsunami warnings
+      description: |
+        Select warnings whose internal updated_at >= since, ordered by that
+        timestamp ascending then warning_id ascending. updated_at is persistence
+        metadata and is deliberately absent from the raw PDF payload schema.
+        estimated_arrival is the predicted arrival of a tsunami, never a polling
+        watermark. Creation and every material warning update advance updated_at.
+
+        Because the raw payload omits updated_at, the aggregator retains each
+        successful poll's request-start timestamp as its next since, with a
+        configurable overlap to allow for clock skew. Advance the watermark only
+        after durable ingestion; deduplicate repeated records by warning_id and
+        content/version. Mocks and aggregator must share synchronized clocks.
+        Every matching warning is returned without a cap.
+      parameters:
+        - $ref: '#/components/parameters/CorrelationId'
+        - name: since
+          in: query
+          description: Inclusive lower bound on internal warning updated_at, RFC 3339.
+          schema:
+            type: string
+            format: date-time
+      responses:
+        '200':
+          description: Matching raw tsunami warnings.
+          headers:
+            X-Correlation-ID:
+              $ref: '#/components/headers/CorrelationId'
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/TsunamiWarning'
+              example:
+                items:
+                  - warning_id: bmkg-ts-001
+                    related_event_id: bmkg-eq-001
+                    threat_level: Siaga
+                    affected_zones: [Pesisir Banda]
+                    estimated_arrival: '2026-09-22T06:30:00Z'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+  /health:
+    get:
+      tags: [Health]
+      operationId: getBmkgHealth
+      summary: Check BMKG mock health
+      description: Public process health endpoint without artificial delay.
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/CorrelationId'
+      responses:
+        '200':
+          description: Mock process is healthy.
+          headers:
+            X-Correlation-ID:
+              $ref: '#/components/headers/CorrelationId'
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [status]
+                properties:
+                  status:
+                    type: string
+                    const: ok
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+components:
+  securitySchemes:
+    BmkgApiKey:
+      type: apiKey
+      in: header
+      name: X-BMKG-Key
+      description: BMKG-only opaque API key provisioned outside source control.
+  parameters:
+    CorrelationId:
+      name: X-Correlation-ID
+      in: header
+      description: Opaque correlation ID; generated if absent and echoed in responses.
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 128
+        pattern: '^[A-Za-z0-9._:-]+$'
+  headers:
+    CorrelationId:
+      description: Propagated or generated request correlation ID.
+      schema:
+        type: string
+    RetryAfter:
+      description: Suggested retry delay in whole seconds.
+      schema:
+        type: integer
+        minimum: 1
+  responses:
+    BadRequest:
+      description: Invalid query parameter or correlation header.
+      headers:
+        X-Correlation-ID:
+          $ref: '#/components/headers/CorrelationId'
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+    Unauthorized:
+      description: Missing or invalid X-BMKG-Key.
+      headers:
+        X-Correlation-ID:
+          $ref: '#/components/headers/CorrelationId'
+        WWW-Authenticate:
+          description: BMKG API-key authentication challenge.
+          schema:
+            type: string
+            example: ApiKey realm="bmkg"
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+    Unavailable:
+      description: Mock or backing storage is unavailable; retry with backoff.
+      headers:
+        X-Correlation-ID:
+          $ref: '#/components/headers/CorrelationId'
+        Retry-After:
+          $ref: '#/components/headers/RetryAfter'
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+  schemas:
+    SeismicEvent:
+      type: object
+      additionalProperties: true
+      required: [event_id, magnitude, depth_km, epicenter_lat, epicenter_lon, region_name, occurred_at, potential_tsunami]
+      properties:
+        event_id:
+          type: string
+        magnitude:
+          type: number
+          format: float
+        depth_km:
+          type: number
+          format: float
+          minimum: 0
+        epicenter_lat:
+          type: number
+          format: float
+          minimum: -90
+          maximum: 90
+        epicenter_lon:
+          type: number
+          format: float
+          minimum: -180
+          maximum: 180
+        region_name:
+          type: string
+        occurred_at:
+          type: string
+          format: date-time
+        potential_tsunami:
+          type: boolean
+    TsunamiWarning:
+      type: object
+      additionalProperties: true
+      required: [warning_id, related_event_id, threat_level, affected_zones, estimated_arrival]
+      properties:
+        warning_id:
+          type: string
+        related_event_id:
+          type: string
+        threat_level:
+          type: string
+          enum: [Waspada, Siaga, Awas]
+        affected_zones:
+          type: array
+          items:
+            type: string
+        estimated_arrival:
+          type: string
+          format: date-time
+          description: Predicted tsunami arrival; not a last-update timestamp.
+    Problem:
+      type: object
+      additionalProperties: false
+      required: [type, title, status, detail, instance, correlation_id]
+      description: RFC 9457 error without raw payloads, credentials, or stack traces.
+      properties:
+        type:
+          type: string
+          format: uri-reference
+        title:
+          type: string
+        status:
+          type: integer
+          minimum: 400
+          maximum: 599
+        detail:
+          type: string
+        instance:
+          type: string
+          format: uri-reference
+        correlation_id:
+          type: string

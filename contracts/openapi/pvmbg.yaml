@@ -1,0 +1,339 @@
+openapi: 3.1.0
+info:
+  title: PVMBG Mock Gateway API
+  version: 1.0.0
+  summary: Raw volcanic reports and controlled runtime fault scenarios.
+  description: |
+    PVMBG uses an opaque bearer token that is unique to this upstream service,
+    distinct from BMKG's API key and the BNPB client's JWT. Protect both data and
+    admin endpoints with this token. Provision it outside source control. The
+    local mock admin API is for test orchestration, not client-facing exposure.
+
+    Data reads wait for a uniformly sampled delay between 500 and 3000 ms by
+    default, configurable with PVMBG_RESPONSE_DELAY_MIN_MS and
+    PVMBG_RESPONSE_DELAY_MAX_MS.
+    Minimum must be nonnegative and no greater than maximum. Admin and health
+    calls bypass artificial latency and admin calls remain available during an
+    injected outage so the same process can be restored without restarting.
+
+    All timestamps are RFC 3339 with timezone. Unknown additive fields are
+    accepted by contract and retained by the aggregator in full-view attributes.
+    The initial active data schema is v1. Runtime switching to v2 does not change
+    any existing field and does not require redeployment of BNPB services.
+  license:
+    name: UNLICENSED
+servers:
+  - url: http://localhost:8082
+    description: Local PVMBG mock; internal container address may differ.
+tags:
+  - name: Volcanic
+    description: Raw volcano status reports.
+  - name: Admin
+    description: Authenticated local test controls.
+  - name: Health
+    description: Process availability including injected outage state.
+security:
+  - PvmbgBearer: []
+paths:
+  /volcanic-reports:
+    get:
+      tags: [Volcanic]
+      operationId: listVolcanicReports
+      summary: Read incremental volcanic reports
+      description: |
+        Select records with reported_at >= since, ordered by reported_at ascending
+        then report_id ascending. An omitted since returns all retained reports.
+        Every matching record is returned in an items collection without a silent
+        cap or pagination. Inclusive filtering requires deduplication by report_id.
+
+        In v1 every response omits confidence_level. In v2 newly generated reports
+        include confidence_level in [0,1]; historical records may omit it. Switching
+        v2 to v1 hides confidence_level without deleting its stored value. Switching
+        back to v2 exposes stored values again. Optionality allows historical and
+        new records to coexist. Consumers must never require confidence_level.
+
+        Injected outage returns 503 after valid authentication, with Retry-After;
+        it does not stop the server or its admin recovery endpoint.
+      parameters:
+        - $ref: '#/components/parameters/CorrelationId'
+        - name: since
+          in: query
+          description: Inclusive lower bound on reported_at; RFC 3339 with timezone.
+          schema:
+            type: string
+            format: date-time
+      responses:
+        '200':
+          description: Matching raw volcanic reports at the active schema version.
+          headers:
+            X-Correlation-ID:
+              $ref: '#/components/headers/CorrelationId'
+            X-PVMBG-Schema-Version:
+              description: Active raw payload schema; independent of OpenAPI info.version.
+              schema:
+                type: integer
+                enum: [1, 2]
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/VolcanicReport'
+              examples:
+                v1:
+                  summary: Initial report with no confidence_level field.
+                  value:
+                    items:
+                      - report_id: pvmbg-report-001
+                        volcano_id: merapi
+                        alert_level: Siaga
+                        eruption_count_24h: 3
+                        ash_column_height_m: 1200.0
+                        reported_at: '2026-09-22T06:00:00Z'
+                v2:
+                  summary: Additive runtime field introduced after schema switch.
+                  value:
+                    items:
+                      - report_id: pvmbg-report-002
+                        volcano_id: merapi
+                        alert_level: Siaga
+                        eruption_count_24h: 4
+                        ash_column_height_m: 1400.0
+                        reported_at: '2026-09-22T06:05:00Z'
+                        confidence_level: 0.92
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+  /admin/schema-version:
+    post:
+      tags: [Admin]
+      operationId: setPvmbgSchemaVersion
+      summary: Switch the active raw report schema at runtime
+      description: |
+        Idempotently set v1 or v2 without restarting either PVMBG or BNPB. The
+        value survives until changed or the mock process restarts (initial v1).
+        This endpoint remains callable during injected outage and applies the
+        same PVMBG bearer authentication as data endpoints.
+      parameters:
+        - $ref: '#/components/parameters/CorrelationId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SchemaVersionState'
+      responses:
+        '200':
+          description: Active schema version after applying the command.
+          headers:
+            X-Correlation-ID:
+              $ref: '#/components/headers/CorrelationId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SchemaVersionState'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /admin/outage:
+    post:
+      tags: [Admin]
+      operationId: setPvmbgOutage
+      summary: Enable or disable the injected PVMBG outage
+      description: |
+        Idempotently set enabled=true to return 503 on volcanic report reads and
+        health checks, or enabled=false to restore them. Data and schema state
+        are retained during the outage. Initial state after process start is
+        disabled. Admin routes bypass the injected fault and latency, allowing
+        recovery through this endpoint with the same bearer token.
+      parameters:
+        - $ref: '#/components/parameters/CorrelationId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OutageState'
+      responses:
+        '200':
+          description: Active outage state after applying the command.
+          headers:
+            X-Correlation-ID:
+              $ref: '#/components/headers/CorrelationId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OutageState'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /health:
+    get:
+      tags: [Health]
+      operationId: getPvmbgHealth
+      summary: Check PVMBG mock availability
+      description: |
+        Public endpoint with no artificial latency. Returns 503 when injected
+        outage is enabled, although authenticated admin controls remain callable.
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/CorrelationId'
+      responses:
+        '200':
+          description: Mock is available and injected outage is disabled.
+          headers:
+            X-Correlation-ID:
+              $ref: '#/components/headers/CorrelationId'
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [status]
+                properties:
+                  status:
+                    type: string
+                    const: ok
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+components:
+  securitySchemes:
+    PvmbgBearer:
+      type: http
+      scheme: bearer
+      bearerFormat: opaque
+      description: Unique PVMBG mock token; never accept BNPB client access tokens.
+  parameters:
+    CorrelationId:
+      name: X-Correlation-ID
+      in: header
+      description: Opaque correlation ID; generated if absent and echoed in responses.
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 128
+        pattern: '^[A-Za-z0-9._:-]+$'
+  headers:
+    CorrelationId:
+      description: Propagated or generated request correlation ID.
+      schema:
+        type: string
+    RetryAfter:
+      description: Suggested retry delay in whole seconds.
+      schema:
+        type: integer
+        minimum: 1
+  responses:
+    BadRequest:
+      description: Invalid query parameter, body, or correlation header.
+      headers:
+        X-Correlation-ID:
+          $ref: '#/components/headers/CorrelationId'
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+    Unauthorized:
+      description: Missing or invalid PVMBG bearer token.
+      headers:
+        X-Correlation-ID:
+          $ref: '#/components/headers/CorrelationId'
+        WWW-Authenticate:
+          description: PVMBG bearer authentication challenge.
+          schema:
+            type: string
+            example: Bearer realm="pvmbg"
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+    Unavailable:
+      description: Injected outage or unavailable storage; admin recovery stays callable.
+      headers:
+        X-Correlation-ID:
+          $ref: '#/components/headers/CorrelationId'
+        Retry-After:
+          $ref: '#/components/headers/RetryAfter'
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+          example:
+            type: urn:pvmbg:problem:source-unavailable
+            title: Source unavailable
+            status: 503
+            detail: PVMBG mock is temporarily unavailable.
+            instance: /volcanic-reports
+            correlation_id: req-example-001
+  schemas:
+    VolcanicReport:
+      type: object
+      additionalProperties: true
+      required: [report_id, volcano_id, alert_level, eruption_count_24h, ash_column_height_m, reported_at]
+      properties:
+        report_id:
+          type: string
+        volcano_id:
+          type: string
+        alert_level:
+          type: string
+          enum: [Normal, Waspada, Siaga, Awas]
+        eruption_count_24h:
+          type: integer
+          minimum: 0
+        ash_column_height_m:
+          type: number
+          format: float
+          minimum: 0
+        reported_at:
+          type: string
+          format: date-time
+    SchemaVersionState:
+      type: object
+      additionalProperties: false
+      required: [version]
+      properties:
+        version:
+          type: integer
+          enum: [1, 2]
+    OutageState:
+      type: object
+      additionalProperties: false
+      required: [enabled]
+      properties:
+        enabled:
+          type: boolean
+    Problem:
+      type: object
+      additionalProperties: false
+      required: [type, title, status, detail, instance, correlation_id]
+      description: RFC 9457 error without raw payloads, credentials, or stack traces.
+      properties:
+        type:
+          type: string
+          format: uri-reference
+        title:
+          type: string
+        status:
+          type: integer
+          minimum: 400
+          maximum: 599
+        detail:
+          type: string
+        instance:
+          type: string
+          format: uri-reference
+        correlation_id:
+          type: string

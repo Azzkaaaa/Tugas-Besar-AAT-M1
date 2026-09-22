@@ -1,0 +1,56 @@
+syntax = "proto3";
+
+package bnpb.aggregator.v1;
+
+import "bnpb/common/v1/common.proto";
+
+// Internal read API over Aggregator's durable canonical store. Ingestion occurs
+// through polling the mock REST sources; public clients cannot mutate hazards.
+// Every method requires service identity and the original actor's bearer token.
+service AggregatorService {
+  // Requires hazards:read:summary; FULL additionally requires hazards:read:full.
+  rpc ListHazards(ListHazardsRequest) returns (ListHazardsResponse);
+  // Same view scope requirements as ListHazards.
+  // NOT_FOUND for an unknown hazard when relevant source data is usable;
+  // UNAVAILABLE when no relevant source data is usable.
+  rpc GetHazard(GetHazardRequest) returns (GetHazardResponse);
+  // Requires hazards:read:summary. Returns both configured sources even if
+  // either is unavailable; dependency failure of this service is UNAVAILABLE.
+  rpc GetSourceStatuses(GetSourceStatusesRequest) returns (GetSourceStatusesResponse);
+}
+
+message ListHazardsRequest {
+  bnpb.common.v1.HazardFilter filter = 1;
+  bnpb.common.v1.View view = 2;
+  bnpb.common.v1.PageRequest page = 3;
+}
+
+message ListHazardsResponse {
+  // Frozen snapshot ordered by occurred_at descending, hazard_id ascending.
+  repeated bnpb.common.v1.HazardProjection items = 1;
+  string next_page_token = 2;
+  // All sources relevant to the filter, including sources with no matches.
+  repeated bnpb.common.v1.SourceFreshness freshness = 3;
+  // True iff at least one relevant source is STALE or UNAVAILABLE. Return cached
+  // records when usable; if every relevant source is UNAVAILABLE, fail the RPC
+  // with UNAVAILABLE rather than returning a misleading empty success.
+  bool partial = 4;
+}
+
+message GetHazardRequest {
+  string hazard_id = 1;
+  bnpb.common.v1.View view = 2;
+}
+
+message GetHazardResponse {
+  bnpb.common.v1.HazardProjection item = 1;
+  // Exactly one entry: the returned hazard's source.
+  repeated bnpb.common.v1.SourceFreshness freshness = 2;
+  bool partial = 3;
+}
+
+message GetSourceStatusesRequest {}
+
+message GetSourceStatusesResponse {
+  repeated bnpb.common.v1.SourceFreshness freshness = 1;
+}

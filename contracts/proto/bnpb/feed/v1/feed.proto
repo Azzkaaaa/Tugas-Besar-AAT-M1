@@ -1,0 +1,62 @@
+syntax = "proto3";
+
+package bnpb.feed.v1;
+
+import "bnpb/common/v1/common.proto";
+import "google/protobuf/timestamp.proto";
+
+// Gateway translates these server streams into SSE. Services consume dedicated
+// RabbitMQ queues and keep bounded replay buffers; they do not poll the sources
+// or create another canonical hazard store. Every subscription requires service
+// identity plus the original actor token. Revalidate active sessions and stop
+// with UNAUTHENTICATED at token expiry/revocation, including during idle periods.
+service SeismicFeedService {
+  rpc SubscribeSeismic(SubscribeSeismicRequest) returns (stream SubscribeSeismicResponse);
+}
+
+service VolcanicFeedService {
+  rpc SubscribeVolcanic(SubscribeVolcanicRequest) returns (stream SubscribeVolcanicResponse);
+}
+
+message SubscribeSeismicRequest {
+  // Only BMKG / SEISMIC records are emitted. SUMMARY is the default.
+  bnpb.common.v1.View view = 1;
+  // Opaque Last-Event-ID cursor. Absent/empty starts from new live events.
+  // Replay is exclusive of this event and joins the live stream without gaps.
+  // Bound to authenticated client, feed and resolved view. A mismatched or
+  // invalid cursor is INVALID_ARGUMENT; an expired/lost replay cursor:
+  // OUT_OF_RANGE. Never silently skip missing events.
+  optional string resume_after = 2;
+}
+
+message SubscribeSeismicResponse {
+  FeedEvent event = 1;
+}
+
+message SubscribeVolcanicRequest {
+  // Only PVMBG / VOLCANIC records are emitted. SUMMARY is the default.
+  bnpb.common.v1.View view = 1;
+  // Same replay semantics as SubscribeSeismicRequest.resume_after, scoped to
+  // this stream. A cursor from the seismic stream is INVALID_ARGUMENT.
+  optional string resume_after = 2;
+}
+
+message SubscribeVolcanicResponse {
+  FeedEvent event = 1;
+}
+
+message FeedEvent {
+  // Stable broker publication ID. Redelivery preserves event_id. Clients
+  // deduplicate at-least-once delivery by this value; a canonical update has a
+  // new event_id even when its hazard_id remains unchanged.
+  string event_id = 1;
+  // Positive and strictly increasing within a stream epoch. Persist replay state
+  // across restart or change the epoch and reject old cursors with OUT_OF_RANGE.
+  // Gateway encodes uint64 as a decimal string to avoid JavaScript precision loss.
+  uint64 sequence = 2;
+  bnpb.common.v1.HazardProjection hazard = 3;
+  google.protobuf.Timestamp published_at = 4;
+  // Opaque cursor used in the SSE id line and resume_after; bound to the client,
+  // feed, resolved view and stream epoch. Not part of the SSE data JSON object.
+  string resume_cursor = 5;
+}

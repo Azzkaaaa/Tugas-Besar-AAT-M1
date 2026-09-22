@@ -1,0 +1,952 @@
+openapi: 3.1.0
+info:
+  title: BNPB Client Gateway API
+  version: 1.0.0
+  summary: REST and SSE boundary for disaster information clients.
+  description: |
+    Contract-first milestone scaffold. This API is exposed only through the
+    client-facing gateway. Internal services use the accompanying gRPC contracts.
+
+    Three independently provisioned client classes are MEDIA, FIELD_TEAM, and
+    BNPB_INTERNAL. Credentials, grants, quotas, and sessions are isolated per
+    client. MEDIA receives hazards:read:summary and notifications:read;
+    FIELD_TEAM and BNPB_INTERNAL receive hazards:read:summary,
+    hazards:read:full, and notifications:read by default. A deployment may narrow
+    grants. A full projection requires both hazards:read:summary and
+    hazards:read:full. Requesting it
+    without the grant returns 403, never a silently downgraded projection.
+
+    Summary projections contain exactly the seven HazardSummary fields. Raw
+    upstream data, coordinates, source reference identifiers, and attributes must
+    not appear in summary JSON, summary SSE, notification messages, or errors.
+    Never include credentials or token values in logs, traces, or errors.
+
+    X-Correlation-ID is propagated across REST, gRPC metadata, and event handling.
+    The gateway creates an opaque correlation ID when absent and echoes it in
+    responses. All errors use application/problem+json, including errors before
+    an SSE stream opens. An established SSE stream reports replay reset through
+    reset_required and then closes; it cannot change its HTTP status.
+  license:
+    name: UNLICENSED
+servers:
+  - url: http://localhost:8080
+    description: Local gateway
+tags:
+  - name: Auth
+    description: Client credentials and rotating sessions.
+  - name: Hazards
+    description: Canonical cached hazard queries.
+  - name: Feeds
+    description: Server-sent events for canonical hazard updates.
+  - name: Notifications
+    description: Persisted danger notifications.
+  - name: Health
+    description: Process health.
+security:
+  - BearerAuth: []
+paths:
+  /api/v1/auth/login:
+    post:
+      tags: [Auth]
+      operationId: login
+      summary: Authenticate a provisioned client
+      description: Access-token TTL defaults to 60 seconds and is configurable.
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/CorrelationId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+      responses:
+        '200':
+          $ref: '#/components/responses/TokenResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+  /api/v1/auth/refresh:
+    post:
+      tags: [Auth]
+      operationId: refreshSession
+      summary: Rotate the refresh token and access token
+      description: |
+        Refresh tokens are single-use. Successful rotation invalidates the old
+        refresh token and all previous access tokens of this session immediately,
+        even if their JWT expiry has not elapsed. A replayed, expired, or revoked
+        refresh token returns 401. Other sessions of the client are unaffected.
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/CorrelationId'
+      requestBody:
+        $ref: '#/components/requestBodies/RefreshToken'
+      responses:
+        '200':
+          $ref: '#/components/responses/TokenResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+  /api/v1/auth/logout:
+    post:
+      tags: [Auth]
+      operationId: logoutSession
+      summary: Revoke a session immediately
+      description: |
+        The supplied refresh token identifies the session. Revoke its refresh
+        token and every access token immediately. No bearer access token is
+        required, so a client can log out after its access token expires.
+        A valid already-revoked session token produces 204; unknown or expired
+        refresh tokens produce 401. Other client sessions are unaffected.
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/CorrelationId'
+      requestBody:
+        $ref: '#/components/requestBodies/RefreshToken'
+      responses:
+        '204':
+          description: Session revoked.
+          headers:
+            X-Correlation-ID:
+              $ref: '#/components/headers/CorrelationId'
+            Cache-Control:
+              $ref: '#/components/headers/NoStore'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+  /api/v1/hazards:
+    get:
+      tags: [Hazards]
+      operationId: listHazards
+      summary: Query canonical hazards and source freshness
+      description: |
+        Requires hazards:read:summary for summary; full additionally requires
+        hazards:read:full.
+        since is inclusive and until exclusive, both over occurred_at.
+        Results are ordered by occurred_at descending then hazard_id ascending.
+        With neither source nor hazard_type, both sources are selected.
+        SEISMIC implies BMKG and VOLCANIC implies PVMBG even if source is absent.
+        Conflicting source and hazard_type return 400. freshness reports only
+        selected sources, including a source with zero matching records.
+
+        A first request freezes a snapshot of records. Freshness is measured at
+        response time on every page. Subsequent
+        page_token values are opaque and bound to that snapshot, client, filters,
+        view, and page_size. Repeat original query parameters on every page.
+        An invalid/mismatched token returns 400; an expired snapshot returns 409.
+        An empty final page is represented by items: [] with no next_page_token.
+
+        Cached data is returned with 200 and STALE when its source is degraded.
+        partial is true if any requested source is STALE or UNAVAILABLE. If some
+        requested sources have usable cached data, return 200 with available
+        records and explicit freshness for all requested sources. If none has
+        usable data, return 503; never turn an upstream outage into a 500.
+      x-required-scopes:
+        summary: [hazards:read:summary]
+        full: [hazards:read:summary, hazards:read:full]
+      parameters:
+        - $ref: '#/components/parameters/CorrelationId'
+        - $ref: '#/components/parameters/Source'
+        - $ref: '#/components/parameters/HazardType'
+        - $ref: '#/components/parameters/Severity'
+        - $ref: '#/components/parameters/Since'
+        - $ref: '#/components/parameters/Until'
+        - $ref: '#/components/parameters/View'
+        - $ref: '#/components/parameters/PageSize'
+        - $ref: '#/components/parameters/PageToken'
+      responses:
+        '200':
+          description: Snapshot page; stale cached results remain usable.
+          headers:
+            X-Correlation-ID:
+              $ref: '#/components/headers/CorrelationId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HazardPage'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/SnapshotExpired'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+  /api/v1/hazards/{hazard_id}:
+    get:
+      tags: [Hazards]
+      operationId: getHazard
+      summary: Read one canonical hazard
+      description: |
+        Uses the same projection and freshness rules as listHazards. freshness
+        contains only this hazard's source. Return 404 only when the canonical
+        store is usable and the identifier is absent; dependency failure is 503.
+      x-required-scopes:
+        summary: [hazards:read:summary]
+        full: [hazards:read:summary, hazards:read:full]
+      parameters:
+        - $ref: '#/components/parameters/CorrelationId'
+        - name: hazard_id
+          in: path
+          required: true
+          description: Opaque canonical hazard identifier.
+          schema:
+            type: string
+            minLength: 1
+        - $ref: '#/components/parameters/View'
+      responses:
+        '200':
+          description: Requested projection and source freshness.
+          headers:
+            X-Correlation-ID:
+              $ref: '#/components/headers/CorrelationId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HazardResult'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+  /api/v1/feeds/seismic:
+    get:
+      tags: [Feeds]
+      operationId: streamSeismicHazards
+      summary: Stream seismic hazard changes over SSE
+      description: |
+        Delivers only SEISMIC hazards. The same scope and projection checks as
+        listHazards apply. Each hazard.upsert event has an id
+        line containing an opaque resumable cursor and a JSON data line matching
+        HazardFeedEvent. Heartbeats are SSE comments. Sequence is monotonic within
+        this feed and encoded as a decimal string to preserve uint64 precision.
+        Consumers deduplicate by event_id; reconnects may replay events.
+
+        Supply Last-Event-ID to replay strictly after that cursor. A cursor from
+        a different client, feed, or view returns 400 before opening the stream.
+        If retained history is insufficient, emit reset_required and close; the
+        consumer reconnects without a cursor and obtains a fresh hazard snapshot.
+        A connection without a cursor begins at the live tail. Snapshot and feed
+        do not share an atomic checkpoint. During recovery, open and buffer the
+        live stream before fetching a snapshot, then treat buffered hazard IDs
+        as invalidations and refetch their canonical records. Do not overwrite a
+        snapshot with potentially older buffered payloads. event_id deduplicates
+        event delivery; it does not order a snapshot against feed events.
+        Revalidate authorization during delivery. Expiry, rotation, or revocation
+        closes the stream; reconnect using a valid current access token.
+      x-required-scopes:
+        summary: [hazards:read:summary]
+        full: [hazards:read:summary, hazards:read:full]
+      parameters:
+        - $ref: '#/components/parameters/CorrelationId'
+        - $ref: '#/components/parameters/View'
+        - $ref: '#/components/parameters/LastEventId'
+      responses:
+        '200':
+          $ref: '#/components/responses/EventStream'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+  /api/v1/feeds/volcanic:
+    get:
+      tags: [Feeds]
+      operationId: streamVolcanicHazards
+      summary: Stream volcanic hazard changes over SSE
+      description: |
+        Delivers only VOLCANIC hazards. Replay, framing, scope checks, token
+        revalidation, reset recovery, and sequence semantics are identical to
+        streamSeismicHazards. Feed cursors cannot be exchanged between routes.
+      x-required-scopes:
+        summary: [hazards:read:summary]
+        full: [hazards:read:summary, hazards:read:full]
+      parameters:
+        - $ref: '#/components/parameters/CorrelationId'
+        - $ref: '#/components/parameters/View'
+        - $ref: '#/components/parameters/LastEventId'
+      responses:
+        '200':
+          $ref: '#/components/responses/EventStream'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+  /api/v1/notifications:
+    get:
+      tags: [Notifications]
+      operationId: listNotifications
+      summary: Read persisted danger notifications
+      description: |
+        Requires notifications:read plus the hazard scope for the selected view.
+        Only SIAGA and AWAS hazards trigger notifications. Message text is safe
+        for summary readers even when the full projection is requested.
+        since and until filter embedded hazard.occurred_at (inclusive/exclusive).
+        Source, hazard type, and severity filter the embedded hazard as well.
+        Effective source selection and conflicts follow listHazards. Ordering is
+        created_at descending then notification_id ascending. Pagination freezes
+        a snapshot and binds the cursor as in listHazards. A notification embeds
+        the hazard state at notification creation, not a later mutable value.
+        freshness describes only selected sources at response time and partial
+        has listHazards semantics.
+      x-required-scopes:
+        summary: [notifications:read, hazards:read:summary]
+        full: [notifications:read, hazards:read:summary, hazards:read:full]
+      parameters:
+        - $ref: '#/components/parameters/CorrelationId'
+        - $ref: '#/components/parameters/Source'
+        - $ref: '#/components/parameters/HazardType'
+        - $ref: '#/components/parameters/Severity'
+        - $ref: '#/components/parameters/Since'
+        - $ref: '#/components/parameters/Until'
+        - $ref: '#/components/parameters/View'
+        - $ref: '#/components/parameters/PageSize'
+        - $ref: '#/components/parameters/PageToken'
+      responses:
+        '200':
+          description: Snapshot page of danger notifications.
+          headers:
+            X-Correlation-ID:
+              $ref: '#/components/headers/CorrelationId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NotificationPage'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/SnapshotExpired'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+  /api/v1/notifications/{notification_id}:
+    get:
+      tags: [Notifications]
+      operationId: getNotification
+      summary: Read one persisted danger notification
+      description: |
+        Requires notifications:read and hazards:read:summary; full additionally
+        requires hazards:read:full. The embedded hazard is the state captured at
+        notification creation, projected to the authorized view. freshness has
+        exactly one entry for the embedded hazard's source and is measured at
+        response time. A stale usable source returns 200 with partial=true.
+        Return 404 only when the relevant store/source is usable and the record
+        is absent; required dependency failure or unusable source data returns
+        503. Notification message text is always summary-safe.
+      x-required-scopes:
+        summary: [notifications:read, hazards:read:summary]
+        full: [notifications:read, hazards:read:summary, hazards:read:full]
+      parameters:
+        - $ref: '#/components/parameters/CorrelationId'
+        - name: notification_id
+          in: path
+          required: true
+          description: Opaque persisted notification identifier.
+          schema:
+            type: string
+            minLength: 1
+        - $ref: '#/components/parameters/View'
+      responses:
+        '200':
+          description: Notification projection with current source freshness.
+          headers:
+            X-Correlation-ID:
+              $ref: '#/components/headers/CorrelationId'
+            Cache-Control:
+              $ref: '#/components/headers/NoStore'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NotificationResult'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+  /health:
+    get:
+      tags: [Health]
+      operationId: getGatewayHealth
+      summary: Check gateway process health
+      description: Liveness only; upstream degradation is represented in freshness.
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/CorrelationId'
+      responses:
+        '200':
+          description: Gateway process is alive.
+          headers:
+            X-Correlation-ID:
+              $ref: '#/components/headers/CorrelationId'
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [status]
+                properties:
+                  status:
+                    type: string
+                    const: ok
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: |
+        Short-lived access token with client, scope, expiry, and session claims.
+        Validate current session state to enforce immediate refresh/logout revoke.
+  parameters:
+    CorrelationId:
+      name: X-Correlation-ID
+      in: header
+      description: Opaque request correlation ID; generated if absent.
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 128
+        pattern: '^[A-Za-z0-9._:-]+$'
+    Source:
+      name: source
+      in: query
+      description: Select one upstream source; hazard_type can narrow an omitted source.
+      schema:
+        $ref: '#/components/schemas/Source'
+    HazardType:
+      name: hazard_type
+      in: query
+      description: Filter by canonical hazard type.
+      schema:
+        $ref: '#/components/schemas/HazardType'
+    Severity:
+      name: severity
+      in: query
+      description: Filter by canonical severity.
+      schema:
+        $ref: '#/components/schemas/Severity'
+    Since:
+      name: since
+      in: query
+      description: Inclusive lower bound on occurred_at, in RFC 3339 format.
+      schema:
+        type: string
+        format: date-time
+    Until:
+      name: until
+      in: query
+      description: Exclusive upper bound on occurred_at; must exceed since.
+      schema:
+        type: string
+        format: date-time
+    View:
+      name: view
+      in: query
+      description: Full additionally requires hazards:read:full; every view requires summary scope.
+      schema:
+        type: string
+        enum: [summary, full]
+        default: summary
+    PageSize:
+      name: page_size
+      in: query
+      description: Maximum number of items in a snapshot page.
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 20
+    PageToken:
+      name: page_token
+      in: query
+      description: Opaque next-page cursor; omit for a new frozen snapshot.
+      schema:
+        type: string
+        minLength: 1
+    LastEventId:
+      name: Last-Event-ID
+      in: header
+      description: Opaque SSE replay cursor from the previous event's id line.
+      schema:
+        type: string
+        minLength: 1
+  headers:
+    CorrelationId:
+      description: Request correlation ID propagated by the gateway.
+      schema:
+        type: string
+    NoStore:
+      description: Prevent caching of sensitive responses.
+      schema:
+        type: string
+        const: no-store
+    RetryAfter:
+      description: Suggested retry delay in whole seconds.
+      schema:
+        type: integer
+        minimum: 1
+    WwwAuthenticate:
+      description: Bearer challenge; no token or internal error details.
+      schema:
+        type: string
+        example: Bearer
+  requestBodies:
+    RefreshToken:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            additionalProperties: false
+            required: [refresh_token]
+            properties:
+              refresh_token:
+                type: string
+                minLength: 1
+                writeOnly: true
+  responses:
+    TokenResponse:
+      description: Session token pair and effective scopes.
+      headers:
+        X-Correlation-ID:
+          $ref: '#/components/headers/CorrelationId'
+        Cache-Control:
+          $ref: '#/components/headers/NoStore'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/TokenPair'
+    BadRequest:
+      description: Invalid body, parameter, time range, or mismatched cursor.
+      headers:
+        X-Correlation-ID:
+          $ref: '#/components/headers/CorrelationId'
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+    Unauthorized:
+      description: Missing, invalid, expired, rotated, or revoked credentials.
+      headers:
+        X-Correlation-ID:
+          $ref: '#/components/headers/CorrelationId'
+        WWW-Authenticate:
+          $ref: '#/components/headers/WwwAuthenticate'
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+    Forbidden:
+      description: Authenticated client lacks a required scope.
+      headers:
+        X-Correlation-ID:
+          $ref: '#/components/headers/CorrelationId'
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+    NotFound:
+      description: No visible record with this identifier exists in a usable store.
+      headers:
+        X-Correlation-ID:
+          $ref: '#/components/headers/CorrelationId'
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+    SnapshotExpired:
+      description: Frozen pagination snapshot expired; restart without page_token.
+      headers:
+        X-Correlation-ID:
+          $ref: '#/components/headers/CorrelationId'
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+    TooManyRequests:
+      description: Per-client request or concurrent-stream quota exceeded.
+      headers:
+        X-Correlation-ID:
+          $ref: '#/components/headers/CorrelationId'
+        Retry-After:
+          $ref: '#/components/headers/RetryAfter'
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+    Unavailable:
+      description: Required service or all requested source data is unavailable.
+      headers:
+        X-Correlation-ID:
+          $ref: '#/components/headers/CorrelationId'
+        Retry-After:
+          $ref: '#/components/headers/RetryAfter'
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+    EventStream:
+      description: |
+        UTF-8 SSE stream. Event names are hazard.upsert and reset_required.
+        New and updated hazards both use hazard.upsert. For hazard events, data
+        is HazardFeedEvent and id is the gRPC resume_cursor, separate from the
+        stable event_id. For reset_required, data is ResetRequiredEvent and no
+        resumable id is emitted. Send heartbeat comments periodically and disable
+        response buffering. The stream closes when authorization ceases to hold.
+      headers:
+        X-Correlation-ID:
+          $ref: '#/components/headers/CorrelationId'
+        Cache-Control:
+          description: Disable HTTP caches and intermediary transformation.
+          schema:
+            type: string
+            const: no-cache, no-transform
+      content:
+        text/event-stream:
+          schema:
+            type: string
+          example: |
+            id: opaque-replay-cursor
+            event: hazard.upsert
+            data: {"event_id":"evt-001","sequence":"1","hazard":{"hazard_id":"haz-001","source":"BMKG","hazard_type":"SEISMIC","severity":"SIAGA","area_name":"Banda Sea","occurred_at":"2026-09-22T06:00:00Z","ingested_at":"2026-09-22T06:00:01Z"},"published_at":"2026-09-22T06:00:02Z"}
+
+      x-sse-events:
+        hazard.upsert:
+          $ref: '#/components/schemas/HazardFeedEvent'
+        reset_required:
+          $ref: '#/components/schemas/ResetRequiredEvent'
+  schemas:
+    LoginRequest:
+      type: object
+      additionalProperties: false
+      required: [client_id, client_secret]
+      properties:
+        client_id:
+          type: string
+          minLength: 1
+          description: Unique provisioned client ID, not a client-class selector.
+        client_secret:
+          type: string
+          minLength: 1
+          writeOnly: true
+    TokenPair:
+      type: object
+      additionalProperties: false
+      required: [access_token, token_type, expires_in, refresh_token, refresh_expires_in, scope]
+      properties:
+        access_token:
+          type: string
+          minLength: 1
+        token_type:
+          type: string
+          const: Bearer
+        expires_in:
+          type: integer
+          minimum: 1
+          description: Access-token lifetime in seconds; default policy is 60.
+          example: 60
+        refresh_token:
+          type: string
+          minLength: 1
+        refresh_expires_in:
+          type: integer
+          minimum: 1
+          description: Remaining refresh-token lifetime in seconds.
+        scope:
+          type: string
+          description: Space-separated effective granted scopes.
+          example: hazards:read:summary notifications:read
+    Source:
+      type: string
+      enum: [BMKG, PVMBG]
+    HazardType:
+      type: string
+      enum: [SEISMIC, VOLCANIC]
+    Severity:
+      type: string
+      enum: [NORMAL, WASPADA, SIAGA, AWAS]
+    HazardSummary:
+      type: object
+      additionalProperties: false
+      required: [hazard_id, source, hazard_type, severity, area_name, occurred_at, ingested_at]
+      properties:
+        hazard_id:
+          type: string
+          minLength: 1
+        source:
+          $ref: '#/components/schemas/Source'
+        hazard_type:
+          $ref: '#/components/schemas/HazardType'
+        severity:
+          $ref: '#/components/schemas/Severity'
+        area_name:
+          type: string
+        occurred_at:
+          type: string
+          format: date-time
+        ingested_at:
+          type: string
+          format: date-time
+    HazardFull:
+      type: object
+      additionalProperties: false
+      required: [hazard_id, source, hazard_type, severity, area_name, occurred_at, ingested_at, source_ref_id, latitude, longitude, attributes]
+      properties:
+        hazard_id:
+          type: string
+          minLength: 1
+        source:
+          $ref: '#/components/schemas/Source'
+        hazard_type:
+          $ref: '#/components/schemas/HazardType'
+        severity:
+          $ref: '#/components/schemas/Severity'
+        area_name:
+          type: string
+        occurred_at:
+          type: string
+          format: date-time
+        ingested_at:
+          type: string
+          format: date-time
+        source_ref_id:
+          type: string
+          minLength: 1
+        latitude:
+          type: number
+          minimum: -90
+          maximum: 90
+        longitude:
+          type: number
+          minimum: -180
+          maximum: 180
+        attributes:
+          type: object
+          additionalProperties: true
+          description: Source-specific normalized details available only in full view.
+    Hazard:
+      description: Exactly the requested view; never mix projections within a response.
+      oneOf:
+        - $ref: '#/components/schemas/HazardSummary'
+        - $ref: '#/components/schemas/HazardFull'
+    Freshness:
+      type: object
+      additionalProperties: false
+      required: [source, status]
+      properties:
+        source:
+          $ref: '#/components/schemas/Source'
+        status:
+          type: string
+          enum: [FRESH, STALE, UNAVAILABLE]
+          description: |
+            FRESH means the latest poll succeeded and its successful result is
+            within the freshness budget. A failed latest poll immediately means
+            STALE when usable cached data exists, even within that budget; expiry
+            of the freshness budget also means STALE. UNAVAILABLE means no usable
+            cached source data. A successful empty dataset remains usable.
+        last_success_at:
+          type: string
+          format: date-time
+          description: Required for FRESH/STALE; last successful poll, even if it returned no items.
+        stale_since:
+          type: string
+          format: date-time
+          description: Present only for STALE; time the latest failure or freshness expiry began the current stale period.
+    HazardPage:
+      type: object
+      additionalProperties: false
+      required: [items, freshness, partial]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Hazard'
+        next_page_token:
+          type: string
+          minLength: 1
+          description: Omitted when this snapshot has no more records.
+        freshness:
+          type: array
+          minItems: 1
+          maxItems: 2
+          items:
+            $ref: '#/components/schemas/Freshness'
+        partial:
+          type: boolean
+          description: True if any requested source is STALE or UNAVAILABLE.
+    HazardResult:
+      type: object
+      additionalProperties: false
+      required: [item, freshness, partial]
+      properties:
+        item:
+          $ref: '#/components/schemas/Hazard'
+        freshness:
+          type: array
+          minItems: 1
+          maxItems: 1
+          items:
+            $ref: '#/components/schemas/Freshness'
+        partial:
+          type: boolean
+          description: True when the source's cached record is stale.
+    HazardFeedEvent:
+      type: object
+      additionalProperties: false
+      required: [event_id, sequence, hazard, published_at]
+      properties:
+        event_id:
+          type: string
+          minLength: 1
+          description: Stable unique event identifier for deduplication.
+        sequence:
+          type: string
+          pattern: '^[1-9][0-9]{0,19}$'
+          description: Positive uint64 decimal value, at most 18446744073709551615.
+        hazard:
+          $ref: '#/components/schemas/Hazard'
+        published_at:
+          type: string
+          format: date-time
+    ResetRequiredEvent:
+      type: object
+      additionalProperties: false
+      required: [reason, correlation_id]
+      properties:
+        reason:
+          type: string
+          const: REPLAY_WINDOW_EXPIRED
+        correlation_id:
+          type: string
+    Notification:
+      type: object
+      additionalProperties: false
+      required: [notification_id, hazard, created_at, message]
+      properties:
+        notification_id:
+          type: string
+          minLength: 1
+        hazard:
+          $ref: '#/components/schemas/Hazard'
+        created_at:
+          type: string
+          format: date-time
+        message:
+          type: string
+          description: Summary-safe text derived only from HazardSummary fields.
+    NotificationResult:
+      type: object
+      additionalProperties: false
+      required: [item, freshness, partial]
+      properties:
+        item:
+          $ref: '#/components/schemas/Notification'
+        freshness:
+          type: array
+          minItems: 1
+          maxItems: 1
+          items:
+            $ref: '#/components/schemas/Freshness'
+        partial:
+          type: boolean
+          description: True when the notification hazard's source is STALE.
+    NotificationPage:
+      type: object
+      additionalProperties: false
+      required: [items, freshness, partial]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Notification'
+        next_page_token:
+          type: string
+          minLength: 1
+        freshness:
+          type: array
+          minItems: 1
+          maxItems: 2
+          items:
+            $ref: '#/components/schemas/Freshness'
+        partial:
+          type: boolean
+    Problem:
+      type: object
+      additionalProperties: false
+      required: [type, title, status, detail, instance, correlation_id]
+      description: |
+        RFC 9457 problem details. Safe for every client class; never include raw
+        upstream payloads, credentials, stack traces, or full-view attributes.
+      properties:
+        type:
+          type: string
+          format: uri-reference
+          example: urn:bnpb:problem:source-unavailable
+        title:
+          type: string
+        status:
+          type: integer
+          minimum: 400
+          maximum: 599
+        detail:
+          type: string
+        instance:
+          type: string
+          format: uri-reference
+          description: Safe request path or occurrence identifier without secrets.
+        correlation_id:
+          type: string

@@ -1,0 +1,128 @@
+syntax = "proto3";
+
+package bnpb.common.v1;
+
+import "google/protobuf/struct.proto";
+import "google/protobuf/timestamp.proto";
+
+// Enum names are mapped explicitly to the unprefixed labels in OpenAPI.
+// UNSPECIFIED and unknown enum values are invalid in persisted hazard records.
+enum Source {
+  SOURCE_UNSPECIFIED = 0;
+  SOURCE_BMKG = 1;
+  SOURCE_PVMBG = 2;
+}
+
+enum HazardType {
+  HAZARD_TYPE_UNSPECIFIED = 0;
+  HAZARD_TYPE_SEISMIC = 1;
+  HAZARD_TYPE_VOLCANIC = 2;
+}
+
+enum Severity {
+  SEVERITY_UNSPECIFIED = 0;
+  SEVERITY_NORMAL = 1;
+  SEVERITY_WASPADA = 2;
+  SEVERITY_SIAGA = 3;
+  SEVERITY_AWAS = 4;
+}
+
+// Omission/UNSPECIFIED is resolved to SUMMARY before authorization or cursor
+// validation. FULL requires hazards:read:full; never silently downgrade it.
+enum View {
+  VIEW_UNSPECIFIED = 0;
+  VIEW_SUMMARY = 1;
+  VIEW_FULL = 2;
+}
+
+// Full canonical record. Aggregator is the sole canonical writer.
+// All fields are required at application level, including attributes (which may
+// be an empty object). Coordinates use WGS84: latitude [-90,90], longitude
+// [-180,180]; zero is a valid coordinate. source_ref_id identifies the original
+// upstream record. source + source_ref_id is the ingestion deduplication key.
+// hazard_id and source_ref_id must be nonempty; area_name may be empty.
+// BMKG records are SEISMIC; PVMBG records are VOLCANIC.
+message HazardEvent {
+  string hazard_id = 1;
+  Source source = 2;
+  string source_ref_id = 3;
+  HazardType hazard_type = 4;
+  Severity severity = 5;
+  string area_name = 6;
+  // Presence is required; optional distinguishes missing from valid zero.
+  optional double latitude = 7;
+  optional double longitude = 8;
+  google.protobuf.Timestamp occurred_at = 9;
+  // First canonical ingestion time; immutable when the source record is updated.
+  google.protobuf.Timestamp ingested_at = 10;
+  // Source-specific JSON object, preserved through ingestion without promoting
+  // arbitrary keys into the schema. Never expose it in a summary projection.
+  google.protobuf.Struct attributes = 11;
+}
+
+// Explicit allowlist for summary access. Do not derive this by blanking the
+// sensitive fields of HazardEvent: those fields must be absent altogether.
+message HazardSummary {
+  string hazard_id = 1;
+  Source source = 2;
+  HazardType hazard_type = 3;
+  Severity severity = 4;
+  string area_name = 5;
+  google.protobuf.Timestamp occurred_at = 6;
+  google.protobuf.Timestamp ingested_at = 7;
+}
+
+// Exactly one projection must be set, matching the authorized request view.
+// Gateway unwraps this oneof into the REST HazardSummary/HazardEvent shape.
+message HazardProjection {
+  oneof data {
+    HazardSummary summary = 1;
+    HazardEvent full = 2;
+  }
+}
+
+message HazardFilter {
+  // UNSPECIFIED means no filter; unknown values are INVALID_ARGUMENT.
+  // source or hazard_type narrows the relevant freshness source set; without
+  // either, both sources are relevant. BMKG/VOLCANIC and PVMBG/SEISMIC
+  // combinations are INVALID_ARGUMENT rather than empty successes.
+  Source source = 1;
+  HazardType hazard_type = 2;
+  Severity severity = 3;
+  // Inclusive lower bound and exclusive upper bound on occurred_at, in UTC.
+  // Either may be absent; when both are present since must precede until.
+  google.protobuf.Timestamp since = 4;
+  google.protobuf.Timestamp until = 5;
+}
+
+message PageRequest {
+  // 0 selects 20. Accepted explicit values: 1..100.
+  int32 page_size = 1;
+  // Opaque cursor for a frozen snapshot, bound to filters, resolved view,
+  // page_size and authenticated client. Empty starts a new snapshot. Malformed
+  // or mismatched cursors are INVALID_ARGUMENT; expired cursors are OUT_OF_RANGE.
+  // Never start over silently.
+  string page_token = 2;
+}
+
+enum SourceStatus {
+  SOURCE_STATUS_UNSPECIFIED = 0;
+  SOURCE_STATUS_FRESH = 1;
+  SOURCE_STATUS_STALE = 2;
+  SOURCE_STATUS_UNAVAILABLE = 3;
+}
+
+// Status is measured at response generation. FRESH means the latest upstream
+// poll succeeded and its freshness window has not elapsed; STALE means a usable
+// cached result exists but latest polling failed or freshness elapsed;
+// UNAVAILABLE means no usable cached result exists. An empty successful source
+// dataset is usable and is not UNAVAILABLE.
+message SourceFreshness {
+  // Neither source nor status may be UNSPECIFIED in a response.
+  Source source = 1;
+  SourceStatus status = 2;
+  // Required for FRESH/STALE; absent until the first successful fetch.
+  google.protobuf.Timestamp last_success_at = 3;
+  // Present only while status is STALE.
+  google.protobuf.Timestamp stale_since = 4;
+}

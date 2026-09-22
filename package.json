@@ -1,0 +1,23 @@
+{
+  "name": "aat-m1-contracts",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Language-neutral API contracts and validation tooling for IF4031 M1",
+  "engines": { "node": ">=22.12.0", "npm": ">=10" },
+  "scripts": {
+    "check": "npm run lint:openapi && npm run lint:proto && npm run check:proto-format && npm run build:proto",
+    "lint:openapi": "redocly lint",
+    "lint:proto": "buf lint",
+    "check:proto-format": "buf format --diff --exit-code",
+    "format:proto": "buf format -w",
+    "build:proto": "buf build",
+    "bundle": "redocly bundle bmkg -o dist/openapi/bmkg.yaml && redocly bundle pvmbg -o dist/openapi/pvmbg.yaml && redocly bundle gateway -o dist/openapi/gateway.yaml",
+    "docs:gateway": "redocly build-docs gateway -o dist/docs/gateway.html",
+    "docs:bmkg": "redocly build-docs bmkg -o dist/docs/bmkg.html",
+    "docs:pvmbg": "redocly build-docs pvmbg -o dist/docs/pvmbg.html"
+  },
+  "devDependencies": {
+    "@bufbuild/buf": "1.73.0",
+    "@redocly/cli": "2.53.3"
+  }
+}

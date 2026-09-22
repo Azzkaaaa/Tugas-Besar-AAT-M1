@@ -1,0 +1,87 @@
+syntax = "proto3";
+
+package bnpb.auth.v1;
+
+import "google/protobuf/timestamp.proto";
+
+// Requires x-service-token on every RPC. Login, RefreshToken and Logout use the
+// request credential and do not require a current actor access token. Authorize
+// requires the actor token in authorization: Bearer <token> metadata.
+service AuthService {
+  rpc Login(LoginRequest) returns (LoginResponse);
+  // Atomically rotates refresh token and revokes the session's prior access
+  // token. Concurrent reuse of the previous refresh token is UNAUTHENTICATED.
+  rpc RefreshToken(RefreshTokenRequest) returns (RefreshTokenResponse);
+  // Revokes the refresh-token session and its active access token immediately.
+  // A known, unexpired already-revoked token is an idempotent success. Unknown
+  // and expired refresh tokens are UNAUTHENTICATED. Other sessions are unaffected.
+  rpc Logout(LogoutRequest) returns (LogoutResponse);
+  // Online validation of expiry, revocation, session state, role and scopes.
+  // Missing/expired/revoked token: UNAUTHENTICATED. Valid token with insufficient
+  // scope: PERMISSION_DENIED. Unavailable auth state: UNAVAILABLE, never allow.
+  rpc Authorize(AuthorizeRequest) returns (AuthorizeResponse);
+}
+
+enum ClientRole {
+  CLIENT_ROLE_UNSPECIFIED = 0;
+  CLIENT_ROLE_MEDIA = 1;
+  CLIENT_ROLE_FIELD_TEAM = 2;
+  CLIENT_ROLE_BNPB_INTERNAL = 3;
+}
+
+message LoginRequest {
+  string client_id = 1;
+  string client_secret = 2;
+}
+
+message LoginResponse {
+  TokenPair tokens = 1;
+}
+
+message RefreshTokenRequest {
+  string refresh_token = 1;
+}
+
+message RefreshTokenResponse {
+  TokenPair tokens = 1;
+}
+
+message LogoutRequest {
+  string refresh_token = 1;
+}
+
+message LogoutResponse {}
+
+message TokenPair {
+  string access_token = 1;
+  // Always "Bearer".
+  string token_type = 2;
+  // Access lifetime in seconds; default configuration is 60 seconds.
+  int32 expires_in = 3;
+  string refresh_token = 4;
+  // Positive remaining refresh lifetime in seconds.
+  int32 refresh_expires_in = 5;
+  // Space-delimited granted scope names. Never grant user-supplied roles/scopes.
+  string scope = 6;
+}
+
+message AuthorizeRequest {
+  // All listed scopes must be granted. Empty only checks token/session validity.
+  repeated string required_scopes = 1;
+}
+
+message AuthorizeResponse {
+  Principal principal = 1;
+}
+
+message Principal {
+  // Stable authenticated client identifier (the access token's sub claim).
+  string subject = 1;
+  ClientRole client_role = 2;
+  repeated string scopes = 3;
+  google.protobuf.Timestamp expires_at = 4;
+  string session_id = 5;
+  // Positive; increment on refresh rotation/revocation. It cannot replace online
+  // session validation: reject an older token immediately after revocation.
+  uint64 session_version = 6;
+}
