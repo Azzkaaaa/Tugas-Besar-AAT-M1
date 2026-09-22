@@ -5,11 +5,12 @@ Rencana API yang diakses client pada HTTP **8080**, sesuai
 belum dipilih.
 
 - **Input:** login/refresh/logout, baca daftar/detail hazard dan notifikasi,
-  serta subscription SSE seismik/vulkanik. Health: `GET /health`.
+  subscription SSE live feed (dengan filter opsional), serta manajemen webhook. Health: `GET /health`.
 - **Output:** REST/JSON dan SSE `hazard.upsert`, pemetaan error gRPC ke HTTP,
   proyeksi summary/full, cursor replay, dan metadata freshness.
 - **Storage:** tidak memiliki database bisnis dan tidak menerima DSN service
-  lain. Hazard dibaca melalui Aggregator, notifikasi melalui Danger Notification.
+  lain. Hazard dibaca melalui Aggregator, notifikasi melalui Danger Notification,
+  feed melalui Event Live Feed, dan webhook melalui Webhook Provider.
 - **Tanggung jawab:** adapter REST/SSE ke gRPC, validasi input, scope, batas
   request serentak, deadline/cancellation, correlation ID, dan trace context.
   Tiap RPC downstream memakai `GATEWAY_SERVICE_TOKEN` dan bearer aktor asli.

@@ -12,9 +12,9 @@ kinerja, autentikasi, persistensi, maupun ketahanan sistem.
 | --- | --- | --- |
 | P1 — Arsitektur dan interoperabilitas data | [BMKG](../contracts/openapi/bmkg.yaml), [PVMBG](../contracts/openapi/pvmbg.yaml), [common.proto](../contracts/proto/bnpb/common/v1/common.proto), [aggregator.proto](../contracts/proto/bnpb/aggregator/v1/aggregator.proto) | Data sumber dan hasil kanonik sebelum/sesudah perubahan skema, log satu alur ingest |
 | P2 — Konkurensi, ketersediaan, degradasi terkendali | [Gateway](../contracts/openapi/gateway.yaml), [PVMBG](../contracts/openapi/pvmbg.yaml), [aggregator.proto](../contracts/proto/bnpb/aggregator/v1/aggregator.proto) | Hasil uji beban, latensi per sumber, respons selama outage dan setelah pemulihan |
-| P3 — Autentikasi dan pemisahan kepercayaan | Ketiga OpenAPI, [auth.proto](../contracts/proto/bnpb/auth/v1/auth.proto), [common.proto](../contracts/proto/bnpb/common/v1/common.proto), [feed.proto](../contracts/proto/bnpb/feed/v1/feed.proto) | Penolakan kredensial silang, proyeksi Media, token kedaluwarsa/refresh/revoke |
-| P4 — Batas service dan penyimpanan fleksibel | [aggregator.proto](../contracts/proto/bnpb/aggregator/v1/aggregator.proto), [auth.proto](../contracts/proto/bnpb/auth/v1/auth.proto), [feed.proto](../contracts/proto/bnpb/feed/v1/feed.proto), [notification.proto](../contracts/proto/bnpb/notification/v1/notification.proto) | Restart satu container, bukti kepemilikan storage, record dua versi skema yang tersimpan bersamaan |
-| P5 — Distribusi event ke banyak consumer | [event.proto](../contracts/proto/bnpb/event/v1/event.proto), [feed.proto](../contracts/proto/bnpb/feed/v1/feed.proto), [notification.proto](../contracts/proto/bnpb/notification/v1/notification.proto) | Event pada queue independen, penghentian/pemulihan consumer, penambahan subscriber |
+| P3 — Autentikasi dan pemisahan kepercayaan | Ketiga OpenAPI, [auth.proto](../contracts/proto/bnpb/auth/v1/auth.proto), [common.proto](../contracts/proto/bnpb/common/v1/common.proto), [feed.proto](../contracts/proto/bnpb/feed/v1/feed.proto), [webhook.proto](../contracts/proto/bnpb/webhook/v1/webhook.proto) | Penolakan kredensial silang, proyeksi Media, token kedaluwarsa/refresh/revoke |
+| P4 — Batas service dan penyimpanan fleksibel | [aggregator.proto](../contracts/proto/bnpb/aggregator/v1/aggregator.proto), [auth.proto](../contracts/proto/bnpb/auth/v1/auth.proto), [feed.proto](../contracts/proto/bnpb/feed/v1/feed.proto), [notification.proto](../contracts/proto/bnpb/notification/v1/notification.proto), [webhook.proto](../contracts/proto/bnpb/webhook/v1/webhook.proto) | Restart satu container, bukti kepemilikan storage, record dua versi skema yang tersimpan bersamaan |
+| P5 — Distribusi event ke banyak consumer | [event.proto](../contracts/proto/bnpb/event/v1/event.proto), [feed.proto](../contracts/proto/bnpb/feed/v1/feed.proto), [notification.proto](../contracts/proto/bnpb/notification/v1/notification.proto), [webhook.proto](../contracts/proto/bnpb/webhook/v1/webhook.proto) | Event pada queue independen, penghentian/pemulihan consumer, penambahan subscriber |
 
 Semantik metadata, proyeksi, pagination, replay, dan pemetaan error gRPC ke HTTP
 ada di [panduan proto](../contracts/proto/README.md).
@@ -22,7 +22,7 @@ ada di [panduan proto](../contracts/proto/README.md).
 ## Prasyarat demo bersama
 
 - [ ] Pilih bahasa dan runtime tiap service, lalu implementasikan mock BMKG,
-  mock PVMBG, Aggregator, Auth, Gateway, Seismic Live Feed, Volcanic Live Feed,
+  mock PVMBG, Aggregator, Auth, Gateway, Event Live Feed, Webhook Provider,
   Danger Notification, dan SPA sesuai batas arsitektur.
 - [ ] Sediakan Dockerfile terpisah untuk setiap service dan satu perintah
   orkestrasi untuk menjalankan seluruh sistem. Setiap service dapat dihentikan
@@ -135,7 +135,7 @@ ada di [panduan proto](../contracts/proto/README.md).
   dipulihkan tanpa kehilangan event.
 - [ ] Demonstrasikan minimal **dua consumer independen pada stream yang sama**
   menerima salinan event lewat **queue durable yang berbeda**. Rancangan ini
-  menyediakan queue sendiri bagi Seismic Feed, Volcanic Feed, dan Notification;
+  menyediakan queue sendiri bagi Event Live Feed, Webhook Provider, dan Danger Notification;
   queue tidak dibagi di antara ketiga jenis consumer itu.
 - [ ] Hentikan satu consumer, biarkan event baru terbit, dan buktikan producer
   serta consumer lain tetap berjalan. Nyalakan kembali consumer; event selama

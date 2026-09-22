@@ -1,0 +1,121 @@
+syntax = "proto3";
+
+package bnpb.webhook.v1;
+
+import "bnpb/common/v1/common.proto";
+import "google/protobuf/timestamp.proto";
+
+// Consumes its own RabbitMQ queue (bnpb.webhook-provider.v1) and delivers
+// HTTP POST notifications to registered external webhooks upon hazard events.
+// External clients manage their subscriptions through Gateway using WebhookService.
+// Calls require service identity, the actor's bearer token, and appropriate scopes:
+// webhooks:read to query subscriptions/deliveries, webhooks:write to create/delete.
+// Webhook delivery payloads are projected according to the subscribing client's authorized view:
+// Media subscribers receive SUMMARY only, while FIELD_TEAM / BNPB_INTERNAL can receive FULL.
+service WebhookService {
+  rpc CreateWebhook(CreateWebhookRequest) returns (CreateWebhookResponse);
+  rpc ListWebhooks(ListWebhooksRequest) returns (ListWebhooksResponse);
+  rpc GetWebhook(GetWebhookRequest) returns (GetWebhookResponse);
+  rpc DeleteWebhook(DeleteWebhookRequest) returns (DeleteWebhookResponse);
+  rpc ListDeliveries(ListDeliveriesRequest) returns (ListDeliveriesResponse);
+  rpc PingWebhook(PingWebhookRequest) returns (PingWebhookResponse);
+}
+
+enum DeliveryStatus {
+  DELIVERY_STATUS_UNSPECIFIED = 0;
+  DELIVERY_STATUS_SUCCESS = 1;
+  DELIVERY_STATUS_FAILED = 2;
+  DELIVERY_STATUS_RETRYING = 3;
+}
+
+message WebhookSubscription {
+  string webhook_id = 1;
+  // Destination URL for HTTP POST hazard deliveries. Must be valid HTTP(S).
+  string url = 2;
+  // Shared secret used to sign HMAC delivery payloads (e.g. X-BNPB-Signature).
+  // Hidden or redacted on list responses.
+  string secret = 3;
+  // Filter specifying which hazard events trigger this webhook.
+  bnpb.common.v1.HazardFilter filter = 4;
+  // Projection view authorized for this subscription based on client role.
+  bnpb.common.v1.View view = 5;
+  bool is_active = 6;
+  string description = 7;
+  // Client ID of the authenticated owner who created this subscription.
+  string owner_client_id = 8;
+  google.protobuf.Timestamp created_at = 9;
+  google.protobuf.Timestamp updated_at = 10;
+}
+
+message CreateWebhookRequest {
+  string url = 1;
+  // Optional client-supplied secret for HMAC signing; generated if omitted.
+  optional string secret = 2;
+  bnpb.common.v1.HazardFilter filter = 3;
+  bnpb.common.v1.View view = 4;
+  string description = 5;
+}
+
+message CreateWebhookResponse {
+  WebhookSubscription subscription = 1;
+}
+
+message ListWebhooksRequest {
+  bnpb.common.v1.PageRequest page = 1;
+}
+
+message ListWebhooksResponse {
+  repeated WebhookSubscription items = 1;
+  string next_page_token = 2;
+}
+
+message GetWebhookRequest {
+  string webhook_id = 1;
+}
+
+message GetWebhookResponse {
+  WebhookSubscription subscription = 1;
+}
+
+message DeleteWebhookRequest {
+  string webhook_id = 1;
+}
+
+message DeleteWebhookResponse {
+  bool success = 1;
+}
+
+message WebhookDelivery {
+  string delivery_id = 1;
+  string webhook_id = 2;
+  // Broker publication event_id that triggered this delivery.
+  string event_id = 3;
+  string hazard_id = 4;
+  int32 status_code = 5;
+  DeliveryStatus status = 6;
+  int32 attempt = 7;
+  int64 duration_ms = 8;
+  string error_message = 9;
+  google.protobuf.Timestamp delivered_at = 10;
+}
+
+message ListDeliveriesRequest {
+  string webhook_id = 1;
+  bnpb.common.v1.PageRequest page = 2;
+}
+
+message ListDeliveriesResponse {
+  repeated WebhookDelivery items = 1;
+  string next_page_token = 2;
+}
+
+message PingWebhookRequest {
+  string webhook_id = 1;
+}
+
+message PingWebhookResponse {
+  int32 status_code = 1;
+  int64 duration_ms = 2;
+  bool success = 3;
+  string message = 4;
+}

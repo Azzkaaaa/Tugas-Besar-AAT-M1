@@ -11,8 +11,8 @@ flowchart TB
   spa[Frontend SPA] -->|REST / SSE| gateway[Client Gateway]
   gateway -->|gRPC| aggregator[Aggregator]
   gateway -->|gRPC| auth[Auth]
-  gateway -->|gRPC stream| seismic[Seismic Live Feed]
-  gateway -->|gRPC stream| volcanic[Volcanic Live Feed]
+  gateway -->|gRPC stream| eventfeed[Event Live Feed]
+  gateway -->|gRPC| webhook[Webhook Provider]
   gateway -->|gRPC| notification[Danger Notification]
   aggregator -->|REST polling| bmkg[BMKG Mock]
   aggregator -->|REST polling| pvmbg[PVMBG Mock]
@@ -21,15 +21,16 @@ flowchart TB
   pvmbg --> pvmbgdb[(PVMBG Store)]
   auth --> authdb[(Auth Store / Cache)]
   notification --> notificationdb[(Notification Store)]
-  seismic --> seismiccache[(Seismic Replay Cache)]
-  volcanic --> volcaniccache[(Volcanic Replay Cache)]
+  eventfeed --> eventfeedcache[(Event Feed Replay Cache / Redis)]
+  webhook --> webhookdb[(Webhook Store)]
+  webhook -->|HTTP POST| externalwebhooks[External Webhook Targets]
   aggregator -->|AMQP publish| broker[RabbitMQ]
-  broker -->|queue sendiri| seismic
-  broker -->|queue sendiri| volcanic
+  broker -->|queue sendiri| eventfeed
+  broker -->|queue sendiri| webhook
   broker -->|queue sendiri| notification
   aggregator -.->|gRPC authorize| auth
-  seismic -.->|gRPC authorize| auth
-  volcanic -.->|gRPC authorize| auth
+  eventfeed -.->|gRPC authorize| auth
+  webhook -.->|gRPC authorize| auth
   notification -.->|gRPC authorize| auth
   notification -.->|gRPC freshness| aggregator
 ```
@@ -37,7 +38,8 @@ flowchart TB
 Semua komponen aplikasi menjadi container tersendiri saat implementasi. Setiap
 database/cache mempunyai satu pemilik. Gateway tidak mengakses database
 Aggregator atau Auth. Feed memegang buffer replay sementara, Notifier menyimpan
-hasil turunan; keduanya tidak menjadi penulis Canonical Store. Storage belum
+hasil turunan, Webhook Provider menyimpan langganan webhook dan log pengiriman;
+ketiganya tidak menjadi penulis Canonical Store. Storage belum
 dipilih: document store atau relational store dengan kolom JSON harus menerima
 `attributes` dinamis tanpa migrasi ketika field aditif muncul.
 
@@ -75,13 +77,13 @@ event broker; consumer lag perlu metrik tersendiri.
 | --- | --- | --- |
 | Pemanggil BMKG | `X-BMKG-Key` | BMKG saja |
 | Pemanggil PVMBG | bearer token PVMBG terpisah | PVMBG saja |
-| Media | client ID/secret sendiri; token BNPB | Ringkasan |
-| Tim Lapangan | client ID/secret sendiri; token BNPB | Ringkasan dan full |
-| BNPB Internal | client ID/secret sendiri; token BNPB | Ringkasan dan full |
+| Media | client ID/secret sendiri; token BNPB | Ringkasan; notifikasi dan webhook ringkasan |
+| Tim Lapangan | client ID/secret sendiri; token BNPB | Ringkasan dan full; notifikasi dan webhook full |
+| BNPB Internal | client ID/secret sendiri; token BNPB | Ringkasan dan full; notifikasi dan webhook full |
 | Service internal | token per service | RPC yang diizinkan; tetap memerlukan actor |
 
-Default scope adalah `hazards:read:summary` dan `notifications:read` untuk Media,
-ditambah `hazards:read:full` untuk dua client lain. Login tidak menerima role/scope
+Default scope adalah `hazards:read:summary`, `notifications:read`, dan `webhooks:read` untuk Media,
+ditambah `hazards:read:full` serta `webhooks:write` untuk dua client lain. Login tidak menerima role/scope
 buatan client. Token BNPB tidak berlaku sebagai bearer PVMBG. Jika menggunakan
 JWT BNPB, periksa issuer, audience, signature, expiry, dan revocation. Access token
 default 60 detik; refresh atomik membatalkan token sesi lama segera. Validasi
@@ -100,10 +102,11 @@ notifikasi, dan error. Refresh/logout berlaku juga pada stream aktif.
 Aggregator menulis record dan outbox secara durable sebelum mempublikasikan
 binary Protobuf `bnpb.event.v1.HazardEventPublished` ke exchange fanout durable
 `bnpb.hazards.v1`. Tiga queue durable terpisah terikat ke exchange yang sama:
-`bnpb.seismic-feed.v1`, `bnpb.volcanic-feed.v1`, dan
-`bnpb.danger-notification.v1`. Semuanya mendapat stream yang sama lalu memfilter
-jenis hazard masing-masing. Consumer tambahan membuat binding sendiri tanpa
-perubahan producer. Notifier membuat notifikasi untuk SIAGA/AWAS.
+`bnpb.event-live-feed.v1`, `bnpb.webhook-provider.v1`, dan
+`bnpb.danger-notification.v1`. Semuanya mendapat stream yang sama. Feed menyaring
+sesuai filter yang diminta client; notifier membuat notifikasi untuk SIAGA/AWAS;
+webhook provider memicu HTTP POST ke endpoint eksternal terdaftar. Consumer tambahan
+membuat binding sendiri tanpa perubahan producer.
 
 Gunakan pesan persistent, publisher confirms, retry terbatas, dead-letter queue,
 dan ack setelah side effect tersimpan. Semantik **at-least-once** membutuhkan

@@ -1,0 +1,29 @@
+# Webhook Provider
+
+Rencana consumer RabbitMQ dan server manajemen gRPC pada port **9094**, melalui
+[WebhookService](../../contracts/proto/bnpb/webhook/v1/webhook.proto).
+Implementasi dan bahasa belum dipilih.
+
+- **Input:** envelope `HazardEventPublished` dari queue durable
+  `bnpb.webhook-provider.v1`; RPC manajemen (`CreateWebhook`, `ListWebhooks`,
+  `GetWebhook`, `DeleteWebhook`, `ListDeliveries`, `PingWebhook`) dari Gateway.
+- **Output:** panggilan HTTP POST ke endpoint webhook eksternal terdaftar dengan
+  payload JSON event bencana, signature HMAC (`X-BNPB-Signature`), serta respons
+  manajemen webhook ke Gateway.
+- **Storage milik sendiri:** `WEBHOOK_STORE_DSN` untuk menyimpan data pendaftaran
+  webhook, secret penandatanganan, status langganan, dan riwayat upaya pengiriman
+  (delivery log); bukan Canonical Store.
+- **Tanggung jawab:**
+  - Evaluasi filter langganan terhadap setiap event masuk dari broker.
+  - Penegakan proyeksi data: webhook milik client Media hanya menerima payload
+    ringkasan (SUMMARY); webhook milik Tim Lapangan / BNPB Internal dapat menerima
+    payload lengkap (FULL).
+  - Deduplikasi event berdasarkan `event_id` broker dan pengiriman idempotensial.
+  - Mekanisme retry dengan exponential backoff dan dead-letter queue untuk endpoint
+    yang gagal atau timeout.
+  - Otorisasi pemanggil melalui Auth menggunakan token service `WEBHOOK_SERVICE_TOKEN`
+    dan bearer token aktor asli.
+
+Health memakai `grpc.health.v1.Health`. TODO: runtime/Dockerfile, consumer RabbitMQ,
+HTTP dispatch client, storage dan migrasi skema webhook, retry/dead-letter, telemetry.
+Lihat [konfigurasi](../../docs/configuration.md).

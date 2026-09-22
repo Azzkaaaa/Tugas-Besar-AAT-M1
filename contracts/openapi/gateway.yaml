@@ -40,6 +40,8 @@ tags:
     description: Server-sent events for canonical hazard updates.
   - name: Notifications
     description: Persisted danger notifications.
+  - name: Webhooks
+    description: External disaster notification webhooks management.
   - name: Health
     description: Process health.
 security:
@@ -235,6 +237,40 @@ paths:
           $ref: '#/components/responses/TooManyRequests'
         '503':
           $ref: '#/components/responses/Unavailable'
+  /api/v1/feeds/events:
+    get:
+      tags: [Feeds]
+      operationId: streamHazardEvents
+      summary: Stream canonical hazard changes over SSE with optional filters
+      description: |
+        Delivers live hazard events matching optional source, hazard_type, and severity filters.
+        The same scope and projection checks as listHazards apply. Each hazard.upsert event has
+        an id line containing an opaque resumable cursor and a JSON data line matching HazardFeedEvent.
+        Heartbeats are SSE comments. Replay, framing, scope checks, token revalidation, reset recovery,
+        and sequence semantics follow streamSeismicHazards.
+      x-required-scopes:
+        summary: [hazards:read:summary]
+        full: [hazards:read:summary, hazards:read:full]
+      parameters:
+        - $ref: '#/components/parameters/CorrelationId'
+        - $ref: '#/components/parameters/Source'
+        - $ref: '#/components/parameters/HazardType'
+        - $ref: '#/components/parameters/Severity'
+        - $ref: '#/components/parameters/View'
+        - $ref: '#/components/parameters/LastEventId'
+      responses:
+        '200':
+          $ref: '#/components/responses/EventStream'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/Unavailable'
   /api/v1/feeds/seismic:
     get:
       tags: [Feeds]
@@ -410,6 +446,217 @@ paths:
           $ref: '#/components/responses/NotFound'
         '429':
           $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+  /api/v1/webhooks:
+    get:
+      tags: [Webhooks]
+      operationId: listWebhooks
+      summary: List registered webhooks for authenticated client
+      description: |
+        Requires webhooks:read. Returns paginated list of webhook subscriptions
+        owned by the authenticated client.
+      x-required-scopes: [webhooks:read]
+      parameters:
+        - $ref: '#/components/parameters/CorrelationId'
+        - $ref: '#/components/parameters/PageSize'
+        - $ref: '#/components/parameters/PageToken'
+      responses:
+        '200':
+          description: List of registered webhooks.
+          headers:
+            X-Correlation-ID:
+              $ref: '#/components/headers/CorrelationId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WebhookPage'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+    post:
+      tags: [Webhooks]
+      operationId: createWebhook
+      summary: Register a new hazard notification webhook
+      description: |
+        Requires webhooks:write. Webhook events are dispatched as HTTP POST
+        requests with HMAC signature (X-BNPB-Signature) and projected according
+        to the client's authorized view.
+      x-required-scopes: [webhooks:write]
+      parameters:
+        - $ref: '#/components/parameters/CorrelationId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateWebhookRequest'
+      responses:
+        '201':
+          description: Webhook subscription created.
+          headers:
+            X-Correlation-ID:
+              $ref: '#/components/headers/CorrelationId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WebhookSubscription'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+  /api/v1/webhooks/{webhook_id}:
+    get:
+      tags: [Webhooks]
+      operationId: getWebhook
+      summary: Get details of a registered webhook
+      description: |
+        Requires webhooks:read. Client must own the requested webhook subscription.
+      x-required-scopes: [webhooks:read]
+      parameters:
+        - $ref: '#/components/parameters/CorrelationId'
+        - name: webhook_id
+          in: path
+          required: true
+          description: Opaque webhook identifier.
+          schema:
+            type: string
+            minLength: 1
+      responses:
+        '200':
+          description: Webhook subscription details.
+          headers:
+            X-Correlation-ID:
+              $ref: '#/components/headers/CorrelationId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WebhookSubscription'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+    delete:
+      tags: [Webhooks]
+      operationId: deleteWebhook
+      summary: Delete a registered webhook
+      description: |
+        Requires webhooks:write. Client must own the requested webhook subscription.
+      x-required-scopes: [webhooks:write]
+      parameters:
+        - $ref: '#/components/parameters/CorrelationId'
+        - name: webhook_id
+          in: path
+          required: true
+          description: Opaque webhook identifier.
+          schema:
+            type: string
+            minLength: 1
+      responses:
+        '204':
+          description: Webhook subscription successfully deleted.
+          headers:
+            X-Correlation-ID:
+              $ref: '#/components/headers/CorrelationId'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+  /api/v1/webhooks/{webhook_id}/deliveries:
+    get:
+      tags: [Webhooks]
+      operationId: listWebhookDeliveries
+      summary: List recent delivery attempts for a webhook
+      description: |
+        Requires webhooks:read. Returns paginated history of delivery attempts.
+      x-required-scopes: [webhooks:read]
+      parameters:
+        - $ref: '#/components/parameters/CorrelationId'
+        - name: webhook_id
+          in: path
+          required: true
+          description: Opaque webhook identifier.
+          schema:
+            type: string
+            minLength: 1
+        - $ref: '#/components/parameters/PageSize'
+        - $ref: '#/components/parameters/PageToken'
+      responses:
+        '200':
+          description: Webhook delivery attempt logs.
+          headers:
+            X-Correlation-ID:
+              $ref: '#/components/headers/CorrelationId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WebhookDeliveryPage'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+  /api/v1/webhooks/{webhook_id}/test:
+    post:
+      tags: [Webhooks]
+      operationId: testWebhook
+      summary: Send a test ping to the webhook endpoint
+      description: |
+        Requires webhooks:write. Dispatches a ping event to the target URL to test connectivity.
+      x-required-scopes: [webhooks:write]
+      parameters:
+        - $ref: '#/components/parameters/CorrelationId'
+        - name: webhook_id
+          in: path
+          required: true
+          description: Opaque webhook identifier.
+          schema:
+            type: string
+            minLength: 1
+      responses:
+        '200':
+          description: Ping response from target URL.
+          headers:
+            X-Correlation-ID:
+              $ref: '#/components/headers/CorrelationId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PingWebhookResult'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
         '503':
           $ref: '#/components/responses/Unavailable'
   /health:
@@ -949,4 +1196,136 @@ components:
           format: uri-reference
           description: Safe request path or occurrence identifier without secrets.
         correlation_id:
+          type: string
+    WebhookSubscription:
+      type: object
+      additionalProperties: false
+      required: [webhook_id, url, filter, view, is_active, owner_client_id, created_at, updated_at]
+      properties:
+        webhook_id:
+          type: string
+          minLength: 1
+        url:
+          type: string
+          format: uri
+        filter:
+          type: object
+          properties:
+            source:
+              $ref: '#/components/schemas/Source'
+            hazard_type:
+              $ref: '#/components/schemas/HazardType'
+            severity:
+              $ref: '#/components/schemas/Severity'
+        view:
+          type: string
+          enum: [summary, full]
+        is_active:
+          type: boolean
+        description:
+          type: string
+        owner_client_id:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+    CreateWebhookRequest:
+      type: object
+      additionalProperties: false
+      required: [url]
+      properties:
+        url:
+          type: string
+          format: uri
+        secret:
+          type: string
+          description: Optional HMAC signing secret. Generated by server if omitted.
+        filter:
+          type: object
+          properties:
+            source:
+              $ref: '#/components/schemas/Source'
+            hazard_type:
+              $ref: '#/components/schemas/HazardType'
+            severity:
+              $ref: '#/components/schemas/Severity'
+        view:
+          type: string
+          enum: [summary, full]
+          default: summary
+        description:
+          type: string
+    WebhookPage:
+      type: object
+      additionalProperties: false
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/WebhookSubscription'
+        next_page_token:
+          type: string
+          minLength: 1
+    WebhookDelivery:
+      type: object
+      additionalProperties: false
+      required: [delivery_id, webhook_id, event_id, hazard_id, status_code, status, attempt, duration_ms, delivered_at]
+      properties:
+        delivery_id:
+          type: string
+          minLength: 1
+        webhook_id:
+          type: string
+          minLength: 1
+        event_id:
+          type: string
+          minLength: 1
+        hazard_id:
+          type: string
+          minLength: 1
+        status_code:
+          type: integer
+        status:
+          type: string
+          enum: [SUCCESS, FAILED, RETRYING]
+        attempt:
+          type: integer
+          minimum: 1
+        duration_ms:
+          type: integer
+          minimum: 0
+        error_message:
+          type: string
+        delivered_at:
+          type: string
+          format: date-time
+    WebhookDeliveryPage:
+      type: object
+      additionalProperties: false
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/WebhookDelivery'
+        next_page_token:
+          type: string
+          minLength: 1
+    PingWebhookResult:
+      type: object
+      additionalProperties: false
+      required: [status_code, duration_ms, success, message]
+      properties:
+        status_code:
+          type: integer
+        duration_ms:
+          type: integer
+          minimum: 0
+        success:
+          type: boolean
+        message:
           type: string

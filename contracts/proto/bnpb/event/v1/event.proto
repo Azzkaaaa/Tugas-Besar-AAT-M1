@@ -11,7 +11,7 @@ import "google/protobuf/timestamp.proto";
 // Publish both newly created records and source updates to existing records.
 // At-least-once delivery: retrying a publish must preserve event_id and payload.
 // All three subscribers receive independent copies on separate durable queues;
-// do not share a queue across notification/seismic/volcanic consumers.
+// do not share a queue across danger-notification, event-live-feed, and webhook-provider consumers.
 message HazardEventPublished {
   // Unique per committed revision. Updates retain payload.hazard_id and
   // payload.ingested_at but have a new publication event_id and occurred_at.

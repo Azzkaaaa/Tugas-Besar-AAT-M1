@@ -22,15 +22,15 @@ penerima pada tabel. Semua durasi memakai satuan yang tertulis pada nama.
 | `PVMBG_HTTP_PORT` | `8082` | PVMBG Mock |
 | `AGGREGATOR_GRPC_PORT` | `9091` | Aggregator |
 | `AUTH_GRPC_PORT` | `9092` | Auth |
-| `SEISMIC_FEED_GRPC_PORT` | `9093` | Seismic Live Feed |
-| `VOLCANIC_FEED_GRPC_PORT` | `9094` | Volcanic Live Feed |
+| `EVENT_FEED_GRPC_PORT` | `9093` | Event Live Feed |
+| `WEBHOOK_GRPC_PORT` | `9094` | Webhook Provider |
 | `NOTIFICATION_GRPC_PORT` | `9095` | Danger Notification |
 | `BMKG_BASE_URL` | `http://bmkg-mock:8081` | Aggregator |
 | `PVMBG_BASE_URL` | `http://pvmbg-mock:8082` | Aggregator |
 | `AGGREGATOR_GRPC_ADDRESS` | `aggregator:9091` | Gateway, Danger Notification untuk freshness |
-| `AUTH_GRPC_ADDRESS` | `auth:9092` | Gateway, Aggregator, kedua feed, Danger Notification |
-| `SEISMIC_FEED_GRPC_ADDRESS` | `seismic-live-feed:9093` | Gateway |
-| `VOLCANIC_FEED_GRPC_ADDRESS` | `volcanic-live-feed:9094` | Gateway |
+| `AUTH_GRPC_ADDRESS` | `auth:9092` | Gateway, Aggregator, Event Live Feed, Webhook Provider, Danger Notification |
+| `EVENT_FEED_GRPC_ADDRESS` | `event-live-feed:9093` | Gateway |
+| `WEBHOOK_GRPC_ADDRESS` | `webhook-provider:9094` | Gateway |
 | `NOTIFICATION_GRPC_ADDRESS` | `danger-notification:9095` | Gateway |
 
 Alamat menggunakan nama service pada jaringan deployment yang direncanakan.
@@ -57,8 +57,8 @@ tambahan yang diasumsikan tersedia.
 | `REFRESH_TOKEN_TTL_SECONDS` | `86400` | Auth |
 | `GATEWAY_SERVICE_TOKEN` | `REPLACE_GATEWAY_SERVICE_TOKEN` | Gateway sebagai pemanggil; Auth untuk allowlist |
 | `AGGREGATOR_SERVICE_TOKEN` | `REPLACE_AGGREGATOR_SERVICE_TOKEN` | Aggregator sebagai pemanggil; Auth untuk allowlist |
-| `SEISMIC_FEED_SERVICE_TOKEN` | `REPLACE_SEISMIC_SERVICE_TOKEN` | Seismic Live Feed sebagai pemanggil; Auth untuk allowlist |
-| `VOLCANIC_FEED_SERVICE_TOKEN` | `REPLACE_VOLCANIC_SERVICE_TOKEN` | Volcanic Live Feed sebagai pemanggil; Auth untuk allowlist |
+| `EVENT_FEED_SERVICE_TOKEN` | `REPLACE_EVENT_FEED_SERVICE_TOKEN` | Event Live Feed sebagai pemanggil; Auth untuk allowlist |
+| `WEBHOOK_SERVICE_TOKEN` | `REPLACE_WEBHOOK_SERVICE_TOKEN` | Webhook Provider sebagai pemanggil; Auth untuk allowlist |
 | `NOTIFICATION_SERVICE_TOKEN` | `REPLACE_NOTIFICATION_SERVICE_TOKEN` | Danger Notification sebagai pemanggil; Auth untuk allowlist |
 
 Ketiga domain BMKG, PVMBG, dan token pengguna BNPB harus independen. Ketiga
@@ -76,7 +76,7 @@ Contoh alur: Gateway memanggil Aggregator dengan `GATEWAY_SERVICE_TOKEN` pada
 `x-service-token`, plus access token pengguna asli pada `authorization`.
 Aggregator memverifikasi identitas pemanggil, lalu memanggil Auth dengan
 `AGGREGATOR_SERVICE_TOKEN` miliknya sendiri dan access token pengguna yang sama.
-Pola serupa berlaku untuk kedua feed dan Danger Notification. Actor token tidak
+Pola serupa berlaku untuk Event Live Feed, Webhook Provider, dan Danger Notification. Actor token tidak
 diganti menjadi identitas service. Login/refresh/logout memakai kredensial
 request sesuai proto dan tetap memiliki identitas service pada metadata.
 
@@ -126,8 +126,8 @@ Setiap store/cache hanya boleh diakses langsung oleh pemilik berikut.
 | `AUTH_STORE_DSN` | kosong | Auth |
 | `AUTH_CACHE_DSN` | kosong | Auth |
 | `NOTIFICATION_STORE_DSN` | kosong | Danger Notification |
-| `SEISMIC_FEED_CACHE_DSN` | kosong | Seismic Live Feed |
-| `VOLCANIC_FEED_CACHE_DSN` | kosong | Volcanic Live Feed |
+| `EVENT_FEED_CACHE_DSN` | kosong | Event Live Feed |
+| `WEBHOOK_STORE_DSN` | kosong | Webhook Provider |
 
 Jika satu server database/cache fisik menampung beberapa store, gunakan
 database/namespace, akun, dan izin terpisah. Gateway tidak menerima DSN.
@@ -138,12 +138,12 @@ Komponen lain meminta data kanonik melalui API Aggregator.
 | Variabel | Default contoh | Pemakai |
 | --- | --- | --- |
 | `AGGREGATOR_AMQP_URL` | `amqp://aggregator:REPLACE_PUBLISHER_SECRET@rabbitmq:5672/bnpb` | Aggregator; publish |
-| `SEISMIC_FEED_AMQP_URL` | `amqp://seismic-feed:REPLACE_SEISMIC_BROKER_SECRET@rabbitmq:5672/bnpb` | Seismic Live Feed; consume queue sendiri |
-| `VOLCANIC_FEED_AMQP_URL` | `amqp://volcanic-feed:REPLACE_VOLCANIC_BROKER_SECRET@rabbitmq:5672/bnpb` | Volcanic Live Feed; consume queue sendiri |
+| `EVENT_FEED_AMQP_URL` | `amqp://event-feed:REPLACE_FEED_BROKER_SECRET@rabbitmq:5672/bnpb` | Event Live Feed; consume queue sendiri |
+| `WEBHOOK_AMQP_URL` | `amqp://webhook-provider:REPLACE_WEBHOOK_BROKER_SECRET@rabbitmq:5672/bnpb` | Webhook Provider; consume queue sendiri |
 | `NOTIFICATION_AMQP_URL` | `amqp://notifier:REPLACE_NOTIFIER_BROKER_SECRET@rabbitmq:5672/bnpb` | Danger Notification; consume queue sendiri |
 | `RABBITMQ_EXCHANGE` | `bnpb.hazards.v1` | Publisher, ketiga consumer, provisioning broker |
-| `RABBITMQ_SEISMIC_QUEUE` | `bnpb.seismic-feed.v1` | Seismic Live Feed, provisioning broker |
-| `RABBITMQ_VOLCANIC_QUEUE` | `bnpb.volcanic-feed.v1` | Volcanic Live Feed, provisioning broker |
+| `RABBITMQ_EVENT_FEED_QUEUE` | `bnpb.event-live-feed.v1` | Event Live Feed, provisioning broker |
+| `RABBITMQ_WEBHOOK_QUEUE` | `bnpb.webhook-provider.v1` | Webhook Provider, provisioning broker |
 | `RABBITMQ_NOTIFICATION_QUEUE` | `bnpb.danger-notification.v1` | Danger Notification, provisioning broker |
 
 Rencanakan exchange fan-out dan queue durable independen, pesan persistent,

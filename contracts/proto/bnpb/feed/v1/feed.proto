@@ -6,20 +6,16 @@ import "bnpb/common/v1/common.proto";
 import "google/protobuf/timestamp.proto";
 
 // Gateway translates these server streams into SSE. Services consume dedicated
-// RabbitMQ queues and keep bounded replay buffers; they do not poll the sources
-// or create another canonical hazard store. Every subscription requires service
+// RabbitMQ queue (bnpb.event-live-feed.v1) and keep bounded replay buffers; they do not poll
+// the sources or create another canonical hazard store. Every subscription requires service
 // identity plus the original actor token. Revalidate active sessions and stop
 // with UNAUTHENTICATED at token expiry/revocation, including during idle periods.
-service SeismicFeedService {
-  rpc SubscribeSeismic(SubscribeSeismicRequest) returns (stream SubscribeSeismicResponse);
+service EventFeedService {
+  rpc SubscribeEvents(SubscribeEventsRequest) returns (stream SubscribeEventsResponse);
 }
 
-service VolcanicFeedService {
-  rpc SubscribeVolcanic(SubscribeVolcanicRequest) returns (stream SubscribeVolcanicResponse);
-}
-
-message SubscribeSeismicRequest {
-  // Only BMKG / SEISMIC records are emitted. SUMMARY is the default.
+message SubscribeEventsRequest {
+  // SUMMARY is the default; FULL requires hazards:read:full scope.
   bnpb.common.v1.View view = 1;
   // Opaque Last-Event-ID cursor. Absent/empty starts from new live events.
   // Replay is exclusive of this event and joins the live stream without gaps.
@@ -27,21 +23,12 @@ message SubscribeSeismicRequest {
   // invalid cursor is INVALID_ARGUMENT; an expired/lost replay cursor:
   // OUT_OF_RANGE. Never silently skip missing events.
   optional string resume_after = 2;
+  // Optional filter: filter by source, hazard_type, or severity.
+  // Unspecified means all events are streamed.
+  bnpb.common.v1.HazardFilter filter = 3;
 }
 
-message SubscribeSeismicResponse {
-  FeedEvent event = 1;
-}
-
-message SubscribeVolcanicRequest {
-  // Only PVMBG / VOLCANIC records are emitted. SUMMARY is the default.
-  bnpb.common.v1.View view = 1;
-  // Same replay semantics as SubscribeSeismicRequest.resume_after, scoped to
-  // this stream. A cursor from the seismic stream is INVALID_ARGUMENT.
-  optional string resume_after = 2;
-}
-
-message SubscribeVolcanicResponse {
+message SubscribeEventsResponse {
   FeedEvent event = 1;
 }
 

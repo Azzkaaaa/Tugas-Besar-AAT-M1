@@ -11,7 +11,8 @@ memerlukan package versi baru.
 | `bnpb/common/v1/common.proto` | Record kanonik, proyeksi, filter, pagination, freshness |
 | `bnpb/aggregator/v1/aggregator.proto` | `AggregatorService`: `ListHazards`, `GetHazard`, `GetSourceStatuses` |
 | `bnpb/auth/v1/auth.proto` | `AuthService`: `Login`, `RefreshToken`, `Logout`, `Authorize` |
-| `bnpb/feed/v1/feed.proto` | `SeismicFeedService.SubscribeSeismic`, `VolcanicFeedService.SubscribeVolcanic` |
+| `bnpb/feed/v1/feed.proto` | `EventFeedService.SubscribeEvents` |
+| `bnpb/webhook/v1/webhook.proto` | `WebhookService`: `CreateWebhook`, `ListWebhooks`, `GetWebhook`, `DeleteWebhook`, `ListDeliveries`, `PingWebhook` |
 | `bnpb/notification/v1/notification.proto` | `DangerNotificationService`: `ListNotifications`, `GetNotification` |
 | `bnpb/event/v1/event.proto` | Envelope RabbitMQ `HazardEventPublished` |
 
@@ -48,22 +49,25 @@ memenuhi semantik logout dan refresh rotation ini.
 
 | Role | Scope |
 | --- | --- |
-| `MEDIA` | `hazards:read:summary`, `notifications:read` |
-| `FIELD_TEAM` | `hazards:read:summary`, `hazards:read:full`, `notifications:read` |
-| `BNPB_INTERNAL` | `hazards:read:summary`, `hazards:read:full`, `notifications:read` |
+| `MEDIA` | `hazards:read:summary`, `notifications:read`, `webhooks:read` |
+| `FIELD_TEAM` | `hazards:read:summary`, `hazards:read:full`, `notifications:read`, `webhooks:read`, `webhooks:write` |
+| `BNPB_INTERNAL` | `hazards:read:summary`, `hazards:read:full`, `notifications:read`, `webhooks:read`, `webhooks:write` |
 
 Role dan scope ditentukan registrasi client di Auth, bukan request login.
 Default `VIEW_UNSPECIFIED` adalah `VIEW_SUMMARY`. Semua hazard reads dan feed
 memerlukan `hazards:read:summary`; view FULL juga memerlukan
 `hazards:read:full`. Notification reads juga memerlukan `notifications:read`.
-Request FULL tanpa izin gagal `PERMISSION_DENIED`, bukan diturunkan diam-diam.
+Webhook subscription reads memerlukan `webhooks:read`; pembuatan/penghapusan
+memerlukan `webhooks:write`. Request FULL tanpa izin gagal `PERMISSION_DENIED`,
+bukan diturunkan diam-diam.
 
 `HazardProjection` memakai `oneof summary/full`. Summary hanya memiliki
 `hazard_id`, `source`, `hazard_type`, `severity`, `area_name`, `occurred_at`, dan
 `ingested_at`. Koordinat, `source_ref_id`, serta `attributes` hanya ada di FULL.
-Pesan notifikasi juga harus disusun dari field summary agar tidak membocorkan
+Pesan notifikasi dan payload webhook Media juga harus disusun dari field summary agar tidak membocorkan
 field FULL. Aggregator merupakan satu-satunya penulis record kanonik; feed
-menyimpan replay sementara dan Danger Notification menyimpan hasil turunannya.
+menyimpan replay sementara, Danger Notification menyimpan hasil turunannya, dan Webhook Provider
+mengelola langganan webhook serta riwayat pengiriman.
 
 Gateway memetakan enum Protobuf berprefiks ke label REST, misalnya
 `SOURCE_BMKG` menjadi `BMKG`, `VIEW_SUMMARY` menjadi `summary`, dan
@@ -141,9 +145,11 @@ bermakna menghasilkan publikasi. Revisi mempertahankan `hazard_id` dan waktu
 ingest pertama `ingested_at`, tetapi mendapat `event_id` publikasi baru. Retry
 atas publikasi yang sama memakai `event_id` yang sama.
 Tiga consumer memakai queue durable masing-masing agar setiap event dapat
-diterima semuanya. Feed memilih jenis hazard yang relevan; notification memilih
-SIAGA/AWAS. Consumer idempotent, ack setelah side effect tersimpan, dan error
-permanen dialihkan ke dead-letter queue setelah retry terbatas. Skema envelope
+diterima semuanya: `bnpb.danger-notification.v1`, `bnpb.event-live-feed.v1`, dan
+`bnpb.webhook-provider.v1`. Feed menyalurkan stream ke client dengan filter opsional;
+notification memilih SIAGA/AWAS; webhook provider memicu pengiriman HTTP POST ke
+endpoint eksternal terdaftar. Consumer idempotent, ack setelah side effect tersimpan,
+dan error permanen dialihkan ke dead-letter queue setelah retry terbatas. Skema envelope
 tidak mengubah kebutuhan server untuk memvalidasi nilai dan scope pada runtime.
 
 Referensi: [Proto3](https://protobuf.dev/programming-guides/proto3/),
