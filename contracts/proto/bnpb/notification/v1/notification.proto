@@ -7,12 +7,14 @@ import "google/protobuf/timestamp.proto";
 
 // Consumes its own RabbitMQ queue and persists derived notifications. Only
 // SEVERITY_SIAGA or SEVERITY_AWAS hazards create notifications. Deduplicate by
-// published event_id. No external create/update/delete endpoint is exposed.
-// Reads require service identity, the original actor token, notifications:read
-// and hazards:read:summary; FULL additionally requires hazards:read:full.
+// published event_id. Reads require service identity, the original actor token,
+// notifications:read and hazards:read:summary; FULL additionally requires
+// hazards:read:full.
 service DangerNotificationService {
   rpc ListNotifications(ListNotificationsRequest) returns (ListNotificationsResponse);
   rpc GetNotification(GetNotificationRequest) returns (GetNotificationResponse);
+  rpc RegisterPushToken(RegisterPushTokenRequest) returns (RegisterPushTokenResponse);
+  rpc UnregisterPushToken(UnregisterPushTokenRequest) returns (UnregisterPushTokenResponse);
 }
 
 message ListNotificationsRequest {
@@ -27,12 +29,7 @@ message ListNotificationsResponse {
   // Frozen snapshot ordered by created_at descending, notification_id ascending.
   repeated DangerNotification items = 1;
   string next_page_token = 2;
-  // Freshness of relevant sources, obtained from Aggregator using actor metadata.
-  // Derived notifications may lag ingestion; this is upstream source freshness,
-  // not an assertion that the consumer has processed the latest broker event.
   repeated bnpb.common.v1.SourceFreshness freshness = 3;
-  // Same rules as ListHazards: true for any relevant STALE/UNAVAILABLE source;
-  // fail UNAVAILABLE if every relevant source is UNAVAILABLE.
   bool partial = 4;
 }
 
@@ -43,10 +40,21 @@ message GetNotificationRequest {
 
 message GetNotificationResponse {
   DangerNotification item = 1;
-  // Exactly one entry: the returned notification hazard's source.
   repeated bnpb.common.v1.SourceFreshness freshness = 2;
   bool partial = 3;
 }
+
+message RegisterPushTokenRequest {
+  string fcm_token = 1;
+}
+
+message RegisterPushTokenResponse {}
+
+message UnregisterPushTokenRequest {
+  string fcm_token = 1;
+}
+
+message UnregisterPushTokenResponse {}
 
 message DangerNotification {
   string notification_id = 1;
@@ -56,4 +64,13 @@ message DangerNotification {
   // source_ref_id, coordinates, attributes or other restricted upstream data.
   string message = 3;
   google.protobuf.Timestamp created_at = 4;
+
+  // Tracks push delivery state for this notification
+  enum PushStatus {
+    PUSH_STATUS_UNSPECIFIED = 0;
+    PUSH_STATUS_PENDING = 1;
+    PUSH_STATUS_DELIVERED = 2;
+    PUSH_STATUS_FAILED = 3;
+  }
+  PushStatus push_status = 5;
 }

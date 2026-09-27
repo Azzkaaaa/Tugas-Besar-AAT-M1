@@ -9,7 +9,7 @@ info:
 
     Three independently provisioned client classes are MEDIA, FIELD_TEAM, and
     BNPB_INTERNAL. Credentials, grants, quotas, and sessions are isolated per
-    client. MEDIA receives hazards:read:summary and notifications:read;
+    client and managed via Zitadel. MEDIA receives hazards:read:summary and notifications:read;
     FIELD_TEAM and BNPB_INTERNAL receive hazards:read:summary,
     hazards:read:full, and notifications:read by default. A deployment may narrow
     grants. A full projection requires both hazards:read:summary and
@@ -29,11 +29,9 @@ info:
   license:
     name: UNLICENSED
 servers:
-  - url: http://localhost:8080
-    description: Local gateway
+  - url: http://api.localhost:8080
+    description: API Gateway
 tags:
-  - name: Auth
-    description: Client credentials and rotating sessions.
   - name: Hazards
     description: Canonical cached hazard queries.
   - name: Feeds
@@ -45,92 +43,8 @@ tags:
   - name: Health
     description: Process health.
 security:
-  - BearerAuth: []
+  - ZitadelOIDC: []
 paths:
-  /api/v1/auth/login:
-    post:
-      tags: [Auth]
-      operationId: login
-      summary: Authenticate a provisioned client
-      description: Access-token TTL defaults to 60 seconds and is configurable.
-      security: []
-      parameters:
-        - $ref: '#/components/parameters/CorrelationId'
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/LoginRequest'
-      responses:
-        '200':
-          $ref: '#/components/responses/TokenResponse'
-        '400':
-          $ref: '#/components/responses/BadRequest'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '429':
-          $ref: '#/components/responses/TooManyRequests'
-        '503':
-          $ref: '#/components/responses/Unavailable'
-  /api/v1/auth/refresh:
-    post:
-      tags: [Auth]
-      operationId: refreshSession
-      summary: Rotate the refresh token and access token
-      description: |
-        Refresh tokens are single-use. Successful rotation invalidates the old
-        refresh token and all previous access tokens of this session immediately,
-        even if their JWT expiry has not elapsed. A replayed, expired, or revoked
-        refresh token returns 401. Other sessions of the client are unaffected.
-      security: []
-      parameters:
-        - $ref: '#/components/parameters/CorrelationId'
-      requestBody:
-        $ref: '#/components/requestBodies/RefreshToken'
-      responses:
-        '200':
-          $ref: '#/components/responses/TokenResponse'
-        '400':
-          $ref: '#/components/responses/BadRequest'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '429':
-          $ref: '#/components/responses/TooManyRequests'
-        '503':
-          $ref: '#/components/responses/Unavailable'
-  /api/v1/auth/logout:
-    post:
-      tags: [Auth]
-      operationId: logoutSession
-      summary: Revoke a session immediately
-      description: |
-        The supplied refresh token identifies the session. Revoke its refresh
-        token and every access token immediately. No bearer access token is
-        required, so a client can log out after its access token expires.
-        A valid already-revoked session token produces 204; unknown or expired
-        refresh tokens produce 401. Other client sessions are unaffected.
-      security: []
-      parameters:
-        - $ref: '#/components/parameters/CorrelationId'
-      requestBody:
-        $ref: '#/components/requestBodies/RefreshToken'
-      responses:
-        '204':
-          description: Session revoked.
-          headers:
-            X-Correlation-ID:
-              $ref: '#/components/headers/CorrelationId'
-            Cache-Control:
-              $ref: '#/components/headers/NoStore'
-        '400':
-          $ref: '#/components/responses/BadRequest'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '429':
-          $ref: '#/components/responses/TooManyRequests'
-        '503':
-          $ref: '#/components/responses/Unavailable'
   /api/v1/hazards:
     get:
       tags: [Hazards]
@@ -448,6 +362,64 @@ paths:
           $ref: '#/components/responses/TooManyRequests'
         '503':
           $ref: '#/components/responses/Unavailable'
+  /api/v1/notifications/push/register:
+    post:
+      tags: [Notifications]
+      operationId: registerPushToken
+      summary: Register an FCM token for push notifications
+      description: Associates an FCM token with the authenticated client for push delivery.
+      x-required-scopes: [notifications:read]
+      parameters:
+        - $ref: '#/components/parameters/CorrelationId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RegisterPushTokenRequest'
+      responses:
+        '204':
+          description: Token successfully registered.
+          headers:
+            X-Correlation-ID:
+              $ref: '#/components/headers/CorrelationId'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+  /api/v1/notifications/push/unregister:
+    post:
+      tags: [Notifications]
+      operationId: unregisterPushToken
+      summary: Unregister an FCM token
+      description: Removes an FCM token from push delivery for the authenticated client.
+      x-required-scopes: [notifications:read]
+      parameters:
+        - $ref: '#/components/parameters/CorrelationId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UnregisterPushTokenRequest'
+      responses:
+        '204':
+          description: Token successfully unregistered.
+          headers:
+            X-Correlation-ID:
+              $ref: '#/components/headers/CorrelationId'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '503':
+          $ref: '#/components/responses/Unavailable'
   /api/v1/webhooks:
     get:
       tags: [Webhooks]
@@ -690,13 +662,11 @@ paths:
           $ref: '#/components/responses/Unavailable'
 components:
   securitySchemes:
-    BearerAuth:
-      type: http
-      scheme: bearer
-      bearerFormat: JWT
+    ZitadelOIDC:
+      type: openIdConnect
+      openIdConnectUrl: http://auth.localhost:8080/.well-known/openid-configuration
       description: |
-        Short-lived access token with client, scope, expiry, and session claims.
-        Validate current session state to enforce immediate refresh/logout revoke.
+        Zitadel managed OpenID Connect authentication flow for end users. Validate tokens via API Gateway middleware.
   parameters:
     CorrelationId:
       name: X-Correlation-ID
@@ -790,32 +760,7 @@ components:
       schema:
         type: string
         example: Bearer
-  requestBodies:
-    RefreshToken:
-      required: true
-      content:
-        application/json:
-          schema:
-            type: object
-            additionalProperties: false
-            required: [refresh_token]
-            properties:
-              refresh_token:
-                type: string
-                minLength: 1
-                writeOnly: true
   responses:
-    TokenResponse:
-      description: Session token pair and effective scopes.
-      headers:
-        X-Correlation-ID:
-          $ref: '#/components/headers/CorrelationId'
-        Cache-Control:
-          $ref: '#/components/headers/NoStore'
-      content:
-        application/json:
-          schema:
-            $ref: '#/components/schemas/TokenPair'
     BadRequest:
       description: Invalid body, parameter, time range, or mismatched cursor.
       headers:
@@ -909,53 +854,12 @@ components:
             id: opaque-replay-cursor
             event: hazard.upsert
             data: {"event_id":"evt-001","sequence":"1","hazard":{"hazard_id":"haz-001","source":"BMKG","hazard_type":"SEISMIC","severity":"SIAGA","area_name":"Banda Sea","occurred_at":"2026-09-22T06:00:00Z","ingested_at":"2026-09-22T06:00:01Z"},"published_at":"2026-09-22T06:00:02Z"}
-
       x-sse-events:
         hazard.upsert:
           $ref: '#/components/schemas/HazardFeedEvent'
         reset_required:
           $ref: '#/components/schemas/ResetRequiredEvent'
   schemas:
-    LoginRequest:
-      type: object
-      additionalProperties: false
-      required: [client_id, client_secret]
-      properties:
-        client_id:
-          type: string
-          minLength: 1
-          description: Unique provisioned client ID, not a client-class selector.
-        client_secret:
-          type: string
-          minLength: 1
-          writeOnly: true
-    TokenPair:
-      type: object
-      additionalProperties: false
-      required: [access_token, token_type, expires_in, refresh_token, refresh_expires_in, scope]
-      properties:
-        access_token:
-          type: string
-          minLength: 1
-        token_type:
-          type: string
-          const: Bearer
-        expires_in:
-          type: integer
-          minimum: 1
-          description: Access-token lifetime in seconds; default policy is 60.
-          example: 60
-        refresh_token:
-          type: string
-          minLength: 1
-        refresh_expires_in:
-          type: integer
-          minimum: 1
-          description: Remaining refresh-token lifetime in seconds.
-        scope:
-          type: string
-          description: Space-separated effective granted scopes.
-          example: hazards:read:summary notifications:read
     Source:
       type: string
       enum: [BMKG, PVMBG]
@@ -1135,6 +1039,10 @@ components:
         message:
           type: string
           description: Summary-safe text derived only from HazardSummary fields.
+        push_status:
+          type: string
+          enum: [PENDING, DELIVERED, FAILED]
+          description: Delivery tracking for push notification bounds.
     NotificationResult:
       type: object
       additionalProperties: false
@@ -1171,6 +1079,24 @@ components:
             $ref: '#/components/schemas/Freshness'
         partial:
           type: boolean
+    RegisterPushTokenRequest:
+      type: object
+      additionalProperties: false
+      required: [fcm_token]
+      properties:
+        fcm_token:
+          type: string
+          minLength: 1
+          description: FCM registration token issued to a mobile or web client.
+    UnregisterPushTokenRequest:
+      type: object
+      additionalProperties: false
+      required: [fcm_token]
+      properties:
+        fcm_token:
+          type: string
+          minLength: 1
+          description: FCM registration token to remove.
     Problem:
       type: object
       additionalProperties: false
