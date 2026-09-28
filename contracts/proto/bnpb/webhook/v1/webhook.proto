@@ -4,6 +4,7 @@ package bnpb.webhook.v1;
 
 import "bnpb/common/v1/common.proto";
 import "google/protobuf/timestamp.proto";
+import "google/api/annotations.proto";
 
 // Consumes its own RabbitMQ queue (bnpb.webhook-provider.v1) and delivers
 // HTTP POST notifications to registered external webhooks upon hazard events.
@@ -13,12 +14,38 @@ import "google/protobuf/timestamp.proto";
 // Webhook delivery payloads are projected according to the subscribing client's authorized view:
 // Media subscribers receive SUMMARY only, while FIELD_TEAM / BNPB_INTERNAL can receive FULL.
 service WebhookService {
-  rpc CreateWebhook(CreateWebhookRequest) returns (CreateWebhookResponse);
-  rpc ListWebhooks(ListWebhooksRequest) returns (ListWebhooksResponse);
-  rpc GetWebhook(GetWebhookRequest) returns (GetWebhookResponse);
-  rpc DeleteWebhook(DeleteWebhookRequest) returns (DeleteWebhookResponse);
-  rpc ListDeliveries(ListDeliveriesRequest) returns (ListDeliveriesResponse);
-  rpc PingWebhook(PingWebhookRequest) returns (PingWebhookResponse);
+  rpc CreateWebhook(CreateWebhookRequest) returns (CreateWebhookResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/webhooks"
+      body: "*"
+    };
+  }
+  rpc ListWebhooks(ListWebhooksRequest) returns (ListWebhooksResponse) {
+    option (google.api.http) = {
+      get: "/api/v1/webhooks"
+    };
+  }
+  rpc GetWebhook(GetWebhookRequest) returns (GetWebhookResponse) {
+    option (google.api.http) = {
+      get: "/api/v1/webhooks/{webhook_id}"
+    };
+  }
+  rpc DeleteWebhook(DeleteWebhookRequest) returns (DeleteWebhookResponse) {
+    option (google.api.http) = {
+      delete: "/api/v1/webhooks/{webhook_id}"
+    };
+  }
+  rpc ListDeliveries(ListDeliveriesRequest) returns (ListDeliveriesResponse) {
+    option (google.api.http) = {
+      get: "/api/v1/webhooks/{webhook_id}/deliveries"
+    };
+  }
+  rpc PingWebhook(PingWebhookRequest) returns (PingWebhookResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/webhooks/{webhook_id}/test"
+      body: "*"
+    };
+  }
 }
 
 enum DeliveryStatus {

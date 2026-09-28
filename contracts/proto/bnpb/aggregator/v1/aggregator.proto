@@ -3,20 +3,35 @@ syntax = "proto3";
 package bnpb.aggregator.v1;
 
 import "bnpb/common/v1/common.proto";
+import "google/api/annotations.proto";
 
 // Internal read API over Aggregator's durable canonical store. Ingestion occurs
 // through polling the mock REST sources; public clients cannot mutate hazards.
 // Every method requires service identity and the original actor's bearer token.
 service AggregatorService {
   // Requires hazards:read:summary; FULL additionally requires hazards:read:full.
-  rpc ListHazards(ListHazardsRequest) returns (ListHazardsResponse);
+  rpc ListHazards(ListHazardsRequest) returns (ListHazardsResponse) {
+    option (google.api.http) = {
+      get: "/api/v1/hazards"
+    };
+  }
+
   // Same view scope requirements as ListHazards.
   // NOT_FOUND for an unknown hazard when relevant source data is usable;
   // UNAVAILABLE when no relevant source data is usable.
-  rpc GetHazard(GetHazardRequest) returns (GetHazardResponse);
+  rpc GetHazard(GetHazardRequest) returns (GetHazardResponse) {
+    option (google.api.http) = {
+      get: "/api/v1/hazards/{hazard_id}"
+    };
+  }
+
   // Requires hazards:read:summary. Returns both configured sources even if
   // either is unavailable; dependency failure of this service is UNAVAILABLE.
-  rpc GetSourceStatuses(GetSourceStatusesRequest) returns (GetSourceStatusesResponse);
+  rpc GetSourceStatuses(GetSourceStatusesRequest) returns (GetSourceStatusesResponse) {
+    option (google.api.http) = {
+      get: "/api/v1/hazards/sources/statuses"
+    };
+  }
 }
 
 message ListHazardsRequest {

@@ -1,0 +1,64 @@
+services:
+  gateway:
+    image: envoyproxy/envoy:v1.31-latest
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./services/envoy/envoy.yaml:/etc/envoy/envoy.yaml:ro
+      - ./services/envoy/sse_filter.lua:/etc/envoy/lua/sse_filter.lua:ro
+      - .services/envoy/bnpb_descriptor.pb:/etc/envoy/bnpb_descriptor.pb:ro
+    networks:
+      bnpb_net:
+        aliases:
+          - api.localhost
+
+  zitadel:
+    # Requires CockroachDB/Postgres in a full deployment
+    image: ghcr.io/zitadel/zitadel:latest
+    command: 'start-from-init --masterkey "a-32-byte-long-secret-key-change-me"'
+    networks:
+      bnpb_net:
+        aliases:
+          - zitadel.local
+          - auth.localhost
+
+  spa-server:
+    # Set your image/build context here
+    image: nginx:alpine
+    networks:
+      bnpb_net:
+        aliases:
+          - spa-server.local
+          - localhost
+
+  webhook-service:
+    # Set your image/build context here
+    networks:
+      bnpb_net:
+        aliases:
+          - webhook-service.local
+
+  notification-service:
+    # Set your image/build context here
+    networks:
+      bnpb_net:
+        aliases:
+          - notification-service.local
+
+  feed-service:
+    # Set your image/build context here
+    networks:
+      bnpb_net:
+        aliases:
+          - feed-service.local
+
+  aggregator-service:
+    # Set your image/build context here
+    networks:
+      bnpb_net:
+        aliases:
+          - aggregator-service.local
+
+networks:
+  bnpb_net:
+    driver: bridge

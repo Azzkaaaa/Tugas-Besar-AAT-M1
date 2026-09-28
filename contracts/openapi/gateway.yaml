@@ -151,6 +151,39 @@ paths:
           $ref: '#/components/responses/TooManyRequests'
         '503':
           $ref: '#/components/responses/Unavailable'
+  /api/v1/hazards/sources/statuses:
+    get:
+      tags: [Hazards]
+      operationId: getSourceStatuses
+      summary: Read upstream source freshness statuses
+      description: |
+        Requires hazards:read:summary. Returns the freshness status of all configured
+        sources, even if unavailable.
+      x-required-scopes:
+        summary: [hazards:read:summary]
+      parameters:
+        - $ref: '#/components/parameters/CorrelationId'
+      responses:
+        '200':
+          description: Source freshness statuses.
+          headers:
+            X-Correlation-ID:
+              $ref: '#/components/headers/CorrelationId'
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  freshness:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Freshness'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '503':
+          $ref: '#/components/responses/Unavailable'
   /api/v1/feeds/events:
     get:
       tags: [Feeds]
@@ -629,35 +662,6 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
-        '503':
-          $ref: '#/components/responses/Unavailable'
-  /health:
-    get:
-      tags: [Health]
-      operationId: getGatewayHealth
-      summary: Check gateway process health
-      description: Liveness only; upstream degradation is represented in freshness.
-      security: []
-      parameters:
-        - $ref: '#/components/parameters/CorrelationId'
-      responses:
-        '200':
-          description: Gateway process is alive.
-          headers:
-            X-Correlation-ID:
-              $ref: '#/components/headers/CorrelationId'
-          content:
-            application/json:
-              schema:
-                type: object
-                additionalProperties: false
-                required: [status]
-                properties:
-                  status:
-                    type: string
-                    const: ok
-        '400':
-          $ref: '#/components/responses/BadRequest'
         '503':
           $ref: '#/components/responses/Unavailable'
 components:

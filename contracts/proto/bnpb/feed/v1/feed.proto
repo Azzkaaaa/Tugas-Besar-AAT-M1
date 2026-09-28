@@ -4,6 +4,7 @@ package bnpb.feed.v1;
 
 import "bnpb/common/v1/common.proto";
 import "google/protobuf/timestamp.proto";
+import "google/api/annotations.proto";
 
 // Gateway translates these server streams into SSE. Services consume dedicated
 // RabbitMQ queue (bnpb.event-live-feed.v1) and keep bounded replay buffers; they do not poll
@@ -11,7 +12,17 @@ import "google/protobuf/timestamp.proto";
 // identity plus the original actor token. Revalidate active sessions and stop
 // with UNAUTHENTICATED at token expiry/revocation, including during idle periods.
 service EventFeedService {
-  rpc SubscribeEvents(SubscribeEventsRequest) returns (stream SubscribeEventsResponse);
+  rpc SubscribeEvents(SubscribeEventsRequest) returns (stream SubscribeEventsResponse) {
+    option (google.api.http) = {
+      get: "/api/v1/feeds/events"
+      additional_bindings {
+        get: "/api/v1/feeds/seismic"
+      }
+      additional_bindings {
+        get: "/api/v1/feeds/volcanic"
+      }
+    };
+  }
 }
 
 message SubscribeEventsRequest {

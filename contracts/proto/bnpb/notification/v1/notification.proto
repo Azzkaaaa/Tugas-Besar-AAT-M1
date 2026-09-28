@@ -4,6 +4,7 @@ package bnpb.notification.v1;
 
 import "bnpb/common/v1/common.proto";
 import "google/protobuf/timestamp.proto";
+import "google/api/annotations.proto";
 
 // Consumes its own RabbitMQ queue and persists derived notifications. Only
 // SEVERITY_SIAGA or SEVERITY_AWAS hazards create notifications. Deduplicate by
@@ -11,10 +12,28 @@ import "google/protobuf/timestamp.proto";
 // notifications:read and hazards:read:summary; FULL additionally requires
 // hazards:read:full.
 service DangerNotificationService {
-  rpc ListNotifications(ListNotificationsRequest) returns (ListNotificationsResponse);
-  rpc GetNotification(GetNotificationRequest) returns (GetNotificationResponse);
-  rpc RegisterPushToken(RegisterPushTokenRequest) returns (RegisterPushTokenResponse);
-  rpc UnregisterPushToken(UnregisterPushTokenRequest) returns (UnregisterPushTokenResponse);
+  rpc ListNotifications(ListNotificationsRequest) returns (ListNotificationsResponse) {
+    option (google.api.http) = {
+      get: "/api/v1/notifications"
+    };
+  }
+  rpc GetNotification(GetNotificationRequest) returns (GetNotificationResponse) {
+    option (google.api.http) = {
+      get: "/api/v1/notifications/{notification_id}"
+    };
+  }
+  rpc RegisterPushToken(RegisterPushTokenRequest) returns (RegisterPushTokenResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/notifications/push/register"
+      body: "*"
+    };
+  }
+  rpc UnregisterPushToken(UnregisterPushTokenRequest) returns (UnregisterPushTokenResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/notifications/push/unregister"
+      body: "*"
+    };
+  }
 }
 
 message ListNotificationsRequest {

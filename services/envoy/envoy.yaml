@@ -1,0 +1,154 @@
+static_resources:
+  listeners:
+    - name: listener_0
+      address:
+        socket_address: { address: 0.0.0.0, port_value: 8080 }
+      filter_chains:
+        - filters:
+            - name: envoy.filters.network.http_connection_manager
+              typed_config:
+                "@type": type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager
+                stat_prefix: ingress_http
+                codec_type: AUTO
+                route_config:
+                  name: local_route
+                  virtual_hosts:
+                    # 1. API Gateway (Matches Transcoded gRPC Paths)
+                    - name: api_host
+                      domains: ["api.localhost", "api.localhost:8080"]
+                      routes:
+                        - match: { prefix: "/bnpb.webhook.v1.WebhookService/" }
+                          route:
+                            cluster: webhook_cluster
+                        - match: { prefix: "/bnpb.notification.v1.DangerNotificationService/" }
+                          route:
+                            cluster: notification_cluster
+                        - match: { prefix: "/bnpb.feed.v1.EventFeedService/" }
+                          route:
+                            cluster: feed_cluster
+                        - match: { prefix: "/bnpb.aggregator.v1.AggregatorService/" }
+                          route:
+                            cluster: aggregator_cluster
+
+                    # 2. Zitadel Auth
+                    - name: auth_host
+                      domains: ["auth.localhost", "auth.localhost:8080"]
+                      routes:
+                        - match: { prefix: "/" }
+                          route:
+                            cluster: zitadel_cluster
+
+                    # 3. Standard SPA Web Server
+                    - name: spa_host
+                      domains: ["localhost", "localhost:8080"]
+                      routes:
+                        - match: { prefix: "/" }
+                          route:
+                            cluster: spa_cluster
+
+                http_filters:
+                  # Inject the externalized Lua script
+                  - name: envoy.filters.http.lua
+                    typed_config:
+                      "@type": type.googleapis.com/envoy.extensions.filters.http.lua.v3.Lua
+                      default_source_code:
+                        filename: "/etc/envoy/lua/sse_filter.lua"
+
+                  # The transcoder runs after Lua (processing the flattened REST params)
+                  # but before routing (rewriting the REST path to the gRPC package path)
+                  - name: envoy.filters.http.grpc_json_transcoder
+                    typed_config:
+                      "@type": type.googleapis.com/envoy.extensions.filters.http.grpc_json_transcoder.v3.GrpcJsonTranscoder
+                      proto_descriptor: "/etc/envoy/bnpb_descriptor.pb"
+                      services:
+                        - "bnpb.webhook.v1.WebhookService"
+                        - "bnpb.notification.v1.DangerNotificationService"
+                        - "bnpb.feed.v1.EventFeedService"
+                        - "bnpb.aggregator.v1.AggregatorService"
+                      print_options:
+                        add_whitespace: false
+                        always_print_primitive_fields: true
+                        always_print_enums_as_ints: false
+                        preserve_proto_field_names: true
+                        stream_newline_delimited: true
+
+                  - name: envoy.filters.http.router
+                    typed_config:
+                      "@type": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
+
+  clusters:
+    # --- Microservices Clusters ---
+    - name: webhook_cluster
+      type: LOGICAL_DNS
+      lb_policy: ROUND_ROBIN
+      typed_extension_protocol_options:
+        envoy.extensions.upstreams.http.v3.HttpProtocolOptions:
+          "@type": type.googleapis.com/envoy.extensions.upstreams.http.v3.HttpProtocolOptions
+          explicit_http_config: { http2_protocol_options: {} }
+      load_assignment:
+        cluster_name: webhook_cluster
+        endpoints:
+          - lb_endpoints:
+              - endpoint: { address: { socket_address: { address: webhook-service.local, port_value: 9090 } } }
+
+    - name: notification_cluster
+      type: LOGICAL_DNS
+      lb_policy: ROUND_ROBIN
+      typed_extension_protocol_options:
+        envoy.extensions.upstreams.http.v3.HttpProtocolOptions:
+          "@type": type.googleapis.com/envoy.extensions.upstreams.http.v3.HttpProtocolOptions
+          explicit_http_config: { http2_protocol_options: {} }
+      load_assignment:
+        cluster_name: notification_cluster
+        endpoints:
+          - lb_endpoints:
+              - endpoint: { address: { socket_address: { address: notification-service.local, port_value: 9090 } } }
+
+    - name: feed_cluster
+      type: LOGICAL_DNS
+      lb_policy: ROUND_ROBIN
+      typed_extension_protocol_options:
+        envoy.extensions.upstreams.http.v3.HttpProtocolOptions:
+          "@type": type.googleapis.com/envoy.extensions.upstreams.http.v3.HttpProtocolOptions
+          explicit_http_config: { http2_protocol_options: {} }
+      load_assignment:
+        cluster_name: feed_cluster
+        endpoints:
+          - lb_endpoints:
+              - endpoint: { address: { socket_address: { address: feed-service.local, port_value: 9090 } } }
+
+    - name: aggregator_cluster
+      type: LOGICAL_DNS
+      lb_policy: ROUND_ROBIN
+      typed_extension_protocol_options:
+        envoy.extensions.upstreams.http.v3.HttpProtocolOptions:
+          "@type": type.googleapis.com/envoy.extensions.upstreams.http.v3.HttpProtocolOptions
+          explicit_http_config: { http2_protocol_options: {} }
+      load_assignment:
+        cluster_name: aggregator_cluster
+        endpoints:
+          - lb_endpoints:
+              - endpoint: { address: { socket_address: { address: aggregator-service.local, port_value: 9090 } } }
+
+    # --- Platform Clusters ---
+    - name: zitadel_cluster
+      type: LOGICAL_DNS
+      lb_policy: ROUND_ROBIN
+      typed_extension_protocol_options:
+        envoy.extensions.upstreams.http.v3.HttpProtocolOptions:
+          "@type": type.googleapis.com/envoy.extensions.upstreams.http.v3.HttpProtocolOptions
+          explicit_http_config: { http2_protocol_options: {} }
+      load_assignment:
+        cluster_name: zitadel_cluster
+        endpoints:
+          - lb_endpoints:
+              - endpoint: { address: { socket_address: { address: zitadel.local, port_value: 8080 } } }
+
+    - name: spa_cluster
+      type: LOGICAL_DNS
+      lb_policy: ROUND_ROBIN
+      load_assignment:
+        cluster_name: spa_cluster
+        endpoints:
+          - lb_endpoints:
+              - endpoint: { address: { socket_address: { address: spa-server.local, port_value: 80 } } }
