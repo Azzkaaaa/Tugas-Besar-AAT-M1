@@ -1,0 +1,13 @@
+{
+  "private": true,
+  "devDependencies": {
+    "@bufbuild/buf": "^1.73.0",
+    "@openapitools/openapi-generator-cli": "^2.41.0",
+    "nx": "23.2.1"
+  },
+  "allowScripts": {
+    "@bufbuild/buf@1.73.0": true,
+    "nx@23.2.1": true,
+    "@openapitools/openapi-generator-cli@2.41.0": true
+  }
+}
