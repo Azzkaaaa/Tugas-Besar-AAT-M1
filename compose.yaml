@@ -1,16 +1,21 @@
 services:
-  gateway:
+  envoy:
     image: envoyproxy/envoy:v1.31-latest
     ports:
       - "8080:8080"
     volumes:
       - ./services/envoy/envoy.yaml:/etc/envoy/envoy.yaml:ro
       - ./services/envoy/sse_filter.lua:/etc/envoy/lua/sse_filter.lua:ro
-      - .services/envoy/bnpb_descriptor.pb:/etc/envoy/bnpb_descriptor.pb:ro
+      - ./services/envoy/bnpb_descriptor.pb:/etc/envoy/bnpb_descriptor.pb:ro
     networks:
       bnpb_net:
         aliases:
+          - envoy.local
+          - auth.localhost
+      internet_mock_net:
+        aliases:
           - api.localhost
+          - auth.localhost
 
   zitadel:
     # Requires CockroachDB/Postgres in a full deployment
@@ -20,7 +25,6 @@ services:
       bnpb_net:
         aliases:
           - zitadel.local
-          - auth.localhost
 
   spa-server:
     # Set your image/build context here
@@ -29,7 +33,6 @@ services:
       bnpb_net:
         aliases:
           - spa-server.local
-          - localhost
 
   webhook-service:
     # Set your image/build context here
@@ -58,7 +61,47 @@ services:
       bnpb_net:
         aliases:
           - aggregator-service.local
+      internet_mock_net:
+        aliases:
+          - aggregator.localhost
+
+  rabbitmq:
+    image: rabbitmq:4-management
+    networks:
+      bnpb_net:
+        aliases:
+          - rabbitmq.local
+
+  bmkg-mock:
+    # Set your image/build context here
+    ports:
+      - "8081:8080"
+    networks:
+      bmkg_net:
+        aliases:
+          - bmkg-mock.local
+      internet_mock_net:
+        aliases:
+          - bmkg.localhost
+
+  pvmbg-mock:
+    # Set your image/build context here
+    ports:
+      - "8082:8080"
+    networks:
+      pvmbg_net:
+        aliases:
+          - pvmbg-mock.local
+      internet_mock_net:
+        aliases:
+          - pvmbg.localhost
 
 networks:
+  internet_mock_net:
+    driver: bridge
   bnpb_net:
+    driver: bridge
+  bmkg_net:
+    driver: bridge
+  pvmbg_net:
     driver: bridge
