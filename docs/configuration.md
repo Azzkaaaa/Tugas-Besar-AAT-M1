@@ -1,39 +1,51 @@
 # Konfigurasi
 
-[`.env.example`](../.env.example) adalah inventaris konfigurasi. Saat ini hanya
-`API_DOCS_PORT` digunakan oleh [Compose penampil kontrak](../compose.yaml).
-Variabel aplikasi di bawah merupakan rencana, belum dibaca oleh implementasi.
-Bahasa, runtime, dan teknologi database belum dipilih.
+[`.env.example`](../.env.example) adalah inventaris konfigurasi. BMKG dan PVMBG
+sudah menggunakan Python 3.12 dan SQLite. Jalankan kedua mock melalui
+[`compose.mocks.yaml`](../compose.mocks.yaml); Compose utama juga memuat service
+lain yang belum selesai. Variabel untuk Aggregator, Auth, Gateway, broker, dan
+observability di bawah tetap merupakan target integrasi, bukan jaminan bahwa
+semua service tersebut sudah menggunakannya.
 
-Salin contoh ke `.env` lokal, lalu ganti setiap placeholder `REPLACE_*` dengan
-nilai independen. Service nantinya harus menolak placeholder sebagai secret.
+Jalankan `python tools/setup_mock_env.py` dari root repo untuk membuat `.env`
+lokal dan mengisi placeholder kredensial kedua mock dengan nilai acak independen.
+Jika `.env` sudah ada, nilai kredensial yang sudah diisi dipertahankan. Script
+tidak menyiapkan secret BNPB atau broker. Mock menolak secret kosong/placeholder.
 Jangan menyuntikkan seluruh `.env` ke semua container; pilih variabel sesuai
 penerima pada tabel. Semua durasi memakai satuan yang tertulis pada nama.
+
+Untuk eksekusi lokal, `python tools/run_mock.py bmkg` dan
+`python tools/run_mock.py pvmbg` membaca konfigurasi `.env` milik service yang
+dipilih; environment shell memiliki prioritas. Detail penggunaan dan pengujian
+ada di [panduan mock](mock-services.md).
 
 ## Lingkungan, port, dan alamat
 
 | Variabel | Default contoh | Pemakai |
 | --- | --- | --- |
 | `API_DOCS_PORT` | `8090` | Penampil Swagger UI; bind localhost |
-| `APP_ENV` | `development` | Semua service aplikasi |
-| `LOG_LEVEL` | `info` | Semua service aplikasi |
+| `APP_ENV` | `development` | Rencana konfigurasi aplikasi BNPB; belum dibaca mock |
+| `LOG_LEVEL` | `info` | Rencana konfigurasi aplikasi BNPB; mock mencatat log JSON tanpa override ini |
 | `GATEWAY_HTTP_PORT` | `8080` | Gateway |
-| `BMKG_HTTP_PORT` | `8081` | BMKG Mock |
-| `PVMBG_HTTP_PORT` | `8082` | PVMBG Mock |
+| `BMKG_HTTP_PORT` | `8081` | Listener BMKG lokal; port host saat memakai Compose |
+| `PVMBG_HTTP_PORT` | `8082` | Listener PVMBG lokal; port host saat memakai Compose |
 | `AGGREGATOR_GRPC_PORT` | `9091` | Aggregator |
 | `AUTH_GRPC_PORT` | `9092` | Auth |
 | `EVENT_FEED_GRPC_PORT` | `9093` | Event Live Feed |
 | `WEBHOOK_GRPC_PORT` | `9094` | Webhook Provider |
 | `NOTIFICATION_GRPC_PORT` | `9095` | Danger Notification |
-| `BMKG_BASE_URL` | `http://bmkg-mock:8081` | Aggregator |
-| `PVMBG_BASE_URL` | `http://pvmbg-mock:8082` | Aggregator |
+| `BMKG_BASE_URL` | `http://bmkg-mock:8080` | Aggregator pada jaringan Compose |
+| `PVMBG_BASE_URL` | `http://pvmbg-mock:8080` | Aggregator pada jaringan Compose |
 | `AGGREGATOR_GRPC_ADDRESS` | `aggregator:9091` | Gateway, Danger Notification untuk freshness |
 | `AUTH_GRPC_ADDRESS` | `auth:9092` | Gateway, Aggregator, Event Live Feed, Webhook Provider, Danger Notification |
 | `EVENT_FEED_GRPC_ADDRESS` | `event-live-feed:9093` | Gateway |
 | `WEBHOOK_GRPC_ADDRESS` | `webhook-provider:9094` | Gateway |
 | `NOTIFICATION_GRPC_ADDRESS` | `danger-notification:9095` | Gateway |
 
-Alamat menggunakan nama service pada jaringan deployment yang direncanakan.
+Kedua container mock mendengarkan port internal **8080**; host secara default
+memakai **8081** untuk BMKG dan **8082** untuk PVMBG. Nama service hanya berlaku
+di jaringan Compose. Pemanggil lokal memakai `http://localhost:8081` dan
+`http://localhost:8082`. Alamat service BNPB lain masih mengikuti rencana deployment.
 Mengganti port listener juga memerlukan pembaruan alamat pemanggil, port mapping,
 dan server URL OpenAPI untuk pengujian. Port HTTP dan gRPC tidak perlu seluruhnya
 dipublikasikan ke host. Health service HTTP adalah `/health`; health service gRPC
@@ -92,10 +104,8 @@ Aturan scope, pencabutan sesi, dan metadata ada di
 | `MOCK_SEED_COUNT` | `20` | Kedua mock; minimal 20 record per mock |
 | `MOCK_EVENT_INTERVAL_MS` | `10000` | Kedua mock; positif dan paling lama 10.000 ms |
 | `BMKG_RESPONSE_DELAY_MS` | `100` | BMKG Mock; delay tetap 50–150 ms |
-| `PVMBG_RESPONSE_DELAY_MIN_MS` | `500` | PVMBG Mock; batas bawah delay acak |
-| `PVMBG_RESPONSE_DELAY_MAX_MS` | `3000` | PVMBG Mock; batas atas delay acak |
-| `PVMBG_INITIAL_SCHEMA_VERSION` | `1` | PVMBG Mock; baseline mulai versi 1 tanpa confidence |
-| `PVMBG_INITIAL_OUTAGE` | `false` | PVMBG Mock; outage selanjutnya diatur operator lewat admin API |
+| `PVMBG_RESPONSE_DELAY_MIN_MS` | `500` | PVMBG Mock; batas bawah delay acak, minimal 0 |
+| `PVMBG_RESPONSE_DELAY_MAX_MS` | `3000` | PVMBG Mock; batas atas delay acak, minimal batas bawah |
 | `BMKG_POLL_INTERVAL_MS` | `3000` | Aggregator; positif, rekomendasi 2.000–5.000 ms |
 | `PVMBG_POLL_INTERVAL_MS` | `3000` | Aggregator; positif, rekomendasi 2.000–5.000 ms |
 | `BMKG_REQUEST_TIMEOUT_MS` | `1000` | Aggregator; timeout satu panggilan HTTP BMKG |
@@ -107,27 +117,48 @@ Aturan scope, pencabutan sesi, dan metadata ada di
 | `PAGE_TOKEN_TTL_SECONDS` | `300` | Aggregator dan Danger Notification; snapshot cursor masing-masing |
 
 Baseline delay PVMBG adalah rentang 500–3.000 ms; uji P2 memakai min=max=3.000 ms.
-Validator konfigurasi harus memeriksa min ≤ max dan nilai positif. Polling kedua
+Validator mock memeriksa min ≤ max dan kedua nilai nonnegatif sesuai OpenAPI;
+min=max=0 dapat digunakan dalam uji fungsional. Interval generator harus positif.
+PVMBG selalu mulai pada skema **1** dan outage **false**. Keduanya diubah lewat
+admin API dan kembali ke baseline saat proses restart; tidak ada variabel
+`PVMBG_INITIAL_SCHEMA_VERSION` atau `PVMBG_INITIAL_OUTAGE` yang perlu diatur.
+Generator terus menulis record selama injected outage sehingga polling dapat
+menyusul record yang terlewat sesudah pemulihan.
+
+Polling kedua
 sumber harus independen. Poll gagal dapat langsung menandai cache STALE meskipun
 freshness window belum lewat; window bukan periode tunggu sebelum mengakui
 outage. Pemulihan dilakukan lewat polling sukses, tanpa restart.
 
 ## Penyimpanan
 
-Semua DSN contoh sengaja kosong karena teknologi belum dipilih. Nilai kosong
-bukan database siap pakai; implementasi nanti harus memvalidasi konfigurasi.
-Setiap store/cache hanya boleh diakses langsung oleh pemilik berikut.
+Kedua mock memakai file SQLite yang berbeda. DSN `sqlite:///data/...` mengarah
+ke path relatif `data/...` terhadap direktori kerja: repo saat memakai launcher
+lokal, dan `/app` dalam container. Compose memasang volume terpisah pada
+`/app/data` masing-masing container. Store BNPB lain belum ditentukan; DSN kosong
+di bagian tersebut bukan database siap pakai. Setiap store/cache hanya boleh
+diakses langsung oleh pemilik berikut.
+
+DSN mock harus berawalan `sqlite:///` dan menunjuk file persisten. Nilai kosong,
+`:memory:`, dan URI `file:` ditolak. Path absolut dapat digunakan, misalnya
+`sqlite:///D:/mock-data/bmkg.sqlite3` pada Windows atau
+`sqlite:////var/lib/mock/bmkg.sqlite3` pada Linux; direktori tujuan harus writable.
 
 | Variabel | Default contoh | Pemilik tunggal |
 | --- | --- | --- |
-| `BMKG_STORE_DSN` | kosong | BMKG Mock |
-| `PVMBG_STORE_DSN` | kosong | PVMBG Mock |
+| `BMKG_STORE_DSN` | `sqlite:///data/bmkg.sqlite3` | BMKG Mock; volume Compose `bmkg_data` |
+| `PVMBG_STORE_DSN` | `sqlite:///data/pvmbg.sqlite3` | PVMBG Mock; volume Compose `pvmbg_data` |
 | `CANONICAL_STORE_DSN` | kosong | Aggregator, termasuk state ingest/outbox |
 | `AUTH_STORE_DSN` | kosong | Auth |
 | `AUTH_CACHE_DSN` | kosong | Auth |
 | `NOTIFICATION_STORE_DSN` | kosong | Danger Notification |
 | `EVENT_FEED_CACHE_DSN` | kosong | Event Live Feed |
 | `WEBHOOK_STORE_DSN` | kosong | Webhook Provider |
+
+Record SQLite bertahan setelah restart proses/container selama file/volume
+dipertahankan. Kontrol skema/outage PVMBG adalah state runtime terpisah dari data.
+Jangan memasang volume SQLite BMKG ke PVMBG, atau memasang salah satunya ke
+Aggregator. Saat lokal, tetap gunakan dua path file yang berbeda.
 
 Jika satu server database/cache fisik menampung beberapa store, gunakan
 database/namespace, akun, dan izin terpisah. Gateway tidak menerima DSN.
@@ -162,8 +193,9 @@ deployment; variabel di atas belum menjalankan broker.
 | `OTEL_EXPORTER_OTLP_PROTOCOL` | `grpc` | Semua service aplikasi |
 | `OTEL_SERVICE_NAME` | `REPLACE_WITH_SERVICE_NAME` | Override menjadi nama unik tiap service |
 
-Collector, Prometheus, Jaeger, dan Grafana masih merupakan rencana deployment.
-Service harus meneruskan correlation ID dan trace context, serta mencatat
-latensi setiap panggilan keluar. Port exporter/scrape metrics dan instrumentasi
-SDK ditentukan setelah runtime dipilih; kontrak ini tidak menjanjikan endpoint
-HTTP `/metrics` pada setiap service gRPC.
+Mock sudah menulis log JSON per request dengan correlation ID, durasi, status,
+dan trace context masuk yang valid. Tidak ada panggilan service keluar dari mock.
+Variabel OTEL di atas belum mengaktifkan exporter pada kedua mock; integrasi
+Collector, Prometheus, Jaeger, dan Grafana tetap pekerjaan berikutnya. Port
+exporter/scrape metrics dan instrumentasi SDK belum ditetapkan; jangan menganggap
+endpoint HTTP `/metrics` tersedia.

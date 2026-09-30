@@ -1,7 +1,9 @@
 # Arsitektur dan keputusan kontrak
 
-Diagram berikut adalah **target implementasi** berdasarkan gambar pengguna.
-Saat ini hanya kontrak, struktur folder, validator, dan penampil API tersedia.
+Diagram berikut adalah **target sistem lengkap** berdasarkan gambar pengguna.
+BMKG dan PVMBG sudah diimplementasikan sebagai dua mock Python 3.12 mandiri,
+masing-masing dengan SQLite. Implementasi ini menyediakan sumber REST untuk
+Aggregator; alur BNPB pada diagram tetap target integrasi service berikutnya.
 Endpoint BNPB, wrapper respons, pagination, SSE, dan replay adalah pilihan desain
 repo; endpoint dan entitas mock mengikuti PDF.
 
@@ -17,8 +19,8 @@ flowchart TB
   aggregator -->|REST polling| bmkg[BMKG Mock]
   aggregator -->|REST polling| pvmbg[PVMBG Mock]
   aggregator --> canonical[(Canonical Store)]
-  bmkg --> bmkgdb[(BMKG Store)]
-  pvmbg --> pvmbgdb[(PVMBG Store)]
+  bmkg --> bmkgdb[(SQLite BMKG)]
+  pvmbg --> pvmbgdb[(SQLite PVMBG)]
   auth --> authdb[(Auth Store / Cache)]
   notification --> notificationdb[(Notification Store)]
   eventfeed --> eventfeedcache[(Event Feed Replay Cache / Redis)]
@@ -39,9 +41,30 @@ Semua komponen aplikasi menjadi container tersendiri saat implementasi. Setiap
 database/cache mempunyai satu pemilik. Gateway tidak mengakses database
 Aggregator atau Auth. Feed memegang buffer replay sementara, Notifier menyimpan
 hasil turunan, Webhook Provider menyimpan langganan webhook dan log pengiriman;
-ketiganya tidak menjadi penulis Canonical Store. Storage belum
+ketiganya tidak menjadi penulis Canonical Store. Storage kanonik belum
 dipilih: document store atau relational store dengan kolom JSON harus menerima
 `attributes` dinamis tanpa migrasi ketika field aditif muncul.
+
+## Implementasi sumber mock
+
+Setiap mock memiliki `app.py`, `config.py`, dan `storage.py` di folder service
+sendiri. `ThreadingHTTPServer` menangani request bersamaan; satu thread generator
+menambah data berkala. Tidak ada impor kode bisnis antar-mock. SQLite menyimpan
+payload JSON bersama ID dan timestamp berindeks sehingga penambahan
+`confidence_level` tidak memerlukan perubahan tabel. Kedua container memiliki
+volume sendiri: `bmkg_data` dan `pvmbg_data`. Hanya pemilik yang memasang volume.
+
+BMKG memvalidasi `X-BMKG-Key`, sedangkan PVMBG memvalidasi bearer token miliknya.
+Aggregator nantinya melakukan polling; kedua mock tidak memanggil broker, Auth,
+atau storage BNPB. Port host adalah 8081/8082, sementara listener di masing-masing
+container memakai 8080. Jalankan lingkup ini dengan
+`docker compose -f compose.mocks.yaml up --build -d`.
+
+PVMBG mulai dengan skema v1 dan outage nonaktif. Admin API mengubah state tersebut
+tanpa restart. Saat outage, data dan health mengembalikan 503 tetapi admin serta
+generator tetap berjalan. Restart mengembalikan state kontrol ke baseline,
+sementara record historis tetap tersimpan. Rincian alur, penyimpanan, demonstrasi,
+dan batas runtime ada di [panduan implementasi mock](mock-services.md).
 
 ## Polling, query, dan kegagalan
 
@@ -138,6 +161,11 @@ Log JSON minimal memuat `timestamp`, `level`, `service`, `correlation_id`,
 keluar tanpa token/secret. Poller membuat correlation ID per siklus dan
 mempertahankannya pada broker; request client meneruskan ID sepanjang jalur RPC.
 
-OpenTelemetry Collector menerima telemetry, Prometheus menyimpan metrik, Jaeger
-menyimpan trace, Grafana menampilkan dashboard. Lihat [deploy](../deploy/README.md).
-Infrastruktur ini belum dijalankan oleh Compose penampil kontrak.
+Mock sudah mencatat request dalam JSON, mengembalikan correlation ID, dan
+menghubungkan trace context masuk yang valid dengan log. Mock tidak membuat
+panggilan keluar. Ekspor span/metrik belum dihubungkan ke Collector.
+
+Target integrasi: OpenTelemetry Collector menerima telemetry, Prometheus
+menyimpan metrik, Jaeger menyimpan trace, dan Grafana menampilkan dashboard.
+Lihat [deploy](../deploy/README.md). Keberadaan logging mock tidak membuktikan
+integrasi observability sistem lengkap.
