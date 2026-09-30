@@ -1,0 +1,17 @@
+version: v2
+
+inputs:
+  - directory: ../..
+    paths:
+      - ../../contracts/proto/bnpb/common
+
+managed:
+  enabled: true
+  override:
+      - file_option: csharp_namespace
+        path: bnpb/common/v1
+        value: BNPB.Common.V1
+
+plugins:
+  - remote: buf.build/protocolbuffers/csharp
+    out: BNPB.Common/codegen

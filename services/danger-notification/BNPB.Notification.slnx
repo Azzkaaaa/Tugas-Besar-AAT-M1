@@ -1,0 +1,4 @@
+<Solution>
+  <Project Path="../../packages/bnpb-notification-dotnet/BNPB.Notification/BNPB.Notification.csproj" />
+  <Project Path="BNPB.Notification.Server/BNPB.Notification.Server.csproj" />
+</Solution>
