@@ -73,28 +73,14 @@ services:
           - rabbitmq.local
 
   bmkg-mock:
-    # Set your image/build context here
-    ports:
-      - "8081:8080"
-    networks:
-      bmkg_net:
-        aliases:
-          - bmkg-mock.local
-      internet_mock_net:
-        aliases:
-          - bmkg.localhost
+    extends:
+      file: compose.mocks.yaml
+      service: bmkg-mock
 
   pvmbg-mock:
-    # Set your image/build context here
-    ports:
-      - "8082:8080"
-    networks:
-      pvmbg_net:
-        aliases:
-          - pvmbg-mock.local
-      internet_mock_net:
-        aliases:
-          - pvmbg.localhost
+    extends:
+      file: compose.mocks.yaml
+      service: pvmbg-mock
 
 networks:
   internet_mock_net:
@@ -105,3 +91,7 @@ networks:
     driver: bridge
   pvmbg_net:
     driver: bridge
+
+volumes:
+  bmkg_data:
+  pvmbg_data:
