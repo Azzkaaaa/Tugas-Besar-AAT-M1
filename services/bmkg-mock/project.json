@@ -1,0 +1,16 @@
+{
+  "$schema": "../../node_modules/nx/schemas/project-schema.json",
+  "name": "bmkg-mock",
+  "projectType": "application",
+  "sourceRoot": "services/bmgk-mock",
+  "targets": {
+    "build": {
+      "dependsOn": ["^build"],
+      "cache": true,
+      "inputs": [
+        "{workspaceRoot}/contracts/openapi/bmkg.yaml",
+        "{projectRoot}/**/*.py"
+      ]
+    }
+  }
+}

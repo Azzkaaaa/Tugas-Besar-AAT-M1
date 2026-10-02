@@ -58,11 +58,30 @@ Referensi gunung dimiliki Aggregator dengan ID yang disepakati saat seed mock
 dibuat. ID tak dikenal masuk karantina/retry yang terlihat di metrik; jangan
 mengarang koordinat 0,0. Seed harus memakai ID yang ada pada referensi.
 
+Mock PVMBG menggunakan lima ID berikut. Tabel ini adalah kesepakatan referensi
+untuk implementasi Aggregator berikutnya; mock hanya mengirim `volcano_id`,
+bukan nama dan koordinat. Koordinat dibulatkan dan bersifat ilustratif untuk
+demo dengan data sintetis, bukan data pemantauan atau referensi operasional.
+
+| `volcano_id` | Nama demo | Latitude ilustratif | Longitude ilustratif |
+| --- | --- | --- | --- |
+| `merapi` | Gunung Merapi | -7.54 | 110.45 |
+| `semeru` | Gunung Semeru | -8.11 | 112.92 |
+| `anak-krakatau` | Gunung Anak Krakatau | -6.10 | 105.42 |
+| `marapi` | Gunung Marapi | -0.38 | 100.47 |
+| `lewotobi-laki-laki` | Gunung Lewotobi Laki-laki | -8.54 | 122.78 |
+
 PVMBG mulai versi 1 tanpa `confidence_level`. POST `/admin/schema-version` dengan
 `{"version":2}` mengaktifkan nilai 0–1; versi 1 menonaktifkannya tanpa restart.
 Jangan mengisi confidence nol saat field tidak ada; nilai 0 yang benar tetap
 disimpan. Simpan record sebelum/sesudah perubahan berdampingan. Perubahan
 proyeksi historis mock tidak menghapus atribut kanonik record yang tidak diperbarui.
+
+Implementasi mock menyimpan payload JSON dalam SQLite. Report baru yang dibuat
+saat v2 aktif memiliki `confidence_level`; report historis v1 tetap boleh tanpa
+field tersebut. Beralih kembali ke v1 hanya menyembunyikan field pada respons,
+tanpa menghapus nilainya dari database. Saat kembali ke v2, nilai tersimpan
+terlihat lagi. Restart mereset proyeksi aktif ke v1, bukan menghapus record.
 
 ## Incremental ingest dan evolusi
 

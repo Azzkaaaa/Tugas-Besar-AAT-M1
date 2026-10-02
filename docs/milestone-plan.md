@@ -1,8 +1,10 @@
 # Rencana penerimaan Milestone 1
 
 Dokumen ini menurunkan kriteria dari **IF4031 - Tugas Besar - M1.pdf** menjadi
-pekerjaan implementasi dan demo berikutnya. Repo saat ini menyiapkan struktur
-dan kontrak lintas bahasa. Checkbox di bawah adalah **target yang belum
+pekerjaan implementasi dan demo berikutnya. Repo menyediakan kontrak lintas
+bahasa dan implementasi dua mock Python + SQLite. Cara menjalankan serta cakupan
+uji mock ada di [panduan mock](mock-services.md). Checkbox di bawah adalah
+**target penerimaan sistem lengkap yang belum
 dibuktikan**; keberadaan OpenAPI atau proto tidak membuktikan perilaku runtime,
 kinerja, autentikasi, persistensi, maupun ketahanan sistem.
 
@@ -21,12 +23,14 @@ ada di [panduan proto](../contracts/proto/README.md).
 
 ## Prasyarat demo bersama
 
-- [ ] Pilih bahasa dan runtime tiap service, lalu implementasikan mock BMKG,
-  mock PVMBG, Aggregator, Auth, Gateway, Event Live Feed, Webhook Provider,
-  Danger Notification, dan SPA sesuai batas arsitektur.
+- [ ] Lengkapi implementasi Aggregator, Auth, Gateway, Event Live Feed, Webhook
+  Provider, Danger Notification, dan SPA sesuai batas arsitektur. Mock BMKG
+  dan PVMBG sudah memakai Python 3.12 + SQLite; integrasi seluruh alur masih
+  perlu dikerjakan dan dibuktikan.
 - [ ] Sediakan Dockerfile terpisah untuk setiap service dan satu perintah
   orkestrasi untuk menjalankan seluruh sistem. Setiap service dapat dihentikan
-  dan dijalankan sendiri. Langkah ini belum dikerjakan pada tahap kontrak.
+  dan dijalankan sendiri. Kedua mock sudah memiliki Dockerfile serta
+  `compose.mocks.yaml`; orkestrasi sistem lengkap masih perlu diverifikasi.
 - [ ] Semua komunikasi antar-service melewati REST, gRPC, atau RabbitMQ.
   Gateway membaca data kanonik melalui Aggregator; setiap storage hanya
   memiliki satu service pemilik. Tidak ada akses langsung lintas service ke
@@ -124,8 +128,9 @@ ada di [panduan proto](../contracts/proto/README.md).
   Gateway dan komponen lain menggunakan API pemilik data. Berlakukan prinsip
   satu pemilik juga pada store Auth, Notification, dan replay feed.
 - [ ] Jelaskan alasan batas service dan bandingkan minimal dua alternatif
-  penyimpanan beserta konsekuensinya. Bahasa aplikasi dan pilihan storage
-  masih menjadi keputusan implementasi berikutnya.
+  penyimpanan beserta konsekuensinya. Pilihan Python + SQLite untuk mock sudah
+  dijelaskan dalam [panduan mock](mock-services.md); storage kanonik dan
+  keputusan runtime service BNPB tetap pekerjaan berikutnya.
 
 ## P5 — Distribusi event ke banyak consumer
 
@@ -178,5 +183,5 @@ Contoh template deklarasi yang harus ditinjau kelompok:
 > diimplementasikan atau belum diverifikasi adalah [daftar].
 
 Persyaratan pengumpulan pada PDF merupakan pekerjaan kelompok berikutnya.
-Setup struktur dan kontrak ini tidak mengubah visibilitas GitHub, membuat tag
+Implementasi mock ini tidak mengubah visibilitas GitHub, membuat tag
 pengumpulan, atau mengirim formulir/laporan.
