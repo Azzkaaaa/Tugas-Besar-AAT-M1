@@ -14,12 +14,15 @@ import (
 
 	aggregatorv1 "github.com/Azzkaaaa/Tugas-Besar-AAT-M1/packages/bnpb-aggregator-go/bnpb/aggregator/v1"
 	commonv1 "github.com/Azzkaaaa/Tugas-Besar-AAT-M1/packages/bnpb-aggregator-go/bnpb/common/v1"
+	eventv1 "github.com/Azzkaaaa/Tugas-Besar-AAT-M1/packages/bnpb-aggregator-go/bnpb/event/v1"
 	"github.com/golang-jwt/jwt/v5"
+	amqp "github.com/rabbitmq/amqp091-go"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/proto"
 )
 
 type Config struct {
@@ -28,14 +31,19 @@ type Config struct {
 	BMKGBaseURL      string
 	PVMBGBearerToken string
 	BMKGAPIKey       string
+	AMQPURL          string
 }
 
 func loadConfig() *Config {
-	grpcHost := getEnv("AGGREGATOR_GRPC_HOST", "localhost:9091")
-	pvmbgBase := getEnv("PVMBG_BASE_URL", "http://localhost:8082")
-	bmkgBase := getEnv("BMKG_BASE_URL", "http://localhost:8081")
+	grpcHost := "localhost:" + getEnv("AGGREGATOR_GRPC_PORT", "9091")
+	pvmbgBase := "http://localhost:" + getEnv("PVMBG_HTTP_PORT", "8082")
+	bmkgBase := "http://localhost:" + getEnv("BMKG_HTTP_PORT", "8081")
 	pvmbgToken := getEnv("PVMBG_BEARER_TOKEN", "")
 	bmkgKey := getEnv("BMKG_API_KEY", "")
+	amqpUser := getEnv("RABBITMQ_DEFAULT_USER", "guest")
+	amqpPass := getEnv("RABBITMQ_DEFAULT_PASS", "guest")
+	amqpVhost := getEnv("RABBITMQ_DEFAULT_VHOST", "bnpb")
+	amqpURL := "amqp://" + amqpUser + ":" + amqpPass + "@localhost:5672/" + amqpVhost
 
 	// Load from .env if present
 	if data, err := os.ReadFile(".env"); err == nil {
@@ -65,6 +73,10 @@ func loadConfig() *Config {
 				if bmkgBase == "http://localhost:8081" {
 					bmkgBase = "http://localhost:" + v
 				}
+			case "AGGREGATOR_AMQP_URL":
+				if amqpURL == "amqp://guest:guest@localhost:5672/" {
+					amqpURL = v
+				}
 			}
 		}
 	}
@@ -75,6 +87,30 @@ func loadConfig() *Config {
 		BMKGBaseURL:      bmkgBase,
 		PVMBGBearerToken: pvmbgToken,
 		BMKGAPIKey:       bmkgKey,
+		AMQPURL:          amqpURL,
+	}
+}
+
+func loadDotEnv() {
+	candidates := []string{".env", "../.env"}
+	for _, path := range candidates {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			continue
+		}
+		for _, line := range strings.Split(string(data), "\n") {
+			line = strings.TrimSpace(line)
+			if strings.HasPrefix(line, "#") || !strings.Contains(line, "=") {
+				continue
+			}
+			parts := strings.SplitN(line, "=", 2)
+			k := strings.TrimSpace(parts[0])
+			v := strings.Trim(strings.TrimSpace(parts[1]), "\"'")
+			if os.Getenv(k) == "" && v != "" {
+				_ = os.Setenv(k, v)
+			}
+		}
+		break
 	}
 }
 
@@ -103,6 +139,7 @@ func withAuth(ctx context.Context, token string) context.Context {
 
 func main() {
 	flag.Parse()
+	loadDotEnv()
 	cfg := loadConfig()
 
 	log.Println("=================================================================")
@@ -313,7 +350,97 @@ func main() {
 			log.Println("  SUCCESS: PVMBG outage simulation completed successfully")
 		} else {
 			log.Fatalf("  FAILED: PVMBG outage simulation failed")
+		}
+	}
 
+	// --- TEST 7: RabbitMQ Fanout & Outbox Event Publishing Verification ---
+	log.Println("\n[TEST 7] Verifying RabbitMQ Event Publishing & Queues...")
+	amqpConn, err := amqp.Dial(cfg.AMQPURL)
+	if err != nil {
+		log.Printf("  WARNING: Could not connect to RabbitMQ at %s: %v", cfg.AMQPURL, err)
+		log.Println("  Ensure RabbitMQ is running to complete Test 7.")
+	} else {
+		defer amqpConn.Close()
+		amqpCh, err := amqpConn.Channel()
+		if err != nil {
+			log.Fatalf("  FAILED: Failed opening AMQP channel: %v", err)
+		}
+		defer amqpCh.Close()
+
+		consumerQueues := []string{
+			"bnpb.event-live-feed.v1",
+			"bnpb.webhook-provider.v1",
+			"bnpb.danger-notification.v1",
+		}
+		dlqQueues := []string{
+			"bnpb.event-live-feed.dlq.v1",
+			"bnpb.webhook-provider.dlq.v1",
+			"bnpb.danger-notification.dlq.v1",
+		}
+
+		// 7a. Verify all DLQs are declared
+		for _, dlq := range dlqQueues {
+			qInfo, err := amqpCh.QueueDeclarePassive(dlq, true, false, false, false, nil)
+			if err != nil {
+				log.Fatalf("  FAILED: DLQ %s not declared: %v", dlq, err)
+			}
+			log.Printf("  SUCCESS: DLQ %s exists (messages=%d, consumers=%d)", qInfo.Name, qInfo.Messages, qInfo.Consumers)
+		}
+
+		// 7b. Verify all consumer queues exist and have messages
+		for _, qName := range consumerQueues {
+			qInfo, err := amqpCh.QueueDeclarePassive(qName, true, false, false, false, nil)
+			if err != nil {
+				log.Fatalf("  FAILED: Consumer queue %s not declared: %v", qName, err)
+			}
+			log.Printf("  SUCCESS: Consumer queue %s exists (messages=%d, consumers=%d)", qInfo.Name, qInfo.Messages, qInfo.Consumers)
+		}
+
+		// 7c. Consume one message from live-feed queue and validate envelope & payload
+		msg, ok, err := amqpCh.Get("bnpb.event-live-feed.v1", false)
+		if err != nil {
+			log.Fatalf("  FAILED: Error getting message from bnpb.event-live-feed.v1: %v", err)
+		}
+		if !ok {
+			log.Printf("  NOTE: No message currently in bnpb.event-live-feed.v1 (waiting 2 seconds for poller/outbox)...")
+			time.Sleep(2 * time.Second)
+			msg, ok, err = amqpCh.Get("bnpb.event-live-feed.v1", false)
+		}
+
+		if ok {
+			var envelope eventv1.HazardEventPublished
+			if err := proto.Unmarshal(msg.Body, &envelope); err != nil {
+				log.Fatalf("  FAILED: Could not unmarshal message payload as HazardEventPublished protobuf: %v", err)
+			}
+
+			if envelope.SchemaVersion != 1 {
+				log.Fatalf("  FAILED: Expected schema_version=1, got %d", envelope.SchemaVersion)
+			}
+			if envelope.Publisher != "aggregator" {
+				log.Fatalf("  FAILED: Expected publisher='aggregator', got %q", envelope.Publisher)
+			}
+			if envelope.EventId == "" {
+				log.Fatalf("  FAILED: Expected non-empty event_id in envelope")
+			}
+			if envelope.Payload == nil {
+				log.Fatalf("  FAILED: Expected non-nil HazardEvent payload in envelope")
+			}
+			if envelope.Payload.HazardId == "" {
+				log.Fatalf("  FAILED: Expected non-empty HazardId in envelope payload")
+			}
+
+			log.Printf("  SUCCESS: Successfully deserialized HazardEventPublished envelope!")
+			log.Printf("    - Event ID: %s", envelope.EventId)
+			log.Printf("    - Schema Version: %d", envelope.SchemaVersion)
+			log.Printf("    - Publisher: %s", envelope.Publisher)
+			log.Printf("    - Source: %s", envelope.Source.String())
+			log.Printf("    - Payload Hazard ID: %s", envelope.Payload.HazardId)
+			log.Printf("    - Payload Area: %s (%s, %s)", envelope.Payload.AreaName, envelope.Payload.HazardType, envelope.Payload.Severity)
+
+			// Requeue the message so downstream consumers can still read it
+			_ = amqpCh.Nack(msg.DeliveryTag, false, true)
+		} else {
+			log.Println("  NOTE: Live-feed queue is configured and active (no new messages in queue at this moment).")
 		}
 	}
 

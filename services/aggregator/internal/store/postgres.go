@@ -76,19 +76,38 @@ func (db *DB) Migrate(ctx context.Context) error {
 		source VARCHAR(32) NOT NULL,
 		payload BYTEA NOT NULL,
 		published_at TIMESTAMPTZ NULL,
+		retry_count INTEGER NOT NULL DEFAULT 0,
+		failed_at TIMESTAMPTZ NULL,
+		last_error TEXT NULL,
 		created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 	);
 
-	CREATE INDEX IF NOT EXISTS idx_outbox_unpublished ON outbox_events (created_at ASC) WHERE published_at IS NULL;
+	ALTER TABLE outbox_events ADD COLUMN IF NOT EXISTS retry_count INTEGER NOT NULL DEFAULT 0;
+	ALTER TABLE outbox_events ADD COLUMN IF NOT EXISTS failed_at TIMESTAMPTZ NULL;
+	ALTER TABLE outbox_events ADD COLUMN IF NOT EXISTS last_error TEXT NULL;
+
+	CREATE INDEX IF NOT EXISTS idx_outbox_unpublished ON outbox_events (created_at ASC) WHERE published_at IS NULL AND failed_at IS NULL;
+
+	CREATE TABLE IF NOT EXISTS outbox_dead_letters (
+		event_id VARCHAR(128) PRIMARY KEY,
+		hazard_id VARCHAR(128) NOT NULL,
+		source VARCHAR(32) NOT NULL,
+		payload BYTEA NOT NULL,
+		created_at TIMESTAMPTZ NOT NULL,
+		failed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+		last_error TEXT
+	);
 
 	CREATE TABLE IF NOT EXISTS ingest_watermarks (
 		source_key VARCHAR(64) PRIMARY KEY,
 		watermark_time TIMESTAMPTZ NOT NULL,
-		last_success_at TIMESTAMPTZ NOT NULL,
+		last_success_at TIMESTAMPTZ NULL,
 		last_attempt_at TIMESTAMPTZ NOT NULL,
 		status VARCHAR(32) NOT NULL DEFAULT 'UNAVAILABLE',
 		error_message TEXT NULL
 	);
+
+	ALTER TABLE ingest_watermarks ALTER COLUMN last_success_at DROP NOT NULL;
 	`
 
 	if _, err := db.Pool.Exec(ctx, schema); err != nil {

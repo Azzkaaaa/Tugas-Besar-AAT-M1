@@ -18,7 +18,10 @@ import (
 func main() {
 	log.Println("[Aggregator] Starting BNPB Aggregator Service...")
 
-	cfg := config.Load()
+	cfg, err := config.Load()
+	if err != nil {
+		log.Fatalf("Fatal configuration error: %v", err)
+	}
 	log.Printf("[Aggregator] Loaded configuration: GRPCPort=%s, BMKG=%s, PVMBG=%s", cfg.GRPCPort, cfg.BMKGBaseURL, cfg.PVMBGBaseURL)
 
 	ctx, cancel := context.WithCancel(context.Background())
