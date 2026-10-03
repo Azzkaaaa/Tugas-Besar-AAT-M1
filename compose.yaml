@@ -27,8 +27,12 @@ services:
           - zitadel.local
 
   spa-server:
-    # Set your image/build context here
-    image: nginx:alpine
+    build:
+      context: ./services/frontend
+      args:
+        VITE_APP_MODE: gateway
+        VITE_ENABLE_DEMO: "false"
+        VITE_API_BASE_URL: "${FRONTEND_API_BASE_URL:-/api/v1}"
     networks:
       bnpb_net:
         aliases:
