@@ -1,0 +1,10 @@
+version: v2
+plugins:
+  - local: C:\Users\rizac\go\bin\protoc-gen-go.exe
+    out: packages/bnpb-aggregator-go
+    opt:
+      - paths=source_relative
+  - local: C:\Users\rizac\go\bin\protoc-gen-go-grpc.exe
+    out: packages/bnpb-aggregator-go
+    opt:
+      - paths=source_relative
