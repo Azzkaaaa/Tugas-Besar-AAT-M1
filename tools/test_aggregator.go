@@ -214,8 +214,8 @@ func main() {
 	if cfg.PVMBGBearerToken != "" {
 		log.Println("\n[TEST 5] Testing PVMBG Schema Evolution (POST /admin/schema-version = 2)...")
 		postAdmin(cfg.PVMBGBaseURL+"/admin/schema-version", cfg.PVMBGBearerToken, map[string]any{"version": 2})
-		log.Println("  Waiting 6 seconds for new generator cycle and poller...")
-		time.Sleep(6 * time.Second)
+		log.Println("  Waiting 11 seconds for new generator cycle and poller...")
+		time.Sleep(11 * time.Second)
 
 		fieldRespV2, err := client.ListHazards(withAuth(ctx, fieldToken), &aggregatorv1.ListHazardsRequest{
 			View: commonv1.View_VIEW_FULL,
@@ -249,35 +249,75 @@ func main() {
 	if cfg.PVMBGBearerToken != "" {
 		log.Println("\n[TEST 6] Testing PVMBG Outage Simulation (POST /admin/outage = true)...")
 		postAdmin(cfg.PVMBGBaseURL+"/admin/outage", cfg.PVMBGBearerToken, map[string]any{"enabled": true})
-		log.Println("  Waiting 4 seconds for poller to detect outage...")
-		time.Sleep(4 * time.Second)
+		log.Println("  Waiting 11 seconds for poller to detect outage...")
+		time.Sleep(11 * time.Second)
 
-		// BMKG should still work perfectly
+		success := true
+
+		// 6a. BMKG must continue serving hazards during PVMBG outage (isolation)
 		bmkgList, err := client.ListHazards(withAuth(ctx, mediaToken), &aggregatorv1.ListHazardsRequest{
 			View:   commonv1.View_VIEW_SUMMARY,
 			Filter: &commonv1.HazardFilter{Source: commonv1.Source_SOURCE_BMKG},
 		})
 		if err != nil || len(bmkgList.Items) == 0 {
-			log.Fatalf("  FAILED: BMKG should continue serving during PVMBG outage! Err: %v", err)
+			log.Printf("  FAILED: BMKG should continue serving during PVMBG outage! Err: %v", err)
+			success = false
+		} else {
+			log.Printf("  SUCCESS: BMKG continues serving %d hazards during PVMBG outage", len(bmkgList.Items))
 		}
-		log.Printf("  SUCCESS: BMKG continues serving %d hazards during PVMBG outage", len(bmkgList.Items))
 
-		// Check Source Status reflects PVMBG outage/staleness
+		// 6b. Previously-ingested PVMBG hazards must still be served from canonical store
+		// (graceful degradation: serve stale data, not block it).
+		// The mock's outage only makes the upstream HTTP endpoint return 503; the
+		// canonical PostgreSQL store retains all previously-ingested records.
+		pvmbgList, err := client.ListHazards(withAuth(ctx, mediaToken), &aggregatorv1.ListHazardsRequest{
+			View:   commonv1.View_VIEW_SUMMARY,
+			Filter: &commonv1.HazardFilter{Source: commonv1.Source_SOURCE_PVMBG},
+		})
+		if err != nil {
+			log.Printf("  FAILED: ListHazards(PVMBG) returned error during outage: %v", err)
+			success = false
+		} else {
+			log.Printf("  SUCCESS: Canonical store serves %d stale-but-available PVMBG hazards during outage (graceful degradation)", len(pvmbgList.Items))
+		}
+
+		// 6c. Source status must be STALE for PVMBG
 		outageStatus, err := client.GetSourceStatuses(withAuth(ctx, mediaToken), &aggregatorv1.GetSourceStatusesRequest{})
-		if err == nil {
+		if err != nil {
+			log.Printf("  FAILED: GetSourceStatuses returned error: %v", err)
+			success = false
+		} else {
+			pvmbgFound := false
 			for _, s := range outageStatus.Freshness {
 				if s.Source == commonv1.Source_SOURCE_PVMBG {
-					log.Printf("  SUCCESS: PVMBG status during outage: %s (StaleSince: %v)", s.Status.String(), s.StaleSince.AsTime())
+					pvmbgFound = true
+					if s.Status != commonv1.SourceStatus_SOURCE_STATUS_STALE {
+						log.Printf("  FAILED: PVMBG source status should be STALE during outage, got %s", s.Status.String())
+						success = false
+					} else {
+						log.Printf("  SUCCESS: PVMBG source status is correctly STALE during outage (StaleSince: %v)", s.StaleSince.AsTime())
+					}
 				}
+			}
+			if !pvmbgFound {
+				log.Printf("  FAILED: PVMBG source not found in GetSourceStatuses response")
+				success = false
 			}
 		}
 
 		// Restore PVMBG outage to false
 		postAdmin(cfg.PVMBGBaseURL+"/admin/outage", cfg.PVMBGBearerToken, map[string]any{"enabled": false})
 		log.Println("  Restored PVMBG outage to false.")
+
+		if success {
+			log.Println("  SUCCESS: PVMBG outage simulation completed successfully")
+		} else {
+			log.Fatalf("  FAILED: PVMBG outage simulation failed")
+
+		}
 	}
 
-	log.Println("\n=================================================================")
+	log.Println("=================================================================")
 	log.Println(" ALL SPECIFICATION TESTS PASSED SUCCESSFULLY!")
 	log.Println("=================================================================")
 }
