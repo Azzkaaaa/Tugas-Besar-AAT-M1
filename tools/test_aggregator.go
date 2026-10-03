@@ -122,6 +122,25 @@ func main() {
 	mediaToken := createTestJWT("MEDIA", []string{"hazards:read:summary"})
 	fieldToken := createTestJWT("FIELD_TEAM", []string{"hazards:read:summary", "hazards:read:full"})
 
+	// Give poller a moment if freshly started
+	log.Println("[Aggregator E2E Test] Checking initial ingestion readiness...")
+	for i := 0; i < 5; i++ {
+		statusResp, err := client.GetSourceStatuses(withAuth(ctx, mediaToken), &aggregatorv1.GetSourceStatusesRequest{})
+		if err == nil && len(statusResp.Freshness) > 0 {
+			hasFresh := false
+			for _, s := range statusResp.Freshness {
+				if s.Status == commonv1.SourceStatus_SOURCE_STATUS_FRESH {
+					hasFresh = true
+					break
+				}
+			}
+			if hasFresh {
+				break
+			}
+		}
+		time.Sleep(1 * time.Second)
+	}
+
 	// --- TEST 1: Source Statuses ---
 	log.Println("\n[TEST 1] Verifying GetSourceStatuses RPC...")
 	statusResp, err := client.GetSourceStatuses(withAuth(ctx, mediaToken), &aggregatorv1.GetSourceStatusesRequest{})

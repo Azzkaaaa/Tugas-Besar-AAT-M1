@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -28,6 +29,8 @@ type Config struct {
 }
 
 func Load() *Config {
+	loadDotEnv()
+
 	return &Config{
 		AppEnv:               getEnv("APP_ENV", "development"),
 		LogLevel:             getEnv("LOG_LEVEL", "info"),
@@ -44,9 +47,32 @@ func Load() *Config {
 		BMKGRequestTimeout:   time.Duration(getEnvInt("BMKG_REQUEST_TIMEOUT_MS", 1000)) * time.Millisecond,
 		PVMBGRequestTimeout:  time.Duration(getEnvInt("PVMBG_REQUEST_TIMEOUT_MS", 3500)) * time.Millisecond,
 		SourceStaleThreshold: time.Duration(getEnvInt("SOURCE_STALE_AFTER_MS", 10000)) * time.Millisecond,
-		CanonicalStoreDSN:    getEnv("CANONICAL_STORE_DSN", "postgres://postgres:postgres@localhost:5432/bnpb_canonical?sslmode=disable"),
+		CanonicalStoreDSN:    getEnv("CANONICAL_STORE_DSN", "postgres://aggregator:postgres@localhost:5432/bnpb_canonical?sslmode=disable"),
 		AMQPURL:              getEnv("AGGREGATOR_AMQP_URL", "amqp://guest:guest@localhost:5672/"),
 		RabbitMQExchange:     getEnv("RABBITMQ_EXCHANGE", "bnpb.hazards.v1"),
+	}
+}
+
+func loadDotEnv() {
+	candidates := []string{".env", "../.env", "../../.env"}
+	for _, path := range candidates {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			continue
+		}
+		for _, line := range strings.Split(string(data), "\n") {
+			line = strings.TrimSpace(line)
+			if strings.HasPrefix(line, "#") || !strings.Contains(line, "=") {
+				continue
+			}
+			parts := strings.SplitN(line, "=", 2)
+			k := strings.TrimSpace(parts[0])
+			v := strings.Trim(strings.TrimSpace(parts[1]), "\"'")
+			if os.Getenv(k) == "" && v != "" {
+				_ = os.Setenv(k, v)
+			}
+		}
+		break
 	}
 }
 
@@ -65,3 +91,4 @@ func getEnvInt(key string, defaultVal int) int {
 	}
 	return defaultVal
 }
+

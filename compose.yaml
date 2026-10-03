@@ -56,7 +56,29 @@ services:
           - feed-service.local
 
   aggregator-service:
-    # Set your image/build context here
+    build:
+      context: .
+      dockerfile: services/aggregator/Dockerfile
+    environment:
+      BMKG_BASE_URL: http://bmkg.localhost:8080
+      PVMBG_BASE_URL: http://pvmbg.localhost:8080
+      BMKG_API_KEY: ${BMKG_API_KEY}
+      PVMBG_BEARER_TOKEN: ${PVMBG_BEARER_TOKEN}
+      AGGREGATOR_GRPC_PORT: "9091"
+      CANONICAL_STORE_DSN: postgres://aggregator:postgres@aggregator-db.local:5432/bnpb_canonical?sslmode=disable
+      AGGREGATOR_AMQP_URL: amqp://guest:guest@rabbitmq.local:5672/
+      RABBITMQ_EXCHANGE: bnpb.hazards.v1
+    ports:
+      - "9091:9091"
+    depends_on:
+      aggregator-db:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_started
+      bmkg-mock:
+        condition: service_started
+      pvmbg-mock:
+        condition: service_started
     networks:
       bnpb_net:
         aliases:
@@ -65,8 +87,31 @@ services:
         aliases:
           - aggregator.localhost
 
+  aggregator-db:
+    image: postgres:17
+    environment:
+      POSTGRES_USER: aggregator
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: bnpb_canonical
+    ports:
+      - "5432:5432"
+    volumes:
+      - aggregator_data:/var/lib/postgresql/data
+    networks:
+      bnpb_net:
+        aliases:
+          - aggregator-db.local
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U aggregator -d bnpb_canonical"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
   rabbitmq:
     image: rabbitmq:4-management
+    ports:
+      - 5672:5672
+      - 15672:15672
     networks:
       bnpb_net:
         aliases:
@@ -95,3 +140,4 @@ networks:
 volumes:
   bmkg_data:
   pvmbg_data:
+  aggregator_data:
