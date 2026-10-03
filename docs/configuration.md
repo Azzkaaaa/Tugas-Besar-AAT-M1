@@ -54,6 +54,23 @@ tambahan yang diasumsikan tersedia.
 
 ## Domain kredensial dan identitas client
 
+### Status frontend SPA
+
+Frontend saat ini menggunakan identitas mock yang dipilih di browser, tanpa
+password, client secret, atau JWT. Identitas ini hanya untuk pratinjau dan tidak
+dikirim ke backend. Build produksi menonaktifkan akses demo secara default.
+Konfigurasi publik frontend dan langkah testing ada di
+[README frontend](../services/frontend/README.md).
+
+Rencana browser login memakai OIDC/OAuth 2.0 Authorization Code + PKCE dengan
+public client SPA. Issuer, client ID, callback, scope, dan penyedia token menunggu
+integrasi dengan penanggung jawab Auth. Daftar `*_CLIENT_SECRET` dan alur login
+client di bawah berasal dari rancangan Auth sebelumnya; itu bukan konfigurasi
+atau kolom input SPA. Jangan masukkan secret tersebut ke `VITE_*`. Kontrak Auth
+lama perlu diselaraskan oleh implementasi backend sebelum integrasi.
+
+### Rancangan kredensial backend
+
 | Variabel | Default contoh | Penerima yang memerlukan nilai |
 | --- | --- | --- |
 | `BMKG_API_KEY` | `REPLACE_BMKG_ONLY` | BMKG Mock sebagai validator, Aggregator sebagai pemanggil |
