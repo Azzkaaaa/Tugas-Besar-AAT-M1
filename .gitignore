@@ -13,6 +13,15 @@ generated/
 coverage/
 *.log
 
+# Python and private SQLite state
+__pycache__/
+*.py[cod]
+.venv/
+data/
+*.sqlite3
+*.sqlite3-wal
+*.sqlite3-shm
+
 # Editors / OS
 .idea/
 .vscode/

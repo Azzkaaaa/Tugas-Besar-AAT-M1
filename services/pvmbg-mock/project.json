@@ -1,0 +1,16 @@
+{
+  "$schema": "../../node_modules/nx/schemas/project-schema.json",
+  "name": "pvmbg-mock",
+  "projectType": "application",
+  "sourceRoot": "services/pvmbg-mock",
+  "targets": {
+    "build": {
+      "dependsOn": ["^build"],
+      "cache": true,
+      "inputs": [
+        "{workspaceRoot}/contracts/openapi/pvmbg.yaml",
+        "{projectRoot}/**/*.py"
+      ]
+    }
+  }
+}

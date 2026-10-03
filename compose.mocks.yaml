@@ -1,0 +1,58 @@
+# Standalone deployment: private credentials and SQLite volume per source.
+services:
+  bmkg-mock:
+    build:
+      context: ./services/bmkg-mock
+    environment:
+      BMKG_API_KEY: ${BMKG_API_KEY:?Run python tools/setup_mock_env.py first}
+      BMKG_HTTP_PORT: "8080"
+      BMKG_STORE_DSN: sqlite:///data/bmkg.sqlite3
+      BMKG_RESPONSE_DELAY_MS: ${BMKG_RESPONSE_DELAY_MS:-100}
+      MOCK_SEED_COUNT: ${MOCK_SEED_COUNT:-20}
+      MOCK_EVENT_INTERVAL_MS: ${MOCK_EVENT_INTERVAL_MS:-10000}
+    ports:
+      - "${BMKG_HTTP_PORT:-8081}:8080"
+    volumes:
+      - bmkg_data:/app/data
+    networks:
+      bmkg_net:
+        aliases: [bmkg-mock.local]
+      internet_mock_net:
+        aliases: [bmkg.localhost]
+    restart: unless-stopped
+    stop_grace_period: 10s
+
+  pvmbg-mock:
+    build:
+      context: ./services/pvmbg-mock
+    environment:
+      PVMBG_BEARER_TOKEN: ${PVMBG_BEARER_TOKEN:?Run python tools/setup_mock_env.py first}
+      PVMBG_HTTP_PORT: "8080"
+      PVMBG_STORE_DSN: sqlite:///data/pvmbg.sqlite3
+      PVMBG_RESPONSE_DELAY_MIN_MS: ${PVMBG_RESPONSE_DELAY_MIN_MS:-500}
+      PVMBG_RESPONSE_DELAY_MAX_MS: ${PVMBG_RESPONSE_DELAY_MAX_MS:-3000}
+      MOCK_SEED_COUNT: ${MOCK_SEED_COUNT:-20}
+      MOCK_EVENT_INTERVAL_MS: ${MOCK_EVENT_INTERVAL_MS:-10000}
+    ports:
+      - "${PVMBG_HTTP_PORT:-8082}:8080"
+    volumes:
+      - pvmbg_data:/app/data
+    networks:
+      pvmbg_net:
+        aliases: [pvmbg-mock.local]
+      internet_mock_net:
+        aliases: [pvmbg.localhost]
+    restart: unless-stopped
+    stop_grace_period: 10s
+
+networks:
+  internet_mock_net:
+    driver: bridge
+  bmkg_net:
+    driver: bridge
+  pvmbg_net:
+    driver: bridge
+
+volumes:
+  bmkg_data:
+  pvmbg_data:
