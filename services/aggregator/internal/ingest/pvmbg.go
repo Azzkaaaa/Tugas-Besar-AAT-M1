@@ -122,9 +122,12 @@ func (p *PVMBGPoller) fetchVolcanicReports(ctx context.Context, since time.Time,
 		return nil, fmt.Errorf("PVMBG volcanic endpoint returned HTTP %d: %s", resp.StatusCode, string(body))
 	}
 
-	var reports []*PVMBGVolcanicRaw
-	if err := json.NewDecoder(resp.Body).Decode(&reports); err != nil {
+	type listResponse struct {
+		Items []*PVMBGVolcanicRaw `json:"items"`
+	}
+	var res listResponse
+	if err := json.NewDecoder(resp.Body).Decode(&res); err != nil {
 		return nil, fmt.Errorf("failed decoding PVMBG response: %w", err)
 	}
-	return reports, nil
+	return res.Items, nil
 }

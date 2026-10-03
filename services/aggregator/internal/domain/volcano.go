@@ -67,6 +67,18 @@ var defaultVolcanoes = map[string]VolcanoRef{
 		Latitude:  1.1120,
 		Longitude: 124.7370,
 	},
+	"anak-krakatau": {
+		ID:        "anak-krakatau",
+		Name:      "Gunung Anak Krakatau",
+		Latitude:  -6.10,
+		Longitude: 105.42,
+	},
+	"lewotobi-laki-laki": {
+		ID:        "lewotobi-laki-laki",
+		Name:      "Gunung Lewotobi Laki-laki",
+		Latitude:  -8.54,
+		Longitude: 122.78,
+	},
 	"tambora": {
 		ID:        "tambora",
 		Name:      "Gunung Tambora",
@@ -77,6 +89,7 @@ var defaultVolcanoes = map[string]VolcanoRef{
 
 func LookupVolcano(volcanoID string) (VolcanoRef, bool) {
 	key := strings.ToLower(strings.TrimSpace(volcanoID))
+	key = strings.TrimPrefix(key, "v-")
 	v, ok := defaultVolcanoes[key]
 	return v, ok
 }

@@ -131,11 +131,14 @@ func (p *BMKGPoller) fetchSeismicEvents(ctx context.Context, since time.Time, co
 		return nil, fmt.Errorf("BMKG seismic endpoint returned HTTP %d: %s", resp.StatusCode, string(body))
 	}
 
-	var events []*BMKGSeismicRaw
-	if err := json.NewDecoder(resp.Body).Decode(&events); err != nil {
+	type listResponse struct {
+		Items []*BMKGSeismicRaw `json:"items"`
+	}
+	var res listResponse
+	if err := json.NewDecoder(resp.Body).Decode(&res); err != nil {
 		return nil, err
 	}
-	return events, nil
+	return res.Items, nil
 }
 
 func (p *BMKGPoller) fetchTsunamiWarnings(ctx context.Context, since time.Time, corrID string) ([]*BMKGTsunamiWarningRaw, error) {
@@ -161,9 +164,12 @@ func (p *BMKGPoller) fetchTsunamiWarnings(ctx context.Context, since time.Time, 
 		return nil, fmt.Errorf("BMKG tsunami warning returned HTTP %d", resp.StatusCode)
 	}
 
-	var warnings []*BMKGTsunamiWarningRaw
-	if err := json.NewDecoder(resp.Body).Decode(&warnings); err != nil {
+	type listResponse struct {
+		Items []*BMKGTsunamiWarningRaw `json:"items"`
+	}
+	var res listResponse
+	if err := json.NewDecoder(resp.Body).Decode(&res); err != nil {
 		return nil, err
 	}
-	return warnings, nil
+	return res.Items, nil
 }

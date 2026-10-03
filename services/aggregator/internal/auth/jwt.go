@@ -81,6 +81,14 @@ func NewJWTVerifier(publicKeyPEM string, publicKeyPath string, serviceToken stri
 }
 
 func (v *JWTVerifier) VerifyToken(tokenStr string) (*CallerContextData, error) {
+	if v.serviceToken != "" && tokenStr == v.serviceToken {
+		return &CallerContextData{
+			ClientID: "service-aggregator",
+			Role:     "SERVICE",
+			Scopes:   []string{"hazards:read:summary", "hazards:read:full"},
+		}, nil
+	}
+
 	// Parse without verifying signature if no public key is configured (local dev/mock mode)
 	if v.publicKey == nil {
 		parser := jwt.NewParser()
