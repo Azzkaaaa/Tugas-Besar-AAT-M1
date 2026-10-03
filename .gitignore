@@ -12,6 +12,9 @@ dist/
 generated/
 coverage/
 *.log
+test-results/
+playwright-report/
+*.tsbuildinfo
 
 # Python and private SQLite state
 __pycache__/
