@@ -3,7 +3,6 @@ WORKDIR /app
 
 RUN apk add --no-cache git ca-certificates
 
-COPY go.work go.work.sum ./
 COPY packages/bnpb-aggregator-go packages/bnpb-aggregator-go
 COPY services/webhook-provider services/webhook-provider
 

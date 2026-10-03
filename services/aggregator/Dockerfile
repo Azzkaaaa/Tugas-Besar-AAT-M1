@@ -3,7 +3,6 @@ WORKDIR /app
 
 RUN apk add --no-cache git ca-certificates
 
-COPY go.work ./
 COPY packages/bnpb-aggregator-go packages/bnpb-aggregator-go
 COPY services/aggregator services/aggregator
 

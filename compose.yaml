@@ -34,12 +34,23 @@ services:
         aliases:
           - spa-server.local
 
-  webhook-service:
-    # Set your image/build context here
+  webhook-provider:
+    build:
+      context: .
+      dockerfile: services/webhook-provider/Dockerfile
+    env_file:
+      - .env
+    ports:
+      - "9094:9094"
+    volumes:
+      - webhook_data:/data
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
     networks:
       bnpb_net:
         aliases:
-          - webhook-service.local
+          - webhook-provider.local
 
   notification-service:
     # Set your image/build context here
@@ -59,22 +70,15 @@ services:
     build:
       context: .
       dockerfile: services/aggregator/Dockerfile
-    environment:
-      BMKG_BASE_URL: http://bmkg.localhost:8080
-      PVMBG_BASE_URL: http://pvmbg.localhost:8080
-      BMKG_API_KEY: ${BMKG_API_KEY}
-      PVMBG_BEARER_TOKEN: ${PVMBG_BEARER_TOKEN}
-      AGGREGATOR_GRPC_PORT: "9091"
-      CANONICAL_STORE_DSN: postgres://aggregator:postgres@aggregator-db.local:5432/bnpb_canonical?sslmode=disable
-      AGGREGATOR_AMQP_URL: amqp://guest:guest@rabbitmq.local:5672/
-      RABBITMQ_EXCHANGE: bnpb.hazards.v1
+    env_file:
+      - .env
     ports:
       - "9091:9091"
     depends_on:
       aggregator-db:
         condition: service_healthy
       rabbitmq:
-        condition: service_started
+        condition: service_healthy
       bmkg-mock:
         condition: service_started
       pvmbg-mock:
@@ -109,9 +113,18 @@ services:
 
   rabbitmq:
     image: rabbitmq:4-management
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_DEFAULT_USER}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_DEFAULT_PASS}
+      RABBITMQ_DEFAULT_VHOST: ${RABBITMQ_DEFAULT_VHOST}
     ports:
       - 5672:5672
       - 15672:15672
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
     networks:
       bnpb_net:
         aliases:
@@ -141,3 +154,4 @@ volumes:
   bmkg_data:
   pvmbg_data:
   aggregator_data:
+  webhook_data:
