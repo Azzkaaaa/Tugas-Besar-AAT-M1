@@ -22,6 +22,9 @@ func (s *SourceStatusInfo) CalculateFreshness(threshold time.Duration, hasCached
 		if hasCachedData {
 			s.Status = "STALE"
 			t := s.LastAttemptAt
+			if t.IsZero() {
+				t = now
+			}
 			s.StaleSince = &t
 		} else {
 			s.Status = "UNAVAILABLE"

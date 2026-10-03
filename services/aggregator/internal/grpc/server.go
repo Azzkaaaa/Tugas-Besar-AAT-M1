@@ -92,12 +92,14 @@ func (s *Server) ListHazards(ctx context.Context, req *aggregatorv1.ListHazardsR
 		} else {
 			key = "pvmbg_volcanic"
 		}
-		statusInfo, _, err := s.db.GetWatermark(ctx, key)
+		info, _, err := s.db.GetWatermark(ctx, key)
 		if err != nil {
 			return nil, status.Errorf(codes.Internal, "watermark error: %v", err)
 		}
-		statusInfo.Source = src
-		freshness = append(freshness, statusInfo.ToProto())
+		info.Source = src
+		hasCached, _ := s.db.HasCachedData(ctx, src)
+		info.CalculateFreshness(s.cfg.SourceStaleThreshold, hasCached)
+		freshness = append(freshness, info.ToProto())
 	}
 	partial := false
 	for _, f := range freshness {
@@ -134,6 +136,8 @@ func (s *Server) GetHazard(ctx context.Context, req *aggregatorv1.GetHazardReque
 		return nil, status.Errorf(codes.Internal, "watermark error: %v", err)
 	}
 	statusInfo.Source = rec.Source
+	hasCached, _ := s.db.HasCachedData(ctx, statusInfo.Source)
+	statusInfo.CalculateFreshness(s.cfg.SourceStaleThreshold, hasCached)
 	freshness := []*commonv1.SourceFreshness{statusInfo.ToProto()}
 	partial := statusInfo.Status != "FRESH"
 	return &aggregatorv1.GetHazardResponse{Item: proj, Freshness: freshness, Partial: partial}, nil
@@ -148,6 +152,8 @@ func (s *Server) GetSourceStatuses(ctx context.Context, req *aggregatorv1.GetSou
 			return nil, status.Errorf(codes.Internal, "watermark fetch error: %v", err)
 		}
 		info.Source = strings.ToUpper(strings.Split(k, "_")[0])
+		hasCached, _ := s.db.HasCachedData(ctx, info.Source)
+		info.CalculateFreshness(s.cfg.SourceStaleThreshold, hasCached)
 		freshness = append(freshness, info.ToProto())
 	}
 	return &aggregatorv1.GetSourceStatusesResponse{Freshness: freshness}, nil
