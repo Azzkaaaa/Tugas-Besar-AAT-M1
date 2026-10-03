@@ -1,0 +1,24 @@
+version: v2
+
+inputs:
+  - directory: ../..
+    paths:
+      - ../../contracts/proto/bnpb/notification
+
+managed:
+  enabled: true
+  override:
+      - file_option: csharp_namespace
+        path: bnpb/notification/v1
+        value: BNPB.Notification.V1
+
+      - file_option: csharp_namespace
+        path: bnpb/common/v1
+        value: BNPB.Common.V1
+
+plugins:
+  - remote: buf.build/protocolbuffers/csharp
+    out: BNPB.Notification/codegen
+
+  - remote: buf.build/grpc/csharp
+    out: BNPB.Notification/codegen
