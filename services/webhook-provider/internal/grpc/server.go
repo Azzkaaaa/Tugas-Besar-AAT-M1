@@ -17,6 +17,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/health"
 	healthpb "google.golang.org/grpc/health/grpc_health_v1"
+	"google.golang.org/grpc/reflection"
 	"google.golang.org/grpc/status"
 )
 
@@ -42,6 +43,7 @@ func (s *Server) Start(ctx context.Context) error {
 	}
 
 	grpcSrv := grpc.NewServer(grpc.UnaryInterceptor(s.auth.UnaryServerInterceptor()))
+	reflection.Register(grpcSrv)
 	webhookv1.RegisterWebhookServiceServer(grpcSrv, s)
 
 	healthSrv := health.NewServer()

@@ -97,7 +97,7 @@ CREATE TABLE IF NOT EXISTS webhook_subscriptions (
 
 CREATE TABLE IF NOT EXISTS webhook_deliveries (
     delivery_id   TEXT PRIMARY KEY,
-    webhook_id    TEXT NOT NULL REFERENCES webhook_subscriptions(webhook_id),
+    webhook_id    TEXT NOT NULL REFERENCES webhook_subscriptions(webhook_id) ON DELETE CASCADE,
     event_id      TEXT NOT NULL,
     hazard_id     TEXT NOT NULL,
     status_code   INTEGER NOT NULL DEFAULT 0,
@@ -117,7 +117,7 @@ CREATE INDEX IF NOT EXISTS idx_deliveries_event
 -- Tracks successfully delivered (event_id, webhook_id) pairs for deduplication.
 CREATE TABLE IF NOT EXISTS delivery_dedup (
     event_id     TEXT NOT NULL,
-    webhook_id   TEXT NOT NULL,
+	webhook_id   TEXT NOT NULL REFERENCES webhook_subscriptions(webhook_id) ON DELETE CASCADE,
     delivered_at DATETIME NOT NULL,
     PRIMARY KEY (event_id, webhook_id)
 );
@@ -383,9 +383,9 @@ func (sub *Subscription) ToProto(redactSecret bool) *webhookv1.WebhookSubscripti
 		CreatedAt:     timestamppb.New(sub.CreatedAt),
 		UpdatedAt:     timestamppb.New(sub.UpdatedAt),
 		Filter: &commonv1.HazardFilter{
-			Source:    commonv1.Source(sub.FilterSource),
+			Source:     commonv1.Source(sub.FilterSource),
 			HazardType: commonv1.HazardType(sub.FilterHazard),
-			Severity:  commonv1.Severity(sub.FilterSeverity),
+			Severity:   commonv1.Severity(sub.FilterSeverity),
 		},
 	}
 	if sub.FilterSince != nil {
