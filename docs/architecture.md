@@ -2,17 +2,25 @@
 
 Diagram berikut adalah **target sistem lengkap** berdasarkan gambar pengguna.
 BMKG dan PVMBG sudah diimplementasikan sebagai dua mock Python 3.12 mandiri,
-masing-masing dengan SQLite. Implementasi ini menyediakan sumber REST untuk
-Aggregator; alur BNPB pada diagram tetap target integrasi service berikutnya.
+masing-masing dengan SQLite. Frontend adalah React SPA. Autentikasi menggunakan
+Zitadel beserta halaman login bawaannya dan Auth bridge HTTP di sisi server.
+Aggregator, distribusi event, dan integrasi API bisnis masih perlu diselesaikan;
+tersedianya login tidak membuktikan keseluruhan alur BNPB telah berjalan.
 Endpoint BNPB, wrapper respons, pagination, SSE, dan replay adalah pilihan desain
 repo; endpoint dan entitas mock mengikuti PDF.
 
 ```mermaid
 flowchart TB
-  clients[Media / Tim Lapangan / BNPB Pusat] -->|REST / SSE| gateway
-  spa[Frontend SPA] -->|REST / SSE| gateway[Client Gateway]
+  clients[Media / Tim Lapangan / BNPB Pusat] --> edge[Envoy publik :8080]
+  edge --> spa[Frontend SPA / Nginx]
+  edge -->|/auth dan /api| auth[Auth bridge HTTP]
+  spa -->|same-origin cookie| edge
+  edge -->|auth.localhost| idp[Zitadel + hosted login]
+  auth -->|OIDC / introspection| idp
+  idp --> idpdb[(PostgreSQL Zitadel)]
+  auth --> authdb[(SQLite sesi)]
+  auth -->|bearer aktor + service token| gateway[Gateway internal / transcoder]
   gateway -->|gRPC| aggregator[Aggregator]
-  gateway -->|gRPC| auth[Auth]
   gateway -->|gRPC stream| eventfeed[Event Live Feed]
   gateway -->|gRPC| webhook[Webhook Provider]
   gateway -->|gRPC| notification[Danger Notification]
@@ -21,7 +29,6 @@ flowchart TB
   aggregator --> canonical[(Canonical Store)]
   bmkg --> bmkgdb[(SQLite BMKG)]
   pvmbg --> pvmbgdb[(SQLite PVMBG)]
-  auth --> authdb[(Auth Store / Cache)]
   notification --> notificationdb[(Notification Store)]
   eventfeed --> eventfeedcache[(Event Feed Replay Cache / Redis)]
   webhook --> webhookdb[(Webhook Store)]
@@ -30,20 +37,66 @@ flowchart TB
   broker -->|queue sendiri| eventfeed
   broker -->|queue sendiri| webhook
   broker -->|queue sendiri| notification
-  aggregator -.->|gRPC authorize| auth
-  eventfeed -.->|gRPC authorize| auth
-  webhook -.->|gRPC authorize| auth
-  notification -.->|gRPC authorize| auth
   notification -.->|gRPC freshness| aggregator
 ```
 
 Semua komponen aplikasi menjadi container tersendiri saat implementasi. Setiap
-database/cache mempunyai satu pemilik. Gateway tidak mengakses database
-Aggregator atau Auth. Feed memegang buffer replay sementara, Notifier menyimpan
+database/cache mempunyai satu pemilik. Gateway internal tidak mengakses database
+Aggregator, sesi Auth bridge, atau pengguna Zitadel. Feed memegang buffer replay sementara, Notifier menyimpan
 hasil turunan, Webhook Provider menyimpan langganan webhook dan log pengiriman;
 ketiganya tidak menjadi penulis Canonical Store. Storage kanonik belum
 dipilih: document store atau relational store dengan kolom JSON harus menerima
 `attributes` dinamis tanpa migrasi ketika field aditif muncul.
+
+## Login dan sesi browser
+
+`compose.auth.yaml` menjalankan Envoy publik, SPA, Auth bridge Node.js 24,
+Zitadel 4.16 beserta Login UI v2, dan PostgreSQL 17. Browser membuka
+`http://localhost:8080`; issuer dan hosted login memakai
+`http://auth.localhost:8080`. Kedua alamat harus konsisten dengan konfigurasi
+OIDC. Cookie aplikasi bersifat host-only dan tidak dibagikan ke host Zitadel.
+
+1. Tombol masuk mengarahkan browser ke `GET /auth/login`. Bridge membuat
+   `state`, `nonce`, dan PKCE, lalu mengarahkan browser ke Zitadel.
+2. Pengguna memasukkan kredensial di halaman Zitadel. Callback
+   `/auth/callback` menukar authorization code di server, memverifikasi
+   ID token (signature, issuer, audience, expiry, nonce), dan memeriksa access
+   token melalui introspeksi. SPA tidak memegang client secret.
+3. Bridge menyimpan sesi di SQLite. Refresh token dienkripsi menggunakan
+   `AUTH_SESSION_KEY`. Browser menerima access token asli dalam cookie
+   `bnpb_access` dan ID sesi acak dalam `bnpb_session`; keduanya `HttpOnly`,
+   `Path=/`, `SameSite=Lax`, host-only, dan `Secure` ketika menggunakan HTTPS.
+4. SPA membaca identitas, role/scope, expiry, dan CSRF token dari
+   `GET /auth/session`. JavaScript tidak membaca access token. Request API
+   memakai cookie same-origin; bridge mengikat token ke sesi, memeriksa
+   introspeksi, lalu meneruskan bearer aktor asli ke Gateway internal.
+5. Jika access token habis tetapi sesi lokal masih valid, `/auth/session`
+   mengembalikan 401 dengan `refresh_required` dan CSRF token. SPA memanggil
+   `POST /auth/refresh`, kemudian melanjutkan dengan sesi yang baru. Default
+   TTL access token adalah **60 detik** dan dapat dikonfigurasi pada Zitadel.
+6. `POST /auth/logout` mengakhiri sesi lokal, menghapus cookie, dan mencabut
+   token. Browser mengikuti `logout_url` untuk mengakhiri SSO Zitadel juga.
+
+POST refresh/logout serta mutasi API berbasis cookie wajib membawa `Origin`
+aplikasi yang tepat dan `X-CSRF-Token` milik sesi. CSRF token bukan kredensial
+akses API. Tidak ada password pengguna atau refresh token di storage JavaScript.
+Ketiga akun demo adalah pengguna Zitadel yang berbeda; role diperoleh dari
+grant proyek/organisasi yang dikonfigurasi, lalu dipetakan server ke scope.
+
+Mode `VITE_APP_MODE=oidc` menentukan autentikasi, sedangkan `VITE_DATA_MODE`
+menentukan data dashboard. Standalone Auth memakai `VITE_DATA_MODE=mock`
+agar login nyata dapat dikembangkan ketika service BNPB belum siap. Fixture
+di browser tidak membuktikan otorisasi atau integrasi data backend. Ketika
+`GATEWAY_UPSTREAM_URL` kosong, request API bisnis terautentikasi mendapat 503;
+data simulasi tidak dijadikan respons API server.
+
+Compose utama memakai edge yang sama dan menempatkan transcoder lama sebagai
+`gateway-transcoder` di jaringan privat. Auth bridge meneruskan request ke
+`http://gateway-transcoder:8080`; port transcoder tidak dipublikasikan ke host.
+Penyesuaian shape REST/ProtoJSON, SSE, dan otorisasi downstream tetap pekerjaan
+integrasi service bisnis. Detail boundary ada di
+[OpenAPI Auth](../contracts/openapi/auth.yaml) dan
+[panduan Auth bridge](../services/auth-bridge/README.md).
 
 ## Implementasi sumber mock
 
@@ -100,23 +153,26 @@ event broker; consumer lag perlu metrik tersendiri.
 | --- | --- | --- |
 | Pemanggil BMKG | `X-BMKG-Key` | BMKG saja |
 | Pemanggil PVMBG | bearer token PVMBG terpisah | PVMBG saja |
-| Media | client ID/secret sendiri; token BNPB | Ringkasan; notifikasi dan webhook ringkasan |
-| Tim Lapangan | client ID/secret sendiri; token BNPB | Ringkasan dan full; notifikasi dan webhook full |
-| BNPB Internal | client ID/secret sendiri; token BNPB | Ringkasan dan full; notifikasi dan webhook full |
+| Media | pengguna Zitadel sendiri; access token OIDC | Ringkasan; notifikasi dan webhook ringkasan |
+| Tim Lapangan | pengguna Zitadel sendiri; access token OIDC | Ringkasan dan full; notifikasi dan webhook full |
+| BNPB Internal | pengguna Zitadel sendiri; access token OIDC | Ringkasan dan full; notifikasi dan webhook full |
 | Service internal | token per service | RPC yang diizinkan; tetap memerlukan actor |
 
 Default scope adalah `hazards:read:summary`, `notifications:read`, dan `webhooks:read` untuk Media,
 ditambah `hazards:read:full` serta `webhooks:write` untuk dua client lain. Login tidak menerima role/scope
-buatan client. Token BNPB tidak berlaku sebagai bearer PVMBG. Jika menggunakan
-JWT BNPB, periksa issuer, audience, signature, expiry, dan revocation. Access token
-default 60 detik; refresh atomik membatalkan token sesi lama segera. Validasi
-online Auth mempertimbangkan versi sesi; cache TTL saja tidak cukup untuk
-menjamin pencabutan segera.
+buatan client. Pengguna tetap hanya membaca data kejadian; pengaturan langganan
+webhook adalah operasi pengelolaan, bukan hak menulis hazard. Token BNPB tidak
+berlaku sebagai bearer PVMBG. Access token opaque diperiksa lewat introspeksi
+Zitadel pada setiap request terlindungi; token tidak diperlakukan sebagai JWT
+buatan BNPB. Bridge menolak hash access token lama setelah refresh/logout,
+termasuk pada jalur bearer. Cache TTL saja tidak menjamin pencabutan segera.
 
 Gateway meneruskan actor token, identitas service sendiri, correlation ID, dan
 deadline melalui gRPC. Tiap hop menggunakan kredensial pemanggilnya sendiri,
-bukan meneruskan service token sebelumnya. Auth menegakkan allowlist RPC per
-service. Semua pembaca memeriksa scope/proyeksi; Media tidak mendapat
+bukan meneruskan service token sebelumnya. Implementasi validasi pemanggil dan
+aktor pada masing-masing service downstream masih menjadi tanggung jawab
+pemilik service. Tidak ada Auth RPC maupun token exchange ke JWT internal.
+Semua pembaca harus memeriksa scope/proyeksi; Media tidak mendapat
 `source_ref_id`, koordinat, atau `attributes`, termasuk pada stream, pesan
 notifikasi, dan error. Refresh/logout berlaku juga pada stream aktif.
 
@@ -149,8 +205,8 @@ yang mungkin lebih lama. Resume pada cursor yang masih tersedia tidak boleh
 melewatkan event di peralihan replay ke live.
 
 SSE dipilih untuk live feed satu arah pada boundary REST. SPA memakai streaming
-fetch agar dapat mengirim Authorization dan Last-Event-ID; native EventSource
-tidak mendukung arbitrary Authorization header. Jangan memasukkan token ke URL.
+fetch dengan cookie same-origin dan `Last-Event-ID`; client non-browser dapat
+memakai bearer. Jangan memasukkan token ke URL.
 Feed memakai server-streaming gRPC dan mengakhiri stream ketika token habis atau
 dicabut, termasuk ketika idle.
 

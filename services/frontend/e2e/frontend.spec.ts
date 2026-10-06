@@ -9,7 +9,7 @@ const accounts = [
 async function enterDemo(page: Page, account = accounts[1]) {
   await page.goto('/');
   await page.getByRole('button', { name: `Pratinjau sebagai ${account.name}, akun ${account.username}` }).click();
-  await expect(page.getByRole('heading', { name: 'Situasi kebencanaan', exact: true })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Dashboard Kebencanaan', exact: true })).toBeVisible();
   await expect(page.getByRole('button', { name: /^Lihat detail / }).first()).toBeVisible();
 }
 
@@ -22,15 +22,15 @@ async function expectNoHorizontalOverflow(page: Page) {
 
 test('login organisasi yang belum tersedia tidak membuat sesi palsu', async ({ page }, testInfo) => {
   await page.goto('/');
-  await expect(page.getByRole('heading', { name: 'Selamat datang.' })).toBeVisible();
-  await expect(page.getByText('Mode demo', { exact: true })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Dashboard Kebencanaan' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Pratinjau tanpa Auth' })).toBeVisible();
   await page.screenshot({ path: testInfo.outputPath('login-desktop.png'), fullPage: true });
 
-  await page.getByRole('button', { name: 'Masuk dengan organisasi' }).click();
+  await page.getByRole('button', { name: 'Masuk dengan Zitadel' }).click();
   await expect(page.getByRole('alert')).toBeVisible();
   await expect(page.getByRole('alert')).not.toBeEmpty();
-  await expect(page.getByRole('heading', { name: 'Selamat datang.' })).toBeVisible();
-  await expect(page.getByRole('heading', { name: 'Situasi kebencanaan' })).toHaveCount(0);
+  await expect(page.getByRole('heading', { name: 'Dashboard Kebencanaan' })).toBeVisible();
+  await expect(page.getByRole('table')).toHaveCount(0);
 });
 
 for (const account of accounts) {
@@ -54,9 +54,9 @@ for (const account of accounts) {
     await expect(detail).toHaveCount(0);
 
     await page.getByRole('button', { name: 'Keluar', exact: true }).click();
-    await expect(page.getByRole('heading', { name: 'Selamat datang.' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Dashboard Kebencanaan' })).toBeVisible();
     await page.reload();
-    await expect(page.getByRole('heading', { name: 'Selamat datang.' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Dashboard Kebencanaan' })).toBeVisible();
   });
 }
 
@@ -104,18 +104,17 @@ test('dashboard menangani data terlambat, kosong, gagal, dan kembali normal', as
 test('login dan dashboard dapat digunakan pada layar ponsel tanpa overflow', async ({ page }, testInfo) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto('/');
-  await expect(page.getByRole('heading', { name: 'Selamat datang.' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Dashboard Kebencanaan' })).toBeVisible();
   await expectNoHorizontalOverflow(page);
   await page.screenshot({ path: testInfo.outputPath('login-mobile.png'), fullPage: true });
 
   await page.getByRole('button', { name: 'Pratinjau sebagai Media, akun media-demo' }).click();
-  await expect(page.getByRole('heading', { name: 'Situasi kebencanaan' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Dashboard Kebencanaan' })).toBeVisible();
   await expect(page.getByRole('button', { name: /^Lihat detail / }).first()).toBeVisible();
   await expectNoHorizontalOverflow(page);
   await page.screenshot({ path: testInfo.outputPath('dashboard-mobile.png'), fullPage: true });
-  await expect(page.getByRole('complementary', { name: 'Menu utama' })).not.toBeVisible();
-  await page.getByRole('button', { name: 'Buka menu' }).click();
+  await expect(page.getByRole('navigation', { name: 'Menu utama' })).toBeVisible();
   await page.getByRole('button', { name: /^Notifikasi/ }).click();
-  await expect(page.getByRole('heading', { name: 'Pusat notifikasi', exact: true })).toBeVisible();
-  await expect(page.getByRole('complementary', { name: 'Menu utama' })).not.toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Notifikasi', exact: true })).toBeVisible();
+  await expectNoHorizontalOverflow(page);
 });

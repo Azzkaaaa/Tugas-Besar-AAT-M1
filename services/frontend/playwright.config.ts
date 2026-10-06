@@ -29,12 +29,12 @@ export default defineConfig({
     url: 'http://127.0.0.1:5173',
     timeout: 30_000,
     reuseExistingServer: !process.env.CI,
-    env: { VITE_APP_MODE: 'demo', VITE_ENABLE_DEMO: 'true' },
+    env: { VITE_APP_MODE: 'demo', VITE_ENABLE_DEMO: 'true', VITE_DATA_MODE: 'mock' },
   }, {
     command: 'npm run build && npm run preview -- --host 127.0.0.1 --strictPort',
     url: 'http://127.0.0.1:4173',
     timeout: 60_000,
     reuseExistingServer: false,
-    env: { VITE_APP_MODE: 'gateway', VITE_ENABLE_DEMO: 'false' },
+    env: { VITE_APP_MODE: 'oidc', VITE_ENABLE_DEMO: 'false', VITE_DATA_MODE: 'mock' },
   }],
 });

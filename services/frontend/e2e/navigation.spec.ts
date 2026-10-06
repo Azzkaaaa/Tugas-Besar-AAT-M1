@@ -25,7 +25,7 @@ test('pagination, notifikasi, dan sesi pratinjau berjalan bersama', async ({ pag
   await expect(rows).toHaveCount(8);
 
   await page.getByRole('button', { name: /^Notifikasi/ }).click();
-  await expect(page.getByRole('heading', { name: 'Pusat notifikasi', exact: true })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Notifikasi', exact: true })).toBeVisible();
   const notification = page.getByRole('button', { name: /^Buka notifikasi / }).first();
   await notification.click();
   await expect(page.getByRole('dialog', { name: 'Detail kejadian' })).toBeVisible();
@@ -33,7 +33,7 @@ test('pagination, notifikasi, dan sesi pratinjau berjalan bersama', async ({ pag
   await expect(page.getByRole('dialog')).toHaveCount(0);
   await expect(notification).toBeFocused();
   await page.reload();
-  await expect(page.getByRole('heading', { name: 'Pusat notifikasi', exact: true })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Notifikasi', exact: true })).toBeVisible();
   expect(errors).toEqual([]);
 });
 
@@ -51,13 +51,15 @@ test('event baru menawarkan refresh tanpa menggeser halaman yang sedang dibaca',
 });
 
 test('build produksi menolak identitas demo meskipun disisipkan ke penyimpanan browser', async ({ page }) => {
-  await page.addInitScript(() => sessionStorage.setItem('siaga.demo.role', 'BNPB_INTERNAL'));
+  await page.route('**/auth/session', route => route.fulfill({ status: 401, json: { detail: 'Login diperlukan.' } }));
+  await page.route('**/auth/login', route => route.fulfill({ contentType: 'text/html', body: '<h1>Halaman penyedia login</h1>' }));
+  await page.addInitScript(() => sessionStorage.setItem('bnpb.demo.role', 'BNPB_INTERNAL'));
   await page.goto('http://127.0.0.1:4173/#/dashboard');
-  await expect(page.getByRole('heading', { name: 'Selamat datang.' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Dashboard Kebencanaan' })).toBeVisible();
   await expect(page.getByRole('button', { name: /Pratinjau sebagai/ })).toHaveCount(0);
-  await expect(page.getByText('Mode demo', { exact: true })).toHaveCount(0);
+  await expect(page.getByRole('heading', { name: 'Pratinjau tanpa Auth' })).toHaveCount(0);
   await expect(page).toHaveURL(/#\/login$/);
-  await page.getByRole('button', { name: 'Masuk dengan organisasi' }).click();
-  await expect(page.getByRole('alert')).toBeVisible();
-  await expect(page.getByRole('heading', { name: 'Situasi kebencanaan' })).toHaveCount(0);
+  await page.getByRole('button', { name: 'Masuk dengan Zitadel' }).click();
+  await expect(page).toHaveURL('http://127.0.0.1:4173/auth/login');
+  await expect(page.getByRole('heading', { name: 'Halaman penyedia login' })).toBeVisible();
 });

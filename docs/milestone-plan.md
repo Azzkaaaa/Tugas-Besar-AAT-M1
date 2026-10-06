@@ -2,8 +2,11 @@
 
 Dokumen ini menurunkan kriteria dari **IF4031 - Tugas Besar - M1.pdf** menjadi
 pekerjaan implementasi dan demo berikutnya. Repo menyediakan kontrak lintas
-bahasa dan implementasi dua mock Python + SQLite. Cara menjalankan serta cakupan
-uji mock ada di [panduan mock](mock-services.md). Checkbox di bawah adalah
+bahasa, dua mock Python + SQLite, frontend SPA, serta Auth bridge dengan
+Zitadel. Cara menjalankan mock ada di [panduan mock](mock-services.md), sedangkan
+konfigurasi/login Auth ada di [panduan Auth bridge](../services/auth-bridge/README.md).
+Mode data fixture dengan login nyata hanya membuktikan bagian frontend/Auth,
+bukan penerimaan alur sumber → Aggregator → Gateway → client. Checkbox di bawah adalah
 **target penerimaan sistem lengkap yang belum
 dibuktikan**; keberadaan OpenAPI atau proto tidak membuktikan perilaku runtime,
 kinerja, autentikasi, persistensi, maupun ketahanan sistem.
@@ -14,8 +17,8 @@ kinerja, autentikasi, persistensi, maupun ketahanan sistem.
 | --- | --- | --- |
 | P1 — Arsitektur dan interoperabilitas data | [BMKG](../contracts/openapi/bmkg.yaml), [PVMBG](../contracts/openapi/pvmbg.yaml), [common.proto](../contracts/proto/bnpb/common/v1/common.proto), [aggregator.proto](../contracts/proto/bnpb/aggregator/v1/aggregator.proto) | Data sumber dan hasil kanonik sebelum/sesudah perubahan skema, log satu alur ingest |
 | P2 — Konkurensi, ketersediaan, degradasi terkendali | [Gateway](../contracts/openapi/gateway.yaml), [PVMBG](../contracts/openapi/pvmbg.yaml), [aggregator.proto](../contracts/proto/bnpb/aggregator/v1/aggregator.proto) | Hasil uji beban, latensi per sumber, respons selama outage dan setelah pemulihan |
-| P3 — Autentikasi dan pemisahan kepercayaan | Ketiga OpenAPI, [auth.proto](../contracts/proto/bnpb/auth/v1/auth.proto), [common.proto](../contracts/proto/bnpb/common/v1/common.proto), [feed.proto](../contracts/proto/bnpb/feed/v1/feed.proto), [webhook.proto](../contracts/proto/bnpb/webhook/v1/webhook.proto) | Penolakan kredensial silang, proyeksi Media, token kedaluwarsa/refresh/revoke |
-| P4 — Batas service dan penyimpanan fleksibel | [aggregator.proto](../contracts/proto/bnpb/aggregator/v1/aggregator.proto), [auth.proto](../contracts/proto/bnpb/auth/v1/auth.proto), [feed.proto](../contracts/proto/bnpb/feed/v1/feed.proto), [notification.proto](../contracts/proto/bnpb/notification/v1/notification.proto), [webhook.proto](../contracts/proto/bnpb/webhook/v1/webhook.proto) | Restart satu container, bukti kepemilikan storage, record dua versi skema yang tersimpan bersamaan |
+| P3 — Autentikasi dan pemisahan kepercayaan | [Auth HTTP](../contracts/openapi/auth.yaml), [Gateway](../contracts/openapi/gateway.yaml), OpenAPI BMKG/PVMBG, [common.proto](../contracts/proto/bnpb/common/v1/common.proto), [feed.proto](../contracts/proto/bnpb/feed/v1/feed.proto), [webhook.proto](../contracts/proto/bnpb/webhook/v1/webhook.proto) | Penolakan kredensial silang, proyeksi Media, token kedaluwarsa/refresh/revoke |
+| P4 — Batas service dan penyimpanan fleksibel | [aggregator.proto](../contracts/proto/bnpb/aggregator/v1/aggregator.proto), [Auth HTTP](../contracts/openapi/auth.yaml), [feed.proto](../contracts/proto/bnpb/feed/v1/feed.proto), [notification.proto](../contracts/proto/bnpb/notification/v1/notification.proto), [webhook.proto](../contracts/proto/bnpb/webhook/v1/webhook.proto) | Restart satu container, bukti kepemilikan storage, record dua versi skema yang tersimpan bersamaan |
 | P5 — Distribusi event ke banyak consumer | [event.proto](../contracts/proto/bnpb/event/v1/event.proto), [feed.proto](../contracts/proto/bnpb/feed/v1/feed.proto), [notification.proto](../contracts/proto/bnpb/notification/v1/notification.proto), [webhook.proto](../contracts/proto/bnpb/webhook/v1/webhook.proto) | Event pada queue independen, penghentian/pemulihan consumer, penambahan subscriber |
 
 Semantik metadata, proyeksi, pagination, replay, dan pemetaan error gRPC ke HTTP
@@ -23,10 +26,10 @@ ada di [panduan proto](../contracts/proto/README.md).
 
 ## Prasyarat demo bersama
 
-- [ ] Lengkapi implementasi Aggregator, Auth, Gateway, Event Live Feed, Webhook
-  Provider, Danger Notification, dan SPA sesuai batas arsitektur. Mock BMKG
-  dan PVMBG sudah memakai Python 3.12 + SQLite; integrasi seluruh alur masih
-  perlu dikerjakan dan dibuktikan.
+- [ ] Lengkapi Aggregator, Gateway bisnis, Event Live Feed, Webhook Provider,
+  dan Danger Notification sesuai batas arsitektur. Hubungkan frontend/Auth
+  yang tersedia ke data nyata. Mock BMKG dan PVMBG sudah memakai Python 3.12
+  + SQLite; integrasi seluruh alur masih perlu dikerjakan dan dibuktikan.
 - [ ] Sediakan Dockerfile terpisah untuk setiap service dan satu perintah
   orkestrasi untuk menjalankan seluruh sistem. Setiap service dapat dihentikan
   dan dijalankan sendiri. Kedua mock sudah memiliki Dockerfile serta
@@ -94,12 +97,24 @@ ada di [panduan proto](../contracts/proto/README.md).
 
 ## P3 — Autentikasi dan pemisahan kepercayaan
 
+Implementasi memakai hosted login Zitadel, confidential client OIDC pada
+Auth bridge HTTP, dan cookie HttpOnly. Tidak ada Auth gRPC atau JWT internal.
+`compose.auth.yaml` memakai tiga pengguna Zitadel independen dan access token
+dengan TTL default 60 detik (`ZITADEL_ACCESS_TOKEN_TTL_SECONDS`). Pisahkan bukti
+uji lokal dengan provider simulasi dari bukti browser + Zitadel nyata, serta
+dari bukti API bisnis/gRPC yang baru bisa dibuat setelah downstream selesai.
+
 - [ ] Buktikan kredensial valid BMKG (`X-BMKG-Key`) ditolak PVMBG, serta token
   PVMBG (`Authorization: Bearer ...`) ditolak BMKG, dengan **401/403**.
   Token downstream BNPB juga tidak dapat menggantikan kedua kredensial itu.
 - [ ] Login sebagai masing-masing dari tiga identitas client. Server menentukan
   role dan scope berdasarkan registrasi identitas; client tidak boleh memilih
   atau menaikkan role melalui request.
+- [ ] Buktikan alur hosted login, callback dengan state/nonce/PKCE, serta
+  penolakan token salah issuer/audience/proyek/organisasi. Cookie access dan
+  sesi HttpOnly, host-only, SameSite=Lax, Secure pada HTTPS; JavaScript tidak
+  menyimpan access/refresh token. POST refresh/logout dan mutasi cookie tanpa
+  Origin/CSRF yang benar ditolak.
 - [ ] Buktikan Media hanya menerima tujuh field ringkasan: `hazard_id`,
   `source`, `hazard_type`, `severity`, `area_name`, `occurred_at`, dan
   `ingested_at`. `source_ref_id`, `latitude`, `longitude`, dan `attributes`
@@ -110,6 +125,8 @@ ada di [panduan proto](../contracts/proto/README.md).
   **60 detik**. Buktikan akses dengan token kedaluwarsa ditolak, refresh
   menghasilkan token baru tanpa login manual, token lama tetap ditolak,
   dan refresh token lama tidak dapat digunakan lagi setelah rotasi.
+  Ambil bukti expiry alami; mengubah jam atau mock response saja bukan bukti
+  TTL provider 60 detik. Uji token lama juga melalui jalur bearer API.
 - [ ] Buktikan logout mencabut sesi; token dicabut tidak diterima lagi oleh
   RPC baca atau stream aktif. Stream juga berhenti saat token kedaluwarsa,
   sekalipun sedang tidak ada event baru.

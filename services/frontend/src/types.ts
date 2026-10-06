@@ -11,7 +11,7 @@ export interface AuthSession {
   name: string;
   role: Role;
   scopes: string[];
-  mode: 'demo';
+  mode: 'demo' | 'oidc';
 }
 
 /** Keep this projection to exactly these seven fields (Gateway contract). */

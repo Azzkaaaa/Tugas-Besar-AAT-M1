@@ -1,8 +1,7 @@
 import { apiBaseUrl } from '../config';
 import type { GatewayClient, HazardFeedEvent, HazardFilters, Problem, RequestOptions } from '../types';
 import { ApiError } from './errors';
-
-type AccessTokenProvider = () => Promise<string | null>;
+import { refreshSession } from '../auth/session';
 
 function queryString(filters: HazardFilters): string {
   const params = new URLSearchParams();
@@ -30,19 +29,31 @@ async function readProblem(response: Response): Promise<ApiError> {
   });
 }
 
-/** Integration boundary: wire a real OIDC access-token provider here when Auth is ready. */
-export function createHttpGatewayClient(getAccessToken: AccessTokenProvider): GatewayClient {
+/** Restrict cookie-bearing requests to the SPA origin; the reverse proxy owns API routing. */
+export function createHttpGatewayClient(baseUrl = apiBaseUrl): GatewayClient {
+  const origin = globalThis.location?.origin ?? 'http://localhost';
+  const resolved = new URL(baseUrl, origin);
+  if (resolved.origin !== origin || resolved.username || resolved.password || resolved.search || resolved.hash) {
+    throw new ApiError(400, 'Alamat Gateway harus berada pada origin yang sama dengan frontend.');
+  }
+  const basePath = resolved.pathname.replace(/\/+$/, '');
   async function authorizedFetch(path: string, options: RequestOptions = {}, extraHeaders: Record<string, string> = {}): Promise<Response> {
-    const token = await getAccessToken();
-    if (!token) throw new ApiError(401, 'Login organisasi belum tersedia. Konfigurasi Auth diperlukan.');
     try {
-      return await fetch(`${apiBaseUrl}${path}`, {
-        headers: { Accept: 'application/json', ...extraHeaders, Authorization: `Bearer ${token}` },
+      const init: RequestInit = {
+        headers: { Accept: 'application/json', ...extraHeaders },
         signal: options.signal,
         cache: 'no-store',
-        credentials: 'omit',
-      });
+        credentials: 'same-origin',
+      };
+      const response = await fetch(`${basePath}${path}`, init);
+      if (response.status !== 401) return response;
+      options.signal?.throwIfAborted();
+      await response.body?.cancel();
+      await refreshSession();
+      options.signal?.throwIfAborted();
+      return await fetch(`${basePath}${path}`, init);
     } catch (error) {
+      if (error instanceof ApiError) throw error;
       if (error instanceof DOMException && error.name === 'AbortError') throw error;
       throw new ApiError(503, 'Tidak dapat terhubung ke Gateway. Periksa koneksi dan coba kembali.');
     }
@@ -151,7 +162,7 @@ export function createHttpGatewayClient(getAccessToken: AccessTokenProvider): Ga
         } finally {
           if (!stopped) {
             onStatus?.('disconnected');
-            // Auth integration owns obtaining a fresh session and resubscribing.
+            // Failed refresh clears the real session through the Auth subscription.
             if (!stopOnAuth) {
               retry = setTimeout(() => { void connect(); }, retryDelay);
               retryDelay = Math.min(retryDelay * 2, 15_000);

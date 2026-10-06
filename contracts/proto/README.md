@@ -10,7 +10,6 @@ memerlukan package versi baru.
 | --- | --- |
 | `bnpb/common/v1/common.proto` | Record kanonik, proyeksi, filter, pagination, freshness |
 | `bnpb/aggregator/v1/aggregator.proto` | `AggregatorService`: `ListHazards`, `GetHazard`, `GetSourceStatuses` |
-| `bnpb/auth/v1/auth.proto` | `AuthService`: `Login`, `RefreshToken`, `Logout`, `Authorize` |
 | `bnpb/feed/v1/feed.proto` | `EventFeedService.SubscribeEvents` |
 | `bnpb/webhook/v1/webhook.proto` | `WebhookService`: `CreateWebhook`, `ListWebhooks`, `GetWebhook`, `DeleteWebhook`, `ListDeliveries`, `PingWebhook` |
 | `bnpb/notification/v1/notification.proto` | `DangerNotificationService`: `ListNotifications`, `GetNotification` |
@@ -20,6 +19,21 @@ Gateway mengubah REST/SSE ke gRPC. BMKG Mock dan PVMBG Mock hanya menyediakan RE
 untuk polling Aggregator. Health gRPC menggunakan layanan standar
 `grpc.health.v1.Health`; tidak ada RPC health khusus di kontrak bisnis.
 
+Autentikasi memakai Zitadel dan Auth bridge HTTP, bukan `AuthService` gRPC.
+Endpoint login, callback, sesi, refresh, dan logout ada di
+[kontrak Auth](../openapi/auth.yaml). Browser mengirim cookie HttpOnly;
+bridge memvalidasi token melalui introspeksi Zitadel lalu meneruskan access
+token aktor asli sebagai bearer ke Gateway internal. Tidak ada token exchange
+ke JWT internal. Kontrak bisnis di bawah tetap merupakan target integrasi
+downstream; tersedianya login tidak membuktikan service gRPC sudah terlindungi.
+
+Bridge Node.js menyimpan sesi browser di SQLite; pengguna dan grant dikelola
+Zitadel dalam PostgreSQL. Komunikasi bridge dengan IdP memakai HTTP OIDC/OAuth.
+Transcoder gRPC berada pada jaringan privat di belakang bridge. Cookie tidak
+dipakai sebagai metadata RPC dan tidak menggantikan pemeriksaan aktor di
+service bisnis. Pengujian fixture frontend dengan login OIDC tidak menguji
+proyeksi, expiry, atau revocation pada RPC downstream.
+
 ## Metadata dan batas waktu
 
 Semua pemanggilan gRPC menyertakan:
@@ -27,9 +41,10 @@ Semua pemanggilan gRPC menyertakan:
 - `x-service-token`: kredensial identitas layanan, disuplai melalui konfigurasi
   runtime. Jangan commit nilainya. Kredensial ini tidak menggantikan identitas
   pengguna dan tidak memberi akses FULL secara otomatis.
-- `authorization: Bearer <access_token>`: token aktor asli, wajib pada RPC baca,
-  subscription, dan `AuthService.Authorize`. Login, RefreshToken, dan Logout
-  menggunakan kredensial di request tanpa mensyaratkan token akses aktif.
+- `authorization: Bearer <access_token>`: access token Zitadel aktor asli,
+  wajib pada RPC baca, subscription, dan mutasi yang memerlukan aktor.
+  Cookie browser tidak diteruskan ke gRPC. Login/refresh/logout ditangani
+  Auth bridge HTTP dan tidak menjadi RPC bisnis.
 - `x-correlation-id`: ID request dari Gateway, diteruskan tanpa perubahan dan
   dikembalikan dalam metadata response. Gateway membuatnya bila belum ada.
 - `traceparent` dan opsional `tracestate`: konteks penelusuran W3C dari pemanggil.
@@ -40,10 +55,13 @@ sisa deadline ke layanan berikutnya. Subscription memiliki lifetime terbatas
 sesuai masa berlaku token; client harus reconnect dengan token baru. Pembatalan
 request Gateway membatalkan RPC turunannya.
 
-Layanan downstream memvalidasi token dan scope melalui Auth. Error/deadline Auth
-tidak boleh membuat request diizinkan. Cache validasi lokal, bila digunakan,
-harus tetap menjamin pencabutan sesi segera; cache berdasarkan TTL saja tidak
-memenuhi semantik logout dan refresh rotation ini.
+Layanan downstream tetap harus memvalidasi identitas pemanggil dan hak aktor.
+Integrasi validasi Zitadel pada masing-masing service belum selesai; gunakan
+introspeksi online dengan kredensial API service sendiri atau mekanisme validasi
+terpusat yang kontraknya disepakati sebelum mengaktifkan jalur tersebut.
+Jangan mempercayai header role/scope kiriman browser. Error/deadline validasi
+tidak boleh membuat request diizinkan. Cache berdasarkan TTL saja tidak
+membuktikan pencabutan sesi; feed harus memeriksa ulang saat idle sekalipun.
 
 ## Scope dan proyeksi
 
@@ -53,7 +71,13 @@ memenuhi semantik logout dan refresh rotation ini.
 | `FIELD_TEAM` | `hazards:read:summary`, `hazards:read:full`, `notifications:read`, `webhooks:read`, `webhooks:write` |
 | `BNPB_INTERNAL` | `hazards:read:summary`, `hazards:read:full`, `notifications:read`, `webhooks:read`, `webhooks:write` |
 
-Role dan scope ditentukan registrasi client di Auth, bukan request login.
+Role berasal dari grant pengguna di proyek dan organisasi Zitadel yang
+dikonfigurasi. Auth bridge memetakan role tersebut ke scope aplikasi pada tabel;
+scope aplikasi ini bukan otomatis scope OAuth custom yang diterbitkan Zitadel.
+Role dan scope tidak boleh ditentukan melalui input login. Tiga akun demonstrasi
+merupakan pengguna berbeda dengan kredensial dan grant terpisah.
+Seluruh client M1 hanya membaca record hazard; `webhooks:write` terbatas pada
+pengelolaan langganan dan bukan hak membuat atau mengubah data kejadian.
 Default `VIEW_UNSPECIFIED` adalah `VIEW_SUMMARY`. Semua hazard reads dan feed
 memerlukan `hazards:read:summary`; view FULL juga memerlukan
 `hazards:read:full`. Notification reads juga memerlukan `notifications:read`.

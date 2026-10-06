@@ -5,11 +5,13 @@ COPY package.json package-lock.json ./
 RUN npm ci
 
 COPY . .
-ARG VITE_APP_MODE=gateway
+ARG VITE_APP_MODE=oidc
 ARG VITE_ENABLE_DEMO=false
+ARG VITE_DATA_MODE=gateway
 ARG VITE_API_BASE_URL=/api/v1
 ENV VITE_APP_MODE=${VITE_APP_MODE} \
     VITE_ENABLE_DEMO=${VITE_ENABLE_DEMO} \
+    VITE_DATA_MODE=${VITE_DATA_MODE} \
     VITE_API_BASE_URL=${VITE_API_BASE_URL}
 RUN npm run build
 
