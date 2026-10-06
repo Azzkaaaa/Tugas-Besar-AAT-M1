@@ -2,6 +2,8 @@ syntax = "proto3";
 
 package bnpb.aggregator.v1;
 
+option go_package = "github.com/Azzkaaaa/Tugas-Besar-AAT-M1/packages/bnpb-aggregator-go/bnpb/aggregator/v1;aggregatorv1";
+
 import "bnpb/common/v1/common.proto";
 import "google/api/annotations.proto";
 
