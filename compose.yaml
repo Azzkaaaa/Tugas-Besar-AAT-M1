@@ -1,21 +1,34 @@
 services:
-  envoy:
-    image: envoyproxy/envoy:v1.31-latest
+  otel-lgtm:
+    image: grafana/otel-lgtm:latest
     ports:
-      - "8080:8080"
-    volumes:
-      - ./services/envoy/envoy.yaml:/etc/envoy/envoy.yaml:ro
-      - ./services/envoy/sse_filter.lua:/etc/envoy/lua/sse_filter.lua:ro
-      - ./services/envoy/bnpb_descriptor.pb:/etc/envoy/bnpb_descriptor.pb:ro
+      - "3000:3000"   # grafana ui
+      - "4317:4317"   # otlp grpc
+      - "4318:4318"   # otlp http
+      - "9090:9090"   # prome or mimir idk
+    environment:
+      - ENABLE_OBI=false
     networks:
       bnpb_net:
         aliases:
-          - envoy.local
-          - auth.localhost
-      internet_mock_net:
-        aliases:
-          - api.localhost
-          - auth.localhost
+          - otel-lgtm.local
+  # envoy:
+  #   image: envoyproxy/envoy:v1.31-latest
+  #   ports:
+  #     - "8080:8080"
+  #   volumes:
+  #     - ./services/envoy/envoy.yaml:/etc/envoy/envoy.yaml:ro
+  #     - ./services/envoy/sse_filter.lua:/etc/envoy/lua/sse_filter.lua:ro
+  #     - ./services/envoy/bnpb_descriptor.pb:/etc/envoy/bnpb_descriptor.pb:ro
+  #   networks:
+  #     bnpb_net:
+  #       aliases:
+  #         - envoy.local
+  #         - auth.localhost
+  #     internet_mock_net:
+  #       aliases:
+  #         - api.localhost
+  #         - auth.localhost
 
   zitadel:
     # Requires CockroachDB/Postgres in a full deployment
@@ -40,6 +53,10 @@ services:
       dockerfile: services/webhook-provider/Dockerfile
     env_file:
       - .env
+    environment:
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-lgtm:4318
+      - OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf
+      - OTEL_SERVICE_NAME=webhook-provider
     ports:
       - "9094:9094"
     volumes:
@@ -47,6 +64,8 @@ services:
     depends_on:
       rabbitmq:
         condition: service_healthy
+      otel-lgtm:
+        condition: service_started
     networks:
       bnpb_net:
         aliases:
@@ -72,6 +91,10 @@ services:
       dockerfile: services/aggregator/Dockerfile
     env_file:
       - .env
+    environment:
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-lgtm:4318
+      - OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf
+      - OTEL_SERVICE_NAME=aggregator-service
     ports:
       - "9091:9091"
     depends_on:
@@ -82,6 +105,8 @@ services:
       bmkg-mock:
         condition: service_started
       pvmbg-mock:
+        condition: service_started
+      otel-lgtm:
         condition: service_started
     networks:
       bnpb_net:
