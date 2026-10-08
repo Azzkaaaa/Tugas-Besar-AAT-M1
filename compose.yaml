@@ -77,7 +77,9 @@ services:
       RabbitMq__VirtualHost: ${RABBITMQ_DEFAULT_VHOST}
       RabbitMq__QueueName: ${CONSUMER_3_QUEUE}
       RabbitMq__DeadLetterQueue: ${CONSUMER_3_DLQ}
-      Auth__Authority: ${NOTIFICATION_AUTH_AUTHORITY:-}
+      Auth__Authority: ${NOTIFICATION_AUTH_AUTHORITY:-http://auth.localhost:8080}
+      # The local Zitadel only serves plain HTTP.
+      Auth__RequireHttpsMetadata: "false"
       GOOGLE_APPLICATION_CREDENTIALS: /run/secrets/firebase-credentials.json
     ports:
       - "9095:9095"
@@ -101,12 +103,12 @@ services:
         aliases:
           - notification-service.local
 
-  feed-service:
-    # Set your image/build context here
-    networks:
-      bnpb_net:
-        aliases:
-          - feed-service.local
+  #feed-service:
+  #  # Set your image/build context here
+  #  networks:
+  #    bnpb_net:
+  #      aliases:
+  #        - feed-service.local
 
   aggregator-service:
     build:
