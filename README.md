@@ -3,7 +3,51 @@
 Mock **BMKG dan PVMBG sudah diimplementasikan** menggunakan Python 3.12 dan
 SQLite. Keduanya berjalan sebagai service REST terpisah dengan database,
 kredensial, generator data, dan Dockerfile masing-masing. Komponen BNPB lainnya
-masih berupa kerangka/kontrak dan tidak termasuk implementasi dua mock ini.
+masih berupa kerangka/kontrak. Frontend **SPA React + TypeScript** menyediakan
+dashboard sederhana dan login melalui **Zitadel**. Auth bridge menangani OIDC,
+cookie HttpOnly, sesi SQLite, refresh, dan logout. Data dashboard standalone
+masih berupa fixture Gateway; belum tersambung ke service BNPB.
+
+## Menjalankan frontend dengan Auth
+
+Dengan Docker Desktop/Engine aktif, jalankan dari root repository:
+
+```powershell
+python tools/setup_auth_env.py
+docker compose --env-file .env.auth -f compose.auth.yaml up --build -d --wait
+```
+
+Buka `http://localhost:8080`, lalu **Masuk dengan Zitadel**. Akun seed adalah
+`media-demo`, `lapangan-demo`, dan `bnpb-demo`. Password masing-masing ada di
+`.env.auth`; helper mempertahankan nilai yang sudah ada. Akun disimpan oleh
+Zitadel di PostgreSQL, sedangkan SQLite bridge menyimpan sesi terenkripsi.
+
+[Penjelasan implementasi Auth](services/auth-bridge/README.md) dan
+[langkah testing Auth](docs/auth-testing.md) menjelaskan cookie, akun seed,
+refresh, logout, serta batas integrasi yang masih pending. **Pengujian langsung
+Zitadel di Docker lulus 45 pemeriksaan**, termasuk tiga akun, expiry alami 60
+detik, refresh, logout, dan persistensi sesi setelah restart bridge.
+
+## Menjalankan pratinjau frontend tanpa Auth
+
+Gunakan Node.js 22.12+ dan jalankan dari root repository:
+
+```powershell
+npm --prefix services/frontend ci
+npm --prefix services/frontend run dev
+```
+
+Buka `http://localhost:5173`, lalu pilih akun pratinjau Media, Tim Lapangan, atau
+BNPB Pusat. Mode demo ini tidak membutuhkan service lain atau konfigurasi secret.
+Alternatif memakai Docker:
+
+```powershell
+docker compose -f compose.frontend.yaml up --build -d --wait
+```
+
+Panduan implementasi, skenario pengujian, konfigurasi, dan integrasi Auth ada di
+[README frontend](services/frontend/README.md). Compose utama membangun frontend
+dengan demo nonaktif; Compose khusus frontend secara eksplisit mengaktifkan demo.
 
 ## Menjalankan dua mock
 

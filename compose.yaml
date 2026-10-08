@@ -1,34 +1,54 @@
 services:
   envoy:
+    extends:
+      file: compose.auth.yaml
+      service: envoy
+
+  auth-db:
+    extends:
+      file: compose.auth.yaml
+      service: auth-db
+
+  zitadel-login:
+    extends:
+      file: compose.auth.yaml
+      service: zitadel-login
+
+  auth-bootstrap:
+    extends:
+      file: compose.auth.yaml
+      service: auth-bootstrap
+
+  auth-bridge:
+    extends:
+      file: compose.auth.yaml
+      service: auth-bridge
+    environment:
+      GATEWAY_UPSTREAM_URL: http://gateway-transcoder:8080
+
+  # Private boundary: public API traffic must pass Auth bridge first.
+  gateway-transcoder:
     image: envoyproxy/envoy:v1.31-latest
-    ports:
-      - "8080:8080"
     volumes:
       - ./services/envoy/envoy.yaml:/etc/envoy/envoy.yaml:ro
       - ./services/envoy/sse_filter.lua:/etc/envoy/lua/sse_filter.lua:ro
       - ./services/envoy/bnpb_descriptor.pb:/etc/envoy/bnpb_descriptor.pb:ro
     networks:
-      bnpb_net:
-        aliases:
-          - envoy.local
-          - auth.localhost
-      internet_mock_net:
-        aliases:
-          - api.localhost
-          - auth.localhost
+      bnpb_net: {}
 
   zitadel:
-    # Requires CockroachDB/Postgres in a full deployment
-    image: ghcr.io/zitadel/zitadel:latest
-    command: 'start-from-init --masterkey "a-32-byte-long-secret-key-change-me"'
-    networks:
-      bnpb_net:
-        aliases:
-          - zitadel.local
+    extends:
+      file: compose.auth.yaml
+      service: zitadel
 
   spa-server:
-    # Set your image/build context here
-    image: nginx:alpine
+    build:
+      context: ./services/frontend
+      args:
+        VITE_APP_MODE: oidc
+        VITE_DATA_MODE: gateway
+        VITE_ENABLE_DEMO: "false"
+        VITE_API_BASE_URL: "${FRONTEND_API_BASE_URL:-/api/v1}"
     networks:
       bnpb_net:
         aliases:
@@ -151,6 +171,11 @@ networks:
     driver: bridge
 
 volumes:
+  auth_postgres:
+  zitadel_admin_bootstrap:
+  zitadel_login_bootstrap:
+  auth_client_config:
+  auth_sessions:
   bmkg_data:
   pvmbg_data:
   aggregator_data:
