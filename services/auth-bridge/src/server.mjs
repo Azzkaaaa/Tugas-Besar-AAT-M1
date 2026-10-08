@@ -1,40 +1,19 @@
 import { createServer } from 'node:http';
-import { once } from 'node:events';
 import { randomUUID } from 'node:crypto';
 import { pathToFileURL } from 'node:url';
 import { parseCookie, stringifySetCookie } from 'cookie';
-import { loadConfig } from './config.mjs';
-import { SessionStore, randomSecret, equal, hash } from './store.mjs';
+import { setTimeout as delay } from 'node:timers/promises';
+import { loadConfig, ProvisioningPending } from './config.mjs';
+import { SessionStore, randomSecret, equal } from './store.mjs';
 import { ZitadelProvider, AuthError, requestContext } from './provider.mjs';
+import { claimsFor, verifySignature } from './claims.mjs';
 
 const payload = session => ({ user: session.user, csrf_token: session.csrf,
   expires_at: new Date(session.expiresAt).toISOString() });
 
-export function requiredScopes(url, method) {
-  const path = url.pathname;
-  const views = url.searchParams.getAll('view');
-  if (views.length > 1 || (views.length && !['summary', 'full'].includes(views[0]))) throw new AuthError(400, 'invalid_view');
-  let scopes;
-  if (method === 'GET' && (/^\/api\/v1\/hazards(?:\/[^/]+)?$/.test(path) || path === '/api/v1/hazards/sources/statuses'
-    || /^\/api\/v1\/feeds\/(events|seismic|volcanic)$/.test(path))) scopes = ['hazards:read:summary'];
-  else if (method === 'GET' && /^\/api\/v1\/notifications(?:\/[^/]+)?$/.test(path)) scopes = ['hazards:read:summary', 'notifications:read'];
-  else if (method === 'POST' && /^\/api\/v1\/notifications\/push\/(register|unregister)$/.test(path)) scopes = ['notifications:read'];
-  else if (method === 'GET' && /^\/api\/v1\/webhooks(?:\/[^/]+(?:\/deliveries)?)?$/.test(path)) scopes = ['webhooks:read'];
-  else if ((method === 'POST' && (path === '/api/v1/webhooks' || /^\/api\/v1\/webhooks\/[^/]+\/test$/.test(path)))
-    || (method === 'DELETE' && /^\/api\/v1\/webhooks\/[^/]+$/.test(path))) scopes = ['webhooks:write'];
-  else throw new AuthError(404, 'not_found');
-  if (views[0] === 'full') scopes.push('hazards:read:full');
-  return scopes;
-}
-
 export function createAuthServer(config, { store = new SessionStore(config.databasePath, config.sessionKey),
   provider = new ZitadelProvider(config), logger = console.log } = {}) {
   const refreshes = new Map();
-  const streams = new Map();
-  function closeStreams(key) {
-    for (const abort of streams.get(key) || []) abort();
-    streams.delete(key);
-  }
   function cookie(name, value, seconds) {
     return stringifySetCookie({ name, value, maxAge: Math.max(0, Math.floor(seconds)), path: '/', httpOnly: true,
       sameSite: 'lax', secure: config.secureCookies });
@@ -62,21 +41,6 @@ export function createAuthServer(config, { store = new SessionStore(config.datab
     if (!token || store.isRevoked(token)) throw new AuthError(401, 'invalid_token');
     return provider.inspect(token);
   }
-  async function authenticate(req, cookies) {
-    const authorization = req.headers.authorization;
-    if (authorization) {
-      if (cookies.bnpb_session || cookies.bnpb_access) throw new AuthError(400, 'ambiguous_credentials');
-      if (!/^Bearer [^\s]+$/i.test(authorization)) throw new AuthError(401, 'invalid_token');
-      const token = authorization.slice(7);
-      return { ...await inspect(token), token, streamKey: hash(token) };
-    }
-    const session = store.getSession(cookies.bnpb_session);
-    if (!session || !equal(cookies.bnpb_access, session.accessToken)) throw new AuthError(401, 'session_required');
-    const identity = await inspect(session.accessToken);
-    if (identity.user.id !== session.user.id) throw new AuthError(401, 'invalid_identity');
-    if (!['GET', 'HEAD', 'OPTIONS'].includes(req.method)) csrf(req, session);
-    return { ...identity, token: session.accessToken, streamKey: hash(cookies.bnpb_session) };
-  }
   async function body(req) {
     const chunks = [];
     let size = 0;
@@ -86,69 +50,6 @@ export function createAuthServer(config, { store = new SessionStore(config.datab
       chunks.push(chunk);
     }
     return Buffer.concat(chunks);
-  }
-  async function proxy(req, res, url, cookies) {
-    const scopes = requiredScopes(url, req.method);
-    const identity = await authenticate(req, cookies);
-    const authorized = user => scopes.every(scope => user.scopes.includes(scope));
-    if (!authorized(identity.user)) throw new AuthError(403, 'insufficient_scope');
-    if (!config.upstream) throw new AuthError(503, 'gateway_not_configured');
-    const controller = new AbortController();
-    const abort = () => controller.abort();
-    const key = identity.streamKey;
-    if (!streams.has(key)) streams.set(key, new Set());
-    streams.get(key).add(abort);
-    res.on('close', abort);
-    const expiryTimer = setTimeout(abort, Math.max(1, identity.expiresAt - Date.now()));
-    const timeout = setTimeout(abort, 10000);
-    let recheck;
-    const start = performance.now();
-    let status = 0;
-    try {
-      const headers = { Authorization: `Bearer ${identity.token}`, 'X-Service-Token': config.serviceToken,
-        'X-Correlation-ID': res.getHeader('X-Correlation-ID'), Host: 'api.localhost' };
-      for (const name of ['accept', 'content-type', 'last-event-id', 'traceparent', 'tracestate']) {
-        if (typeof req.headers[name] === 'string') headers[name] = req.headers[name];
-      }
-      const response = await fetch(new URL(url.pathname + url.search, config.upstream), {
-        method: req.method, headers, signal: controller.signal, redirect: 'manual',
-        ...(!['GET', 'HEAD'].includes(req.method) ? { body: await body(req) } : {}),
-      });
-      status = response.status;
-      if (status >= 300 && status < 400) throw new AuthError(502, 'invalid_upstream_redirect');
-      if (status >= 400) {
-        await response.body?.cancel();
-        problem(res, [400, 401, 403, 404, 409, 429, 503].includes(status) ? status : 502, 'gateway_request_failed');
-        return;
-      }
-      const contentType = response.headers.get('content-type') || '';
-      const streaming = contentType.startsWith('text/event-stream');
-      if (streaming) {
-        clearTimeout(timeout);
-        let checking = false;
-        recheck = setInterval(async () => {
-          if (checking) return;
-          checking = true;
-          try { if (!authorized((await inspect(identity.token)).user)) abort(); } catch { abort(); }
-          finally { checking = false; }
-        }, 15000);
-      }
-      res.writeHead(status, { 'Content-Type': contentType || 'application/json', ...(streaming ? { 'X-Accel-Buffering': 'no' } : {}) });
-      if (streaming) res.flushHeaders();
-      if (response.body) for await (const chunk of response.body) {
-        if (!res.write(chunk)) await once(res, 'drain', { signal: controller.signal });
-      }
-      res.end();
-    } finally {
-      clearTimeout(timeout);
-      clearTimeout(expiryTimer);
-      clearInterval(recheck);
-      streams.get(key)?.delete(abort);
-      if (!streams.get(key)?.size) streams.delete(key);
-      res.off('close', abort);
-      logger(JSON.stringify({ event: 'gateway_request', path: url.pathname, status,
-        duration_ms: Math.round(performance.now() - start), correlation_id: res.getHeader('X-Correlation-ID') }));
-    }
   }
   async function handle(req, res) {
     // Construct from the configured origin, never from an untrusted Host header.
@@ -177,7 +78,7 @@ export function createAuthServer(config, { store = new SessionStore(config.datab
         const id = randomSecret();
         sessionCookies(res, id, session);
         const previous = store.getSession(cookies.bnpb_session);
-        if (previous) { store.rotate(cookies.bnpb_session, previous, null); closeStreams(hash(cookies.bnpb_session)); }
+        if (previous) store.rotate(cookies.bnpb_session, previous, null);
         store.putSession(id, session);
         res.appendHeader('Set-Cookie', cookie('bnpb_login', '', 0));
         res.writeHead(302, { Location: `${config.appUrl}/#/dashboard` });
@@ -210,7 +111,7 @@ export function createAuthServer(config, { store = new SessionStore(config.datab
           try { tokens = await provider.refresh(session); }
           catch (error) {
             if (error instanceof AuthError || error.error === 'invalid_grant') {
-              store.rotate(id, session, null); closeStreams(hash(id));
+              store.rotate(id, session, null);
               throw new AuthError(401, 'session_expired');
             }
             throw error;
@@ -219,7 +120,7 @@ export function createAuthServer(config, { store = new SessionStore(config.datab
           if (Buffer.byteLength(tokens.accessToken) > 3500) throw new AuthError(502, 'token_too_large');
           const next = { ...session, ...tokens };
           store.rotate(id, session, next);
-          closeStreams(hash(id)); closeStreams(hash(session.accessToken));
+          provider.revokeAccessToken(session.accessToken).catch(() => { /* expires within the access TTL */ });
           return next;
         })().finally(() => refreshes.delete(id));
         refreshes.set(id, operation);
@@ -236,14 +137,20 @@ export function createAuthServer(config, { store = new SessionStore(config.datab
       if (refreshes.has(id)) await refreshes.get(id).catch(() => {});
       session = store.getSession(id) || session;
       store.rotate(id, session, null);
-      closeStreams(hash(id)); closeStreams(hash(session.accessToken));
       clearCookies(res);
       // Local invalidation succeeds even if Zitadel is temporarily unreachable.
       let logoutUrl = `${config.appUrl}/`;
       try { logoutUrl = await provider.logoutUrl(); await provider.revoke(session); } catch { /* session already invalidated */ }
       return json(res, 200, { logout_url: logoutUrl });
     }
-    if (url.pathname.startsWith('/api/v1/')) return proxy(req, res, url, cookies);
+    // Zitadel Actions v2 target. Envoy only routes /auth/ here, so this path is internal.
+    if (url.pathname === '/internal/zitadel/claims' && req.method === 'POST') {
+      const raw = await body(req);
+      if (!verifySignature(raw, req.headers['zitadel-signature'], config.oidc.actions_signing_key)) throw new AuthError(401, 'invalid_signature');
+      let context;
+      try { context = JSON.parse(raw.toString('utf8')); } catch { throw new AuthError(400, 'invalid_payload'); }
+      return json(res, 200, claimsFor(context, config.oidc));
+    }
     throw new AuthError(404, 'not_found');
   }
   const server = createServer((req, res) => {
@@ -263,13 +170,26 @@ export function createAuthServer(config, { store = new SessionStore(config.datab
   server.headersTimeout = 10000;
   const cleanup = setInterval(() => store.cleanup(), 60000);
   cleanup.unref();
-  server.on('close', () => { clearInterval(cleanup); for (const key of streams.keys()) closeStreams(key); });
+  server.on('close', () => clearInterval(cleanup));
   return { server, store };
+}
+
+// auth-bootstrap writes oidc.json only after Zitadel can resolve this container
+// (it registers the Actions target URL), so start first and wait for the file.
+async function provisionedConfig() {
+  for (let attempt = 0; ; attempt++) {
+    try { return loadConfig(); }
+    catch (error) {
+      if (!(error instanceof ProvisioningPending) || attempt >= 300) throw error;
+      if (attempt === 0) console.log(JSON.stringify({ event: 'waiting_for_provisioning' }));
+      await delay(2000);
+    }
+  }
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   try {
-    const config = loadConfig();
+    const config = await provisionedConfig();
     const { server, store } = createAuthServer(config);
     server.listen(config.port, '0.0.0.0', () => console.log(JSON.stringify({ event: 'started', port: config.port })));
     for (const signal of ['SIGINT', 'SIGTERM']) process.on(signal, () => { server.close(() => { store.close(); process.exit(0); }); server.closeAllConnections(); });

@@ -1,11 +1,18 @@
-// Local provisioning only. Uses the pinned Zitadel Management API v1.
+// Local provisioning only. Uses the pinned Zitadel Management API v1 and the v2 feature/action APIs.
 // Never log request bodies, API secrets, tokens, or initial passwords.
 import { readFile, writeFile, rename, mkdir } from 'node:fs/promises';
+import { request } from 'node:http';
 import { dirname } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 
 const issuer = process.env.OIDC_ISSUER || 'http://auth.localhost:8080';
 const appUrl = process.env.APP_PUBLIC_URL || 'http://localhost:8080';
+// Provisioning talks to Zitadel directly so it does not depend on the gateway,
+// which itself needs the credentials written here. The Host header selects the instance.
+const apiUrl = process.env.ZITADEL_API_URL || issuer;
+const apiHost = process.env.ZITADEL_API_HOST || '';
+const claimsEndpoint = process.env.ACTIONS_CLAIMS_ENDPOINT || 'http://auth-bridge:3001/internal/zitadel/claims';
+const claimsTargetName = 'BNPB scope claims';
 const output = process.env.OIDC_CONFIG_FILE || '/bootstrap/oidc.json';
 const patPath = process.env.ZITADEL_ADMIN_PAT_FILE || '/admin/admin.pat';
 let token;
@@ -26,19 +33,37 @@ async function persist() {
   await rename(`${output}.tmp`, output);
 }
 
-async function api(path, body, method = body === undefined ? 'GET' : 'POST') {
-  const response = await fetch(`${issuer}${path}`, {
-    method,
-    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-    signal: AbortSignal.timeout(20000),
+// node:http instead of fetch: fetch silently drops a custom Host header.
+function send(path, body, method) {
+  const payload = body === undefined ? undefined : JSON.stringify(body);
+  return new Promise((resolve, reject) => {
+    const req = request(new URL(path, apiUrl), {
+      method,
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json',
+        ...(apiHost ? { Host: apiHost } : {}) },
+      signal: AbortSignal.timeout(20000),
+    }, response => {
+      const chunks = [];
+      response.on('data', chunk => chunks.push(chunk));
+      response.on('end', () => {
+        let json = {};
+        try { json = JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}'); } catch { /* status is enough */ }
+        resolve({ status: response.statusCode, json });
+      });
+      response.on('error', reject);
+    });
+    req.on('error', reject);
+    req.end(payload);
   });
-  if (!response.ok) {
-    const payload = await response.json().catch(() => ({}));
+}
+
+async function api(path, body, method = body === undefined ? 'GET' : 'POST') {
+  const { status, json } = await send(path, body, method);
+  if (status < 200 || status >= 300) {
     // Provider messages might echo submitted values. Only log numeric status/code.
-    throw new Error(`Provisioning ${method} ${path} failed: HTTP ${response.status}, code ${Number(payload.code) || 0}`);
+    throw new Error(`Provisioning ${method} ${path} failed: HTTP ${status}, code ${Number(json.code) || 0}`);
   }
-  return response.json();
+  return json;
 }
 
 async function all(path) {
@@ -66,7 +91,7 @@ async function ensureUser(username, firstName, lastName, passwordKey) {
   return created.userId;
 }
 
-async function ensureApp(projectId, name, kind, prefix) {
+async function ensureApp(projectId, name, kind, prefix, config) {
   const found = (await all(`/management/v1/projects/${projectId}/apps/_search`)).find(app => app.name === name);
   const idKey = prefix ? `${prefix}_app_id` : 'app_id';
   const clientKey = prefix ? `${prefix}_client_id` : 'client_id';
@@ -78,27 +103,62 @@ async function ensureApp(projectId, name, kind, prefix) {
     }
     return;
   }
-  const config = kind === 'oidc' ? {
-    name,
+  const created = await api(`/management/v1/projects/${projectId}/apps/${kind}`, { name, ...config });
+  if (!created.clientId || !created.clientSecret) throw new Error(`Zitadel did not return client credentials for ${name}.`);
+  saved[idKey] = created.appId;
+  saved[clientKey] = created.clientId;
+  saved[secretKey] = created.clientSecret;
+  await persist();
+}
+
+function oidcApp(overrides) {
+  return {
     redirectUris: [`${appUrl}/auth/callback`],
     responseTypes: ['OIDC_RESPONSE_TYPE_CODE'],
-    grantTypes: ['OIDC_GRANT_TYPE_AUTHORIZATION_CODE', 'OIDC_GRANT_TYPE_REFRESH_TOKEN'],
     appType: 'OIDC_APP_TYPE_WEB',
     authMethodType: 'OIDC_AUTH_METHOD_TYPE_BASIC',
     postLogoutRedirectUris: [`${appUrl}/`],
     version: 'OIDC_VERSION_1_0',
     // HTTP is permitted only for this loopback-only development stack.
     devMode: true,
-    accessTokenType: 'OIDC_TOKEN_TYPE_BEARER',
-    idTokenRoleAssertion: true,
     loginVersion: { loginV2: { baseUri: `${issuer}/ui/v2/login/` } },
-  } : { name, authMethodType: 'API_AUTH_METHOD_TYPE_BASIC' };
-  const created = await api(`/management/v1/projects/${projectId}/apps/${kind}`, config);
-  if (!created.clientId || !created.clientSecret) throw new Error(`Zitadel did not return client credentials for ${name}.`);
-  saved[idKey] = created.appId;
-  saved[clientKey] = created.clientId;
-  saved[secretKey] = created.clientSecret;
-  await persist();
+    ...overrides,
+  };
+}
+
+// The gateway exchanges browser access tokens for JWTs (RFC 8693); beta feature in Zitadel v4.
+async function ensureTokenExchange() {
+  const features = await api('/v2/features/instance');
+  if (features.oidcTokenExchange?.enabled !== true) {
+    await api('/v2/features/instance', { oidcTokenExchange: true }, 'PUT');
+  }
+}
+
+// Actions v2: Zitadel calls the bridge to append role/scopes claims to userinfo,
+// introspection (preuserinfo) and JWT access tokens (preaccesstoken).
+async function ensureClaimsAction() {
+  const { targets = [] } = await api('/v2/actions/targets/search', { pagination: { limit: 1000 } });
+  const found = targets.find(target => target.name === claimsTargetName);
+  if (found) {
+    if (saved.actions_target_id !== found.id || !saved.actions_signing_key) {
+      throw new Error(`Existing ${claimsTargetName} target has no matching persisted signing key. Restore auth_client_config volume; keys are not automatically rotated.`);
+    }
+  } else {
+    const created = await api('/v2/actions/targets', {
+      name: claimsTargetName,
+      restCall: { interruptOnError: true },
+      endpoint: claimsEndpoint,
+      timeout: '5s',
+      payloadType: 'PAYLOAD_TYPE_JSON',
+    });
+    if (!created.id || !created.signingKey) throw new Error('Zitadel did not return a target signing key.');
+    saved.actions_target_id = created.id;
+    saved.actions_signing_key = created.signingKey;
+    await persist();
+  }
+  for (const name of ['preuserinfo', 'preaccesstoken']) {
+    await api('/v2/actions/executions', { condition: { function: { name } }, targets: [saved.actions_target_id] }, 'PUT');
+  }
 }
 
 async function main() {
@@ -163,8 +223,21 @@ async function main() {
       await api(`/management/v1/projects/${projectId}/roles`, { roleKey: key, displayName, group: 'BNPB' });
     }
   }
-  await ensureApp(projectId, 'BNPB browser bridge', 'oidc', '');
-  await ensureApp(projectId, 'BNPB token introspection', 'api', 'introspection');
+  await ensureTokenExchange();
+  await ensureApp(projectId, 'BNPB browser bridge', 'oidc', '', oidcApp({
+    grantTypes: ['OIDC_GRANT_TYPE_AUTHORIZATION_CODE', 'OIDC_GRANT_TYPE_REFRESH_TOKEN'],
+    accessTokenType: 'OIDC_TOKEN_TYPE_BEARER',
+    idTokenRoleAssertion: true,
+  }));
+  await ensureApp(projectId, 'BNPB token introspection', 'api', 'introspection', { authMethodType: 'API_AUTH_METHOD_TYPE_BASIC' });
+  // Same project as the bridge: Zitadel only exchanges tokens whose audience holds this project.
+  // Zitadel requires the authorization_code grant for any app with the `code` response type.
+  await ensureApp(projectId, 'BNPB gateway token exchange', 'oidc', 'gateway', oidcApp({
+    grantTypes: ['OIDC_GRANT_TYPE_AUTHORIZATION_CODE', 'OIDC_GRANT_TYPE_TOKEN_EXCHANGE'],
+    accessTokenType: 'OIDC_TOKEN_TYPE_JWT',
+    accessTokenRoleAssertion: true,
+  }));
+  await ensureClaimsAction();
   for (const [role, , username, firstName, lastName, passwordKey] of accounts) {
     const userId = await ensureUser(username, firstName, lastName, passwordKey);
     const grants = await all('/management/v1/users/grants/_search');
@@ -179,8 +252,8 @@ async function main() {
   if (!admins.some(member => member.userId === adminId)) {
     await api('/admin/v1/members', { userId: adminId, roles: ['IAM_OWNER'] });
   }
-  console.log('Auth provisioning complete. Project, roles, two applications, and local users are ready.');
-  console.log('Existing passwords and client secrets were preserved. No credentials are printed.');
+  console.log('Auth provisioning complete. Project, roles, three applications, claims action, and local users are ready.');
+  console.log('Existing passwords, client secrets, and signing keys were preserved. No credentials are printed.');
   console.log(`Access token lifetime: ${accessLifetime}s; maximum refresh/session lifetime: ${sessionLifetime}s.`);
 }
 

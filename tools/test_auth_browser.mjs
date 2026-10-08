@@ -19,7 +19,9 @@ function check(condition, name) {
   if (!condition) throw new Error(name);
   results.push({ name, passed: true }); console.log(`PASS ${name}`);
 }
-const browser = await chromium.launch({ ...(process.platform === 'win32' ? { channel: 'msedge' } : {}), headless: true });
+// PLAYWRIGHT_CHROMIUM_EXECUTABLE points at an already-installed Chromium when the bundled one is absent.
+const browser = await chromium.launch({ ...(process.platform === 'win32' ? { channel: 'msedge' } : {}),
+  ...(process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE ? { executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE } : {}), headless: true });
 try {
   const anonymous = await fetch(`${origin}/auth/session`);
   check(anonymous.status === 401, 'anonymous session denied');
@@ -56,8 +58,14 @@ try {
     check(!await page.evaluate(() => document.cookie.includes('bnpb_access=')), `${role} access cookie hidden from JavaScript`);
     const ttl = (Date.parse(session.expires_at) - Date.now()) / 1000;
     check(ttl > 0 && ttl <= 65, `${role} 60-second token lifetime`);
-    response = await context.request.get(`${origin}/api/v1/hazards?view=full`);
-    check(response.status() === (role === 'MEDIA' ? 403 : 503), `${role} full-view authorization before unfinished backend`);
+    // Envoy authenticates (cookie → bearer → token exchange); scopes are enforced by the services,
+    // which are absent in the standalone stack. No `view` parameter: the REST↔proto enum
+    // mapping (`full` vs VIEW_FULL) belongs to the backend contract work, not Auth.
+    stage = `${role}: gateway API`;
+    response = await context.request.get(`${origin}/api/v1/hazards`);
+    check(response.status() === 503, `${role} gateway accepts exchanged token before unfinished backend`);
+    response = await context.request.post(`${origin}/api/v1/webhooks`, { headers: { Origin: origin } });
+    check(response.status() === 403, `${role} API mutation without CSRF header rejected by gateway`);
     response = await context.request.post(`${origin}/auth/refresh`, { headers: { Origin: origin } });
     check(response.status() === 403, `${role} missing CSRF rejected`);
 

@@ -155,7 +155,7 @@ Bagian berikut dipakai ketika mengembangkan service BNPB; tidak diperlukan
 untuk menjalankan mock. Prasyarat: buf.
 
 ```bash
-buf build -o services/envoy/bnpb_descriptor.pb --exclude-imports=false
+npx nx run envoy:generate-descriptor   # image Envoy membangun salinannya sendiri
 buf generate
 ```
 

@@ -1,6 +1,37 @@
 # Standalone local Auth + SPA. Run with --env-file .env.auth.
 # Fixed URLs are intentional: OIDC issuer, callback, and proxy host must agree.
 name: bnpb-auth
+
+# Template variables for services/envoy/templates (see services/envoy/envoy.env.example).
+x-envoy-env: &envoy-env
+  ENVOY_LISTEN_PORT: "8080"
+  APP_HOST: localhost
+  APP_ORIGIN: http://localhost:8080
+  AUTH_HOST: auth.localhost
+  AUTH_ROUTE_PREFIX: /auth/
+  API_ROUTE_PREFIX: /api/
+  LOGIN_UI_ROUTE_PREFIX: /ui/v2/login
+  ZITADEL_ADDRESS: zitadel
+  ZITADEL_PORT: "8080"
+  ZITADEL_LOGIN_ADDRESS: zitadel-login
+  ZITADEL_LOGIN_PORT: "3000"
+  AUTH_BRIDGE_ADDRESS: auth-bridge
+  AUTH_BRIDGE_PORT: "3001"
+  SPA_ADDRESS: spa-server
+  SPA_PORT: "80"
+  # Business services are absent in this standalone stack: authenticated API calls get 503.
+  AGGREGATOR_ADDRESS: aggregator-service
+  AGGREGATOR_PORT: "9091"
+  WEBHOOK_ADDRESS: webhook-provider
+  WEBHOOK_PORT: "9094"
+  NOTIFICATION_ADDRESS: notification-service
+  NOTIFICATION_PORT: "9095"
+  FEED_ADDRESS: feed-service
+  FEED_PORT: "9090"
+  TOKEN_EXCHANGE_URL: auth.localhost:8080/oauth/v2/token
+  AUTH_ACCESS_COOKIE: bnpb_access
+  AUTH_COOKIE_PREFIX: bnpb_
+
 services:
   auth-db:
     image: postgres:17.10-alpine
@@ -44,6 +75,9 @@ services:
       ZITADEL_OIDC_DEFAULTLOGOUTURLV2: http://auth.localhost:8080/ui/v2/login/logout?post_logout_redirect=
       ZITADEL_SAML_DEFAULTLOGINURLV2: http://auth.localhost:8080/ui/v2/login/login?samlRequest=
       ZITADEL_LOGSTORE_ACCESS_STDOUT_ENABLED: "false"
+      # Local stack only: the default deny list blocks 172.16.0.0/12, where Docker places
+      # bnpb_net, so Zitadel could not call the Auth bridge Actions target. Do not reuse.
+      ZITADEL_HTTPCLIENT_DENYLIST: "localhost,0.0.0.0/8,10.0.0.0/8,100.64.0.0/10,127.0.0.0/8,169.254.0.0/16,192.168.0.0/16,198.18.0.0/15,::/128,::1/128,fc00::/7,fe80::/10"
     volumes:
       - zitadel_admin_bootstrap:/bootstrap/admin
       - zitadel_login_bootstrap:/bootstrap/login
@@ -85,6 +119,10 @@ services:
     environment:
       OIDC_ISSUER: http://auth.localhost:8080
       APP_PUBLIC_URL: http://localhost:8080
+      # Direct to Zitadel: the gateway starts only after this job writes its credentials.
+      ZITADEL_API_URL: http://zitadel:8080
+      ZITADEL_API_HOST: auth.localhost:8080
+      ACTIONS_CLAIMS_ENDPOINT: http://auth-bridge:3001/internal/zitadel/claims
       ZITADEL_ADMIN_PAT_FILE: /admin/admin.pat
       OIDC_CONFIG_FILE: /bootstrap/oidc.json
       AUTH_ADMIN_PASSWORD: "${AUTH_ADMIN_PASSWORD:?Run python tools/setup_auth_env.py}"
@@ -99,7 +137,8 @@ services:
       - auth_client_config:/bootstrap
     depends_on:
       zitadel: {condition: service_healthy}
-      envoy: {condition: service_started}
+      # Zitadel resolves the Actions target host when the target is created.
+      auth-bridge: {condition: service_started}
     networks: [bnpb_net]
 
   auth-bridge:
@@ -114,15 +153,15 @@ services:
       AUTH_SESSION_KEY: "${AUTH_SESSION_KEY:?Run python tools/setup_auth_env.py}"
       AUTH_DATABASE_PATH: /data/sessions.sqlite
       AUTH_SESSION_TTL_SECONDS: "${AUTH_SESSION_TTL_SECONDS:-86400}"
-      GATEWAY_UPSTREAM_URL: "${GATEWAY_UPSTREAM_URL:-}"
-      GATEWAY_SERVICE_TOKEN: "${GATEWAY_SERVICE_TOKEN:?Run python tools/setup_auth_env.py}"
     volumes:
       - auth_client_config:/bootstrap:ro
       - auth_sessions:/data
+    # Starts before auth-bootstrap and waits for oidc.json (see provisionedConfig in server.mjs).
     depends_on:
-      auth-bootstrap: {condition: service_completed_successfully}
+      zitadel: {condition: service_healthy}
     healthcheck:
       test: [CMD, node, -e, "fetch('http://127.0.0.1:3001/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      start_period: 300s
       interval: 5s
       timeout: 5s
       retries: 20
@@ -140,17 +179,23 @@ services:
       bnpb_net:
         aliases: [spa-server.local]
 
+  # Single gateway: SPA, Auth bridge, hosted login, and cookie → token exchange → REST/gRPC.
   envoy:
-    image: envoyproxy/envoy:v1.31-latest
+    build:
+      context: .
+      dockerfile: services/envoy/Dockerfile
+    environment: *envoy-env
     ports: ["127.0.0.1:8080:8080"]
     volumes:
-      - ./services/zitadel/envoy.auth.yaml:/etc/envoy/envoy.yaml:ro
+      # Gateway token-exchange client written by auth-bootstrap.
+      - auth_client_config:/bootstrap:ro
     depends_on:
-      zitadel: {condition: service_healthy}
+      auth-bootstrap: {condition: service_completed_successfully}
+      auth-bridge: {condition: service_healthy}
       zitadel-login: {condition: service_healthy}
     networks:
       bnpb_net:
-        aliases: [auth.localhost, api.localhost, envoy.local]
+        aliases: [auth.localhost, envoy.local]
 
 networks:
   bnpb_net:

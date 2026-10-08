@@ -1,0 +1,220 @@
+# Single gateway: SPA, Auth bridge, Zitadel hosted login, and the REST→gRPC API.
+# Rendered by docker-entrypoint.sh with envsubst; every substituted variable is listed there.
+static_resources:
+  listeners:
+    - name: http
+      address:
+        socket_address: { address: 0.0.0.0, port_value: ${ENVOY_LISTEN_PORT} }
+      filter_chains:
+        - filters:
+            - name: envoy.filters.network.http_connection_manager
+              typed_config:
+                "@type": type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager
+                stat_prefix: gateway
+                codec_type: AUTO
+                use_remote_address: true
+                # Access logs are omitted: OIDC callbacks contain single-use codes.
+                route_config:
+                  name: gateway_routes
+                  virtual_hosts:
+                    - name: zitadel
+                      domains: ["${AUTH_HOST}", "${AUTH_HOST}:*"]
+                      # The API filters never apply to the identity provider.
+                      typed_per_filter_config: &api_filters_disabled
+                        bnpb.cookie_to_bearer:
+                          "@type": type.googleapis.com/envoy.config.route.v3.FilterConfig
+                          disabled: true
+                        bnpb.token_exchange:
+                          "@type": type.googleapis.com/envoy.config.route.v3.FilterConfig
+                          disabled: true
+                        bnpb.sse_filter:
+                          "@type": type.googleapis.com/envoy.config.route.v3.FilterConfig
+                          disabled: true
+                      routes:
+                        - match: { path: / }
+                          redirect: { path_redirect: "${LOGIN_UI_ROUTE_PREFIX}/" }
+                        - match: { prefix: "${LOGIN_UI_ROUTE_PREFIX}" }
+                          route: { cluster: zitadel_login, timeout: 30s }
+                        - match: { prefix: / }
+                          route: { cluster: zitadel, timeout: 30s }
+
+                    - name: application
+                      domains: ["${APP_HOST}", "${APP_HOST}:*"]
+                      routes:
+                        - match: { prefix: "${AUTH_ROUTE_PREFIX}" }
+                          route: { cluster: auth_bridge, timeout: 30s }
+                          typed_per_filter_config: *api_filters_disabled
+
+                        # The transcoder rewrites REST paths to gRPC paths and clears the route
+                        # cache, so these routes are selected after authentication and exchange.
+                        - match: { prefix: /bnpb.aggregator.v1.AggregatorService/ }
+                          route: { cluster: aggregator, timeout: 0s }
+                        - match: { prefix: /bnpb.webhook.v1.WebhookService/ }
+                          route: { cluster: webhook, timeout: 0s }
+                        - match: { prefix: /bnpb.notification.v1.DangerNotificationService/ }
+                          route: { cluster: notification, timeout: 0s }
+                        - match: { prefix: /bnpb.feed.v1.EventFeedService/ }
+                          route: { cluster: feed, timeout: 0s }
+                        # REST paths without a transcoder binding.
+                        - match: { prefix: "${API_ROUTE_PREFIX}" }
+                          direct_response: { status: 404, body: { inline_string: not_found } }
+
+                        - match: { prefix: / }
+                          route: { cluster: spa, timeout: 30s }
+                          typed_per_filter_config: *api_filters_disabled
+
+                # Gateway-generated errors use the same problem+json shape as the Auth bridge.
+                local_reply_config:
+                  mappers:
+                    - filter:
+                        status_code_filter:
+                          comparison:
+                            op: GE
+                            value: { default_value: 400, runtime_key: gateway.local_reply.problem_min_status }
+                      body_format_override:
+                        content_type: application/problem+json
+                        json_format:
+                          type: urn:bnpb:gateway:error
+                          title: "%RESPONSE_CODE_DETAILS%"
+                          status: "%RESPONSE_CODE%"
+                          detail: "%LOCAL_REPLY_BODY%"
+
+                http_filters:
+                  # 1. Browser cookie → Authorization: Bearer, plus Origin/CSRF for mutations.
+                  - name: bnpb.cookie_to_bearer
+                    typed_config:
+                      "@type": type.googleapis.com/envoy.extensions.filters.http.lua.v3.Lua
+                      default_source_code:
+                        filename: ${ENVOY_RENDER_DIR}/lua/cookie_to_bearer.lua
+
+                  # 2. RFC 8693: exchange the opaque Zitadel access token for a JWT that
+                  #    carries the role/scopes claims appended by the Auth bridge action.
+                  - name: bnpb.token_exchange
+                    typed_config:
+                      "@type": type.googleapis.com/envoy.extensions.filters.http.dynamic_modules.v3.DynamicModuleFilter
+                      dynamic_module_config:
+                        name: composer
+                        load_globally: true
+                        metrics_namespace: builtonenvoy
+                      filter_name: token-exchange
+                      filter_config:
+                        "@type": type.googleapis.com/google.protobuf.StringValue
+                        value: |
+                          {
+                            "cluster": "zitadel",
+                            "token_exchange_url": "${TOKEN_EXCHANGE_URL}",
+                            "client_id": "${TOKEN_EXCHANGE_CLIENT_ID}",
+                            "client_secret": "${TOKEN_EXCHANGE_CLIENT_SECRET}",
+                            "requested_token_type": "urn:ietf:params:oauth:token-type:jwt"
+                          }
+
+                  # 3. Feed path aliases, query flattening, and NDJSON → SSE framing.
+                  - name: bnpb.sse_filter
+                    typed_config:
+                      "@type": type.googleapis.com/envoy.extensions.filters.http.lua.v3.Lua
+                      default_source_code:
+                        filename: ${ENVOY_RENDER_DIR}/lua/sse_filter.lua
+
+                  # 4. REST → gRPC. Runs after the Lua rewrites and before routing.
+                  - name: envoy.filters.http.grpc_json_transcoder
+                    typed_config:
+                      "@type": type.googleapis.com/envoy.extensions.filters.http.grpc_json_transcoder.v3.GrpcJsonTranscoder
+                      proto_descriptor: ${ENVOY_DESCRIPTOR_PATH}
+                      services:
+                        - bnpb.webhook.v1.WebhookService
+                        - bnpb.notification.v1.DangerNotificationService
+                        - bnpb.feed.v1.EventFeedService
+                        - bnpb.aggregator.v1.AggregatorService
+                      print_options:
+                        add_whitespace: false
+                        always_print_primitive_fields: true
+                        always_print_enums_as_ints: false
+                        preserve_proto_field_names: true
+                        stream_newline_delimited: true
+
+                  - name: envoy.filters.http.router
+                    typed_config:
+                      "@type": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
+
+  clusters:
+    # --- Platform ---
+    - name: zitadel
+      type: STRICT_DNS
+      connect_timeout: 5s
+      typed_extension_protocol_options: &http2
+        envoy.extensions.upstreams.http.v3.HttpProtocolOptions:
+          "@type": type.googleapis.com/envoy.extensions.upstreams.http.v3.HttpProtocolOptions
+          explicit_http_config: { http2_protocol_options: {} }
+      load_assignment:
+        cluster_name: zitadel
+        endpoints:
+          - lb_endpoints:
+              - endpoint: { address: { socket_address: { address: ${ZITADEL_ADDRESS}, port_value: ${ZITADEL_PORT} } } }
+
+    - name: zitadel_login
+      type: STRICT_DNS
+      connect_timeout: 5s
+      load_assignment:
+        cluster_name: zitadel_login
+        endpoints:
+          - lb_endpoints:
+              - endpoint: { address: { socket_address: { address: ${ZITADEL_LOGIN_ADDRESS}, port_value: ${ZITADEL_LOGIN_PORT} } } }
+
+    - name: auth_bridge
+      type: STRICT_DNS
+      connect_timeout: 5s
+      load_assignment:
+        cluster_name: auth_bridge
+        endpoints:
+          - lb_endpoints:
+              - endpoint: { address: { socket_address: { address: ${AUTH_BRIDGE_ADDRESS}, port_value: ${AUTH_BRIDGE_PORT} } } }
+
+    - name: spa
+      type: STRICT_DNS
+      connect_timeout: 5s
+      load_assignment:
+        cluster_name: spa
+        endpoints:
+          - lb_endpoints:
+              - endpoint: { address: { socket_address: { address: ${SPA_ADDRESS}, port_value: ${SPA_PORT} } } }
+
+    # --- gRPC services (no endpoints in the standalone Auth stack → 503) ---
+    - name: aggregator
+      type: STRICT_DNS
+      connect_timeout: 5s
+      typed_extension_protocol_options: *http2
+      load_assignment:
+        cluster_name: aggregator
+        endpoints:
+          - lb_endpoints:
+              - endpoint: { address: { socket_address: { address: ${AGGREGATOR_ADDRESS}, port_value: ${AGGREGATOR_PORT} } } }
+
+    - name: webhook
+      type: STRICT_DNS
+      connect_timeout: 5s
+      typed_extension_protocol_options: *http2
+      load_assignment:
+        cluster_name: webhook
+        endpoints:
+          - lb_endpoints:
+              - endpoint: { address: { socket_address: { address: ${WEBHOOK_ADDRESS}, port_value: ${WEBHOOK_PORT} } } }
+
+    - name: notification
+      type: STRICT_DNS
+      connect_timeout: 5s
+      typed_extension_protocol_options: *http2
+      load_assignment:
+        cluster_name: notification
+        endpoints:
+          - lb_endpoints:
+              - endpoint: { address: { socket_address: { address: ${NOTIFICATION_ADDRESS}, port_value: ${NOTIFICATION_PORT} } } }
+
+    - name: feed
+      type: STRICT_DNS
+      connect_timeout: 5s
+      typed_extension_protocol_options: *http2
+      load_assignment:
+        cluster_name: feed
+        endpoints:
+          - lb_endpoints:
+              - endpoint: { address: { socket_address: { address: ${FEED_ADDRESS}, port_value: ${FEED_PORT} } } }

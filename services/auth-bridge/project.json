@@ -1,0 +1,34 @@
+{
+  "$schema": "../../node_modules/nx/schemas/project-schema.json",
+  "name": "auth-bridge",
+  "projectType": "application",
+  "sourceRoot": "services/auth-bridge/src",
+  "targets": {
+    "install": {
+      "executor": "nx:run-commands",
+      "options": { "command": "npm ci", "cwd": "services/auth-bridge" },
+      "cache": false
+    },
+    "start": {
+      "executor": "nx:run-commands",
+      "options": { "command": "npm start", "cwd": "services/auth-bridge" }
+    },
+    "test": {
+      "dependsOn": ["install"],
+      "executor": "nx:run-commands",
+      "options": { "command": "npm test", "cwd": "services/auth-bridge" },
+      "cache": true,
+      "inputs": [
+        "{projectRoot}/src/**/*",
+        "{projectRoot}/test/**/*",
+        "{projectRoot}/package.json",
+        "{projectRoot}/package-lock.json"
+      ]
+    },
+    "build": {
+      "executor": "nx:run-commands",
+      "options": { "command": "docker build -t bnpb/auth-bridge services/auth-bridge", "cwd": "{workspaceRoot}" },
+      "cache": false
+    }
+  }
+}

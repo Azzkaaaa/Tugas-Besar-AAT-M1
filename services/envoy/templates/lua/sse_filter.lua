@@ -1,16 +1,16 @@
-function envoy_on_request(request_handle)
-  local host = request_handle:headers():get(":authority")
-  if not host or not string.find(host, "api.localhost") then return end
+-- Rendered by envsubst. Only runs on API routes (disabled per route elsewhere).
+local API_PREFIX = "${API_ROUTE_PREFIX}"
 
+function envoy_on_request(request_handle)
   local path = request_handle:headers():get(":path")
   if not path then return end
 
   -- Route injection for seismic and volcanic streams
-  local is_seismic = string.find(path, "^/api/v1/feeds/seismic")
-  local is_volcanic = string.find(path, "^/api/v1/feeds/volcanic")
+  local is_seismic = string.find(path, "^" .. API_PREFIX .. "v1/feeds/seismic")
+  local is_volcanic = string.find(path, "^" .. API_PREFIX .. "v1/feeds/volcanic")
 
   if is_seismic or is_volcanic then
-    path = string.gsub(path, "^/api/v1/feeds/[a-z]+", "/api/v1/feeds/events")
+    path = string.gsub(path, "^" .. API_PREFIX .. "v1/feeds/[a-z]+", API_PREFIX .. "v1/feeds/events")
     local append_char = string.find(path, "?") and "&" or "?"
     local hazard_type = is_seismic and "SEISMIC" or "VOLCANIC"
     path = path .. append_char .. "hazard_type=" .. hazard_type

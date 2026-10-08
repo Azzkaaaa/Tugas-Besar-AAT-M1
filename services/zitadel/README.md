@@ -37,11 +37,32 @@ password pengguna yang sudah dibuat dalam Zitadel; perubahan password dilakukan
 melalui Zitadel.
 
 Container sekali-jalan `auth-bootstrap` menjalankan `bootstrap.mjs` setelah
-Zitadel siap. Script membuat project `BNPB M1`, tiga role dan grant pengguna,
-application OIDC confidential untuk Auth bridge, serta application API untuk
-introspection. Aplikasi OIDC menggunakan authorization code, PKCE oleh bridge,
-client-secret Basic, access token opaque, dan refresh token. Callback yang
-terdaftar adalah `http://localhost:8080/auth/callback`.
+Zitadel siap. Script memanggil Zitadel langsung (`ZITADEL_API_URL=http://zitadel:8080`
+dengan header `Host: auth.localhost:8080`) karena gateway Envoy baru mulai setelah
+provisioning selesai. Script membuat:
+
+- project `BNPB M1`, tiga role, dan grant pengguna;
+- application OIDC confidential untuk Auth bridge: authorization code, PKCE oleh
+  bridge, client-secret Basic, access token opaque, dan refresh token. Callback yang
+  terdaftar adalah `http://localhost:8080/auth/callback`;
+- application API untuk introspection;
+- application OIDC `BNPB gateway token exchange` dengan grant type token exchange
+  dan access token JWT, dipakai filter token exchange Envoy. Aplikasi ini berada di
+  project yang sama karena Zitadel hanya menukar token yang audiensnya memuat
+  project tersebut;
+- feature instance `oidcTokenExchange` (masih beta di Zitadel v4);
+- target Actions v2 `BNPB scope claims` ke `http://auth-bridge:3001/internal/zitadel/claims`
+  beserta execution untuk function `preuserinfo` dan `preaccesstoken`. Target ini
+  menambahkan klaim `role` dan `scopes`; lihat [Auth bridge](../auth-bridge/README.md).
+
+Signing key target dan secret client gateway hanya diberikan Zitadel sekali saat
+dibuat, sehingga disimpan di `oidc.json` dan tidak dirotasi otomatis.
+
+Zitadel v4 menolak memanggil alamat privat secara default. `compose.auth.yaml`
+menghapus `172.16.0.0/12` dari `ZITADEL_HTTPCLIENT_DENYLIST` agar target Actions di
+jaringan Docker dapat dipanggil. Ini hanya untuk stack lokal dan memperluas
+paparan SSRF ke jaringan Docker. Bila Docker menempatkan `bnpb_net` di rentang lain
+(misalnya `192.168.0.0/16`), sesuaikan daftar tersebut.
 
 `ZITADEL_ACCESS_TOKEN_TTL_SECONDS` mengatur masa berlaku access token dan ID token,
 dengan default **60 detik** sesuai M1. `AUTH_SESSION_TTL_SECONDS` membatasi refresh
@@ -84,13 +105,13 @@ master key atau password database pada instalasi yang sudah berisi data.
 
 `FRONTEND_DATA_MODE=mock` berarti login OIDC sungguhan dengan kejadian fixture di
 browser. BMKG/PVMBG tetap diakses melalui Aggregator dan Gateway ketika backend
-tersedia. Untuk integrasi, atur `GATEWAY_UPSTREAM_URL` pada alamat internal Gateway,
-set `FRONTEND_DATA_MODE=gateway`, kemudian build ulang SPA. Gateway harus menerima
-kontrak identitas terverifikasi dari bridge dan menjaga otorisasi data Media.
+tersedia. Untuk integrasi, jalankan `compose.yaml`, set `FRONTEND_DATA_MODE=gateway`,
+kemudian build ulang SPA. Service harus memvalidasi JWT hasil token exchange dan
+menjaga otorisasi data Media berdasarkan klaim `scopes`.
 
-Envoy meneruskan `/auth/*` dan `/api/*` ke bridge pada origin aplikasi. API tidak
-dapat melewati pemeriksaan Auth dengan mengakses `api.localhost:8080`. Bila
-Gateway belum dikonfigurasi, endpoint API yang dilindungi mengembalikan 503 untuk
+Envoy meneruskan `/auth/*` ke bridge dan memproses `/api/*` sendiri: cookie menjadi
+bearer, ditukar menjadi JWT di Zitadel, lalu ditranskode ke gRPC. Pada stack
+standalone service bisnis tidak ada, sehingga endpoint API mengembalikan 503 untuk
 pengguna terautentikasi. Sumber BMKG/PVMBG tidak diekspos lewat cookie browser.
 
 HTTP dan cookie tanpa atribut `Secure` hanya untuk loopback lokal pada stack ini.

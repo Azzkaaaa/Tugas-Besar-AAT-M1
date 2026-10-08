@@ -23,18 +23,6 @@ services:
     extends:
       file: compose.auth.yaml
       service: auth-bridge
-    environment:
-      GATEWAY_UPSTREAM_URL: http://gateway-transcoder:8080
-
-  # Private boundary: public API traffic must pass Auth bridge first.
-  gateway-transcoder:
-    image: envoyproxy/envoy:v1.31-latest
-    volumes:
-      - ./services/envoy/envoy.yaml:/etc/envoy/envoy.yaml:ro
-      - ./services/envoy/sse_filter.lua:/etc/envoy/lua/sse_filter.lua:ro
-      - ./services/envoy/bnpb_descriptor.pb:/etc/envoy/bnpb_descriptor.pb:ro
-    networks:
-      bnpb_net: {}
 
   zitadel:
     extends:

@@ -81,20 +81,23 @@ POST refresh/logout serta mutasi API berbasis cookie wajib membawa `Origin`
 aplikasi yang tepat dan `X-CSRF-Token` milik sesi. CSRF token bukan kredensial
 akses API. Tidak ada password pengguna atau refresh token di storage JavaScript.
 Ketiga akun demo adalah pengguna Zitadel yang berbeda; role diperoleh dari
-grant proyek/organisasi yang dikonfigurasi, lalu dipetakan server ke scope.
+grant proyek/organisasi yang dikonfigurasi. Zitadel menambahkan klaim `role` dan
+`scopes` ke token melalui target Actions v2 pada Auth bridge.
 
 Mode `VITE_APP_MODE=oidc` menentukan autentikasi, sedangkan `VITE_DATA_MODE`
 menentukan data dashboard. Standalone Auth memakai `VITE_DATA_MODE=mock`
 agar login nyata dapat dikembangkan ketika service BNPB belum siap. Fixture
-di browser tidak membuktikan otorisasi atau integrasi data backend. Ketika
-`GATEWAY_UPSTREAM_URL` kosong, request API bisnis terautentikasi mendapat 503;
-data simulasi tidak dijadikan respons API server.
+di browser tidak membuktikan otorisasi atau integrasi data backend. Pada stack
+standalone, request API bisnis terautentikasi mendapat 503; data simulasi tidak
+dijadikan respons API server.
 
-Compose utama memakai edge yang sama dan menempatkan transcoder lama sebagai
-`gateway-transcoder` di jaringan privat. Auth bridge meneruskan request ke
-`http://gateway-transcoder:8080`; port transcoder tidak dipublikasikan ke host.
-Penyesuaian shape REST/ProtoJSON, SSE, dan otorisasi downstream tetap pekerjaan
-integrasi service bisnis. Detail boundary ada di
+Satu gateway Envoy melayani SPA, `/auth/*` (ke bridge), hosted login Zitadel, dan
+`/api/*`. Untuk API, Envoy memindahkan cookie `bnpb_access` ke header bearer,
+menukarnya menjadi JWT di Zitadel (RFC 8693, filter Built On Envoy
+`token-exchange`), lalu mentranskode REST ke gRPC. Envoy hanya mengautentikasi;
+service memeriksa scope dari JWT. Penyesuaian shape REST/ProtoJSON, SSE, dan
+validasi JWT di service tetap pekerjaan integrasi service bisnis. Lihat
+[README Envoy](../services/envoy/README.md). Detail boundary ada di
 [OpenAPI Auth](../contracts/openapi/auth.yaml) dan
 [panduan Auth bridge](../services/auth-bridge/README.md).
 

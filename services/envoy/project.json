@@ -1,0 +1,61 @@
+{
+  "$schema": "../../node_modules/nx/schemas/project-schema.json",
+  "name": "envoy",
+  "projectType": "application",
+  "sourceRoot": "services/envoy",
+  "targets": {
+    "generate-descriptor": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "buf build -o services/envoy/bnpb_descriptor.pb --exclude-imports=false",
+        "cwd": "{workspaceRoot}"
+      },
+      "cache": true,
+      "inputs": [
+        "{workspaceRoot}/buf.yaml",
+        "{workspaceRoot}/buf.lock",
+        "{workspaceRoot}/contracts/proto/**/*.proto"
+      ],
+      "outputs": [
+        "{projectRoot}/bnpb_descriptor.pb"
+      ]
+    },
+    "build": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "docker build -f services/envoy/Dockerfile -t bnpb/envoy .",
+        "cwd": "{workspaceRoot}"
+      },
+      "cache": false
+    },
+    "render": {
+      "dependsOn": [
+        "build"
+      ],
+      "executor": "nx:run-commands",
+      "options": {
+        "commands": [
+          "docker rm -f bnpb-envoy-render",
+          "docker create --name bnpb-envoy-render --env-file services/envoy/envoy.env.example bnpb/envoy --render-only /out",
+          "docker start -a bnpb-envoy-render",
+          "docker cp bnpb-envoy-render:/out/. services/envoy/dist",
+          "docker rm bnpb-envoy-render"
+        ],
+        "parallel": false,
+        "cwd": "{workspaceRoot}"
+      },
+      "cache": false
+    },
+    "validate": {
+      "dependsOn": [
+        "build"
+      ],
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "docker run --rm --env-file services/envoy/envoy.env.example bnpb/envoy --mode validate",
+        "cwd": "{workspaceRoot}"
+      },
+      "cache": false
+    }
+  }
+}

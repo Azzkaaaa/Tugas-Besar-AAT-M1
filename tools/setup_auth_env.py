@@ -11,7 +11,6 @@ SECRET_FACTORIES = {
     "AUTH_POSTGRES_PASSWORD": lambda: secrets.token_hex(24),
     "LOGIN_SESSION_COOKIE_SECRET": lambda: secrets.token_hex(32),
     "AUTH_SESSION_KEY": lambda: secrets.token_hex(32),
-    "GATEWAY_SERVICE_TOKEN": lambda: secrets.token_urlsafe(32),
     "AUTH_ADMIN_PASSWORD": lambda: "Aa1!" + secrets.token_urlsafe(20),
     "AUTH_MEDIA_PASSWORD": lambda: "Aa1!" + secrets.token_urlsafe(20),
     "AUTH_FIELD_TEAM_PASSWORD": lambda: "Aa1!" + secrets.token_urlsafe(20),

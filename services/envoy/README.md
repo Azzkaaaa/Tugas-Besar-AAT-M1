@@ -1,46 +1,85 @@
-# Envoy: edge publik dan Gateway internal
+# Envoy: gateway tunggal
 
-Repo membedakan dua proses Envoy agar API publik selalu melalui pemeriksaan
-Auth bridge. Tidak ada implementasi token exchange ke JWT internal.
+Satu proses Envoy melayani seluruh lalu lintas publik pada `localhost:8080`:
+SPA, Auth bridge, hosted login Zitadel, dan API REST→gRPC. Tidak ada lagi
+`gateway-transcoder` terpisah; request API tidak melewati Auth bridge.
 
-| Proses | Konfigurasi | Fungsi |
-| --- | --- | --- |
-| `envoy` publik | [`services/zitadel/envoy.auth.yaml`](../zitadel/envoy.auth.yaml) | Host port 8080; SPA, `/auth/`, `/api/`, dan hosted login Zitadel |
-| `gateway-transcoder` internal | [`envoy.yaml`](envoy.yaml), [`sse_filter.lua`](sse_filter.lua) | Rancangan REST/gRPC untuk layanan bisnis; hanya jaringan Compose |
+| Host / prefix | Tujuan |
+| --- | --- |
+| `auth.localhost` | Zitadel; `/ui/v2/login` ke Login UI v2 |
+| `localhost` `/auth/` | Auth bridge (login, callback, sesi, refresh, logout) |
+| `localhost` `/api/` | Filter API (di bawah), lalu transcoder ke service gRPC |
+| `localhost` `/` | SPA |
 
-Alur browser adalah `localhost:8080 → Auth bridge → gateway-transcoder → gRPC`.
-Frontend dan Auth/API memakai origin yang sama. Host `auth.localhost:8080`
-merutekan halaman Login UI v2 dan endpoint OIDC ke Zitadel. Host
-`api.localhost:8080` juga melewati bridge; bukan jalan untuk melewati autentikasi.
-Gunakan alamat `localhost` yang dikonfigurasi untuk login browser agar cookie,
-callback, dan pemeriksaan Origin sesuai.
+## Alur request API
 
-Bridge mengikat cookie access token ke sesi lokal, melakukan introspeksi
-Zitadel, memetakan role proyek/organisasi ke scope, dan memeriksa Origin/CSRF
-untuk mutasi berbasis cookie. Bridge meneruskan access token aktor **asli**
-sebagai bearer serta `GATEWAY_SERVICE_TOKEN` sebagai `x-service-token` kepada
-upstream privat. Client API dapat memakai bearer tanpa cookie. Login, callback,
-sesi, refresh, dan logout merupakan HTTP API pada bridge, bukan RPC Auth.
-Lihat [kontrak Auth](../../contracts/openapi/auth.yaml) dan
-[implementasinya](../auth-bridge/README.md).
+```
+browser ──cookie bnpb_access──► Envoy
+  1. bnpb.cookie_to_bearer (Lua)   cookie → Authorization: Bearer, Origin/CSRF untuk mutasi
+  2. bnpb.token_exchange (BOE)     RFC 8693 ke Zitadel: token opaque → JWT
+  3. bnpb.sse_filter (Lua)         alias feed, flatten query, NDJSON → SSE
+  4. grpc_json_transcoder          REST → gRPC
+  5. router                        aggregator / webhook / notification / feed
+```
 
-`compose.auth.yaml` cukup untuk menguji login nyata dengan fixture dashboard.
-Tanpa `GATEWAY_UPSTREAM_URL`, request API bisnis yang lolos pemeriksaan Auth
-mendapat 503. `compose.yaml` memakai upstream `http://gateway-transcoder:8080`
-untuk integrasi layanan bisnis; port transcoder tidak dibuka ke host. Setup dan
-nilai runtime dijelaskan di [konfigurasi](../../docs/configuration.md).
+- **Cookie ke bearer.** Cookie tidak pernah diteruskan ke service. Request yang
+  membawa `Authorization` sekaligus cookie `bnpb_*` ditolak 400. Mutasi berbasis
+  cookie wajib membawa `Origin` aplikasi dan header `X-CSRF-Token`; halaman lintas
+  origin tidak dapat mengirim header khusus tanpa preflight CORS, dan CORS tidak
+  diaktifkan.
+- **Token exchange.** Filter [`token-exchange`](https://builtonenvoy.io/extensions/token-exchange/)
+  dari Built On Envoy v0.6.2 (dynamic module `libcomposer.so`, Envoy 1.38) memakai
+  client `BNPB gateway token exchange` dan meminta
+  `urn:ietf:params:oauth:token-type:jwt`. Token kedaluwarsa atau dicabut
+  menghasilkan 401, sehingga SPA melakukan `/auth/refresh` lalu mengulang request.
+  Zitadel tidak dapat dihubungi menghasilkan 502.
+- **Scope.** JWT hasil exchange membawa klaim `role` dan `scopes` yang ditambahkan
+  Zitadel melalui Actions v2 target pada Auth bridge
+  ([`claims.mjs`](../auth-bridge/src/claims.mjs)). Envoy hanya mengautentikasi;
+  pemeriksaan scope per method (misalnya Media meminta `view=full`) menjadi tugas
+  service. Validasi JWT di service belum termasuk perubahan ini.
+- Error yang dibuat gateway memakai `application/problem+json`.
+
+Pada `compose.auth.yaml` service bisnis tidak ada, sehingga request API yang lolos
+autentikasi mendapat 503.
+
+## Konfigurasi
+
+`templates/envoy.yaml` dan `templates/lua/*.lua` adalah template `envsubst`.
+[`docker-entrypoint.sh`](docker-entrypoint.sh) merender template ke
+`/tmp/envoy` saat container mulai, lalu menjalankan Envoy. Hanya variabel yang
+tercantum di skrip yang disubstitusi, dan container gagal mulai bila salah satunya
+kosong. Nilai default ada di [`envoy.env.example`](envoy.env.example) dan anchor
+`x-envoy-env` pada `compose.auth.yaml`.
+
+| Kelompok | Variabel |
+| --- | --- |
+| Listener dan host | `ENVOY_LISTEN_PORT`, `APP_HOST`, `APP_ORIGIN`, `AUTH_HOST` |
+| Prefix route | `AUTH_ROUTE_PREFIX`, `API_ROUTE_PREFIX`, `LOGIN_UI_ROUTE_PREFIX` |
+| Upstream | `ZITADEL_*`, `ZITADEL_LOGIN_*`, `AUTH_BRIDGE_*`, `SPA_*`, `AGGREGATOR_*`, `WEBHOOK_*`, `NOTIFICATION_*`, `FEED_*` (`_ADDRESS`, `_PORT`) |
+| Token exchange | `TOKEN_EXCHANGE_URL`, `TOKEN_EXCHANGE_CLIENT_ID`, `TOKEN_EXCHANGE_CLIENT_SECRET` |
+| Lua | `AUTH_ACCESS_COOKIE`, `AUTH_COOKIE_PREFIX` |
+
+Client ID/secret token exchange dibuat Zitadel saat provisioning. Entrypoint
+membacanya dari `/bootstrap/oidc.json` (volume `auth_client_config`, read-only),
+sehingga Envoy baru mulai setelah `auth-bootstrap` selesai.
+
+Image dibangun dari root repository: tahap pertama membangun `libcomposer.so` dari
+sumber BOE, tahap kedua membuat `bnpb_descriptor.pb` dengan buf, tahap akhir
+memakai `envoyproxy/envoy:v1.38.6`.
+
+## Nx
+
+```bash
+npx nx run envoy:build                # docker build -f services/envoy/Dockerfile .
+npx nx run envoy:render               # render template ke services/envoy/dist
+npx nx run envoy:validate             # envoy --mode validate dengan envoy.env.example
+npx nx run envoy:generate-descriptor  # bnpb_descriptor.pb lokal untuk inspeksi
+```
 
 ## Batas implementasi bisnis
 
-`envoy.yaml` dan filter Lua adalah fondasi transcoding yang masih perlu
-diselaraskan dengan [OpenAPI Gateway](../../contracts/openapi/gateway.yaml).
-ProtoJSON langsung bukan bentuk respons REST yang dijanjikan: enum, pembungkus
-`oneof`, pagination, error `application/problem+json`, serta framing/replay SSE
-harus diuji pada service nyata. Aggregator, feed, webhook, dan integrasi
-notifikasi belum dinyatakan selesai hanya karena edge dan login sudah tersedia.
-
-Validasi identitas pemanggil dan proyeksi data tetap wajib pada tiap service
-downstream. Deadline unary harus terpisah dari koneksi SSE; stream harus
-berhenti pada expiry/revocation, termasuk saat idle. Rate limiting, correlation
-ID lintas semua service, dan observability lengkap juga masih memerlukan bukti
-runtime. Aturan metadata ada di [panduan proto](../../contracts/proto/README.md).
+Transcoder dan filter SSE masih perlu diselaraskan dengan
+[OpenAPI Gateway](../../contracts/openapi/gateway.yaml). ProtoJSON langsung bukan
+bentuk respons REST yang dijanjikan: enum, pembungkus `oneof`, pagination, dan
+framing/replay SSE harus diuji pada service nyata.
