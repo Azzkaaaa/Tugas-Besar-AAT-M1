@@ -11,7 +11,12 @@ import (
 
 	"github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/aggregator/internal/config"
 	"github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/aggregator/internal/store"
+	"github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/aggregator/internal/telemetry"
 	"github.com/google/uuid"
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/metric"
+	"go.opentelemetry.io/otel/trace"
 )
 
 type BMKGPoller struct {
@@ -25,7 +30,8 @@ func NewBMKGPoller(cfg *config.Config, db *store.DB) *BMKGPoller {
 		cfg: cfg,
 		db:  db,
 		client: &http.Client{
-			Timeout: cfg.BMKGRequestTimeout,
+			Transport: otelhttp.NewTransport(http.DefaultTransport),
+			Timeout:   cfg.BMKGRequestTimeout,
 		},
 	}
 }
@@ -49,19 +55,44 @@ func (p *BMKGPoller) Start(ctx context.Context) {
 
 func (p *BMKGPoller) poll(ctx context.Context) {
 	corrID := "poll-bmkg-" + uuid.New().String()
+	pollStart := time.Now()
 
-	_, watermark, err := p.db.GetWatermark(ctx, "bmkg_seismic")
+	var ctxPoll context.Context
+	var span trace.Span
+	if telemetry.Tracer != nil {
+		ctxPoll, span = telemetry.Tracer.Start(ctx, "bmkg.poll")
+		defer span.End()
+	} else {
+		ctxPoll = ctx
+	}
+
+	recordPollMetrics := func(err error, count int) {
+		durationSec := time.Since(pollStart).Seconds()
+		if telemetry.IngestDurationHistogram != nil {
+			telemetry.IngestDurationHistogram.Record(ctxPoll, durationSec, metric.WithAttributes(attribute.String("source", "BMKG")))
+		}
+		if err != nil {
+			if telemetry.IngestErrorsCounter != nil {
+				telemetry.IngestErrorsCounter.Add(ctxPoll, 1, metric.WithAttributes(attribute.String("source", "BMKG")))
+			}
+		} else if count > 0 && telemetry.HazardsIngestedCounter != nil {
+			telemetry.HazardsIngestedCounter.Add(ctxPoll, int64(count), metric.WithAttributes(attribute.String("source", "BMKG")))
+		}
+	}
+
+	_, watermark, err := p.db.GetWatermark(ctxPoll, "bmkg_seismic")
 	if err != nil {
 		watermark = time.Time{}
 	}
 
-	seismicEvents, err := p.fetchSeismicEvents(ctx, watermark, corrID)
+	seismicEvents, err := p.fetchSeismicEvents(ctxPoll, watermark, corrID)
 	if err != nil {
-		_ = p.db.UpdateWatermark(ctx, "bmkg_seismic", "BMKG", watermark, false, err.Error())
+		recordPollMetrics(err, 0)
+		_ = p.db.UpdateWatermark(ctxPoll, "bmkg_seismic", "BMKG", watermark, false, err.Error())
 		return
 	}
 
-	tsunamiWarnings, _ := p.fetchTsunamiWarnings(ctx, watermark, corrID)
+	tsunamiWarnings, _ := p.fetchTsunamiWarnings(ctxPoll, watermark, corrID)
 
 	// Index warnings by related_event_id
 	warningMap := make(map[string][]*BMKGTsunamiWarningRaw)
@@ -69,28 +100,32 @@ func (p *BMKGPoller) poll(ctx context.Context) {
 		warningMap[w.RelatedEventID] = append(warningMap[w.RelatedEventID], w)
 	}
 
-	tx, err := p.db.Pool.Begin(ctx)
+	tx, err := p.db.Pool.Begin(ctxPoll)
 	if err != nil {
-		_ = p.db.UpdateWatermark(ctx, "bmkg_seismic", "BMKG", watermark, false, err.Error())
+		recordPollMetrics(err, 0)
+		_ = p.db.UpdateWatermark(ctxPoll, "bmkg_seismic", "BMKG", watermark, false, err.Error())
 		return
 	}
-	defer tx.Rollback(ctx)
+	defer tx.Rollback(ctxPoll)
 
 	newWatermark := watermark
+	newCount := 0
 	for _, s := range seismicEvents {
 		relatedWarnings := warningMap[s.EventID]
 		h := MapBMKGToHazard(s, relatedWarnings)
 
-		savedHazard, isNewOrUpdated, err := p.db.UpsertHazard(ctx, tx, h)
+		savedHazard, isNewOrUpdated, err := p.db.UpsertHazard(ctxPoll, tx, h)
 		if err != nil {
-			_ = p.db.UpdateWatermark(ctx, "bmkg_seismic", "BMKG", watermark, false, err.Error())
+			recordPollMetrics(err, 0)
+			_ = p.db.UpdateWatermark(ctxPoll, "bmkg_seismic", "BMKG", watermark, false, err.Error())
 			return
 		}
 
 		if isNewOrUpdated {
+			newCount++
 			pubID, payload, err := BuildPublishedEnvelope(savedHazard, corrID)
 			if err == nil {
-				_ = p.db.EnqueueOutbox(ctx, tx, pubID, savedHazard.HazardID, "BMKG", payload)
+				_ = p.db.EnqueueOutbox(ctxPoll, tx, pubID, savedHazard.HazardID, "BMKG", payload)
 			}
 		}
 
@@ -99,12 +134,14 @@ func (p *BMKGPoller) poll(ctx context.Context) {
 		}
 	}
 
-	if err := tx.Commit(ctx); err != nil {
-		_ = p.db.UpdateWatermark(ctx, "bmkg_seismic", "BMKG", watermark, false, err.Error())
+	if err := tx.Commit(ctxPoll); err != nil {
+		recordPollMetrics(err, 0)
+		_ = p.db.UpdateWatermark(ctxPoll, "bmkg_seismic", "BMKG", watermark, false, err.Error())
 		return
 	}
 
-	_ = p.db.UpdateWatermark(ctx, "bmkg_seismic", "BMKG", newWatermark, true, "")
+	_ = p.db.UpdateWatermark(ctxPoll, "bmkg_seismic", "BMKG", newWatermark, true, "")
+	recordPollMetrics(nil, newCount)
 }
 
 func (p *BMKGPoller) fetchSeismicEvents(ctx context.Context, since time.Time, corrID string) ([]*BMKGSeismicRaw, error) {

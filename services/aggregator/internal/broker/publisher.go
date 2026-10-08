@@ -8,7 +8,12 @@ import (
 
 	"github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/aggregator/internal/config"
 	"github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/aggregator/internal/store"
+	"github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/aggregator/internal/telemetry"
 	amqp "github.com/rabbitmq/amqp091-go"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/metric"
+	"go.opentelemetry.io/otel/trace"
 )
 
 type OutboxPublisher struct {
@@ -207,13 +212,34 @@ func (p *OutboxPublisher) processOutboxLoop(ctx context.Context) {
 }
 
 func (p *OutboxPublisher) publishOne(ctx context.Context, rec *store.OutboxRecord) error {
+	pubStart := time.Now()
+
+	var ctxPub context.Context
+	var span trace.Span
+	if telemetry.Tracer != nil {
+		ctxPub, span = telemetry.Tracer.Start(ctx, "rabbitmq.publish")
+		defer span.End()
+		span.SetAttributes(
+			attribute.String("messaging.system", "rabbitmq"),
+			attribute.String("messaging.destination", p.cfg.RabbitMQExchange),
+			attribute.String("messaging.message_id", rec.EventID),
+			attribute.String("hazard.id", rec.HazardID),
+			attribute.String("hazard.source", rec.Source),
+		)
+	} else {
+		ctxPub = ctx
+	}
+
+	headers := telemetry.InjectAMQPHeaders(ctxPub, make(amqp.Table))
+
 	confirmation, err := p.ch.PublishWithDeferredConfirmWithContext(
-		ctx,
+		ctxPub,
 		p.cfg.RabbitMQExchange, // exchange
 		"",                     // routing key
 		false,                  // mandatory
 		false,                  // immediate
 		amqp.Publishing{
+			Headers:      headers,
 			DeliveryMode: amqp.Persistent,
 			ContentType:  "application/protobuf",
 			Body:         rec.Payload,
@@ -222,16 +248,38 @@ func (p *OutboxPublisher) publishOne(ctx context.Context, rec *store.OutboxRecor
 		},
 	)
 	if err != nil {
+		if span != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, err.Error())
+		}
+		if telemetry.OutboxErrorsCounter != nil {
+			telemetry.OutboxErrorsCounter.Add(ctxPub, 1, metric.WithAttributes(attribute.String("source", rec.Source)))
+		}
 		return err
 	}
 
 	if confirmation != nil {
-		ok, err := confirmation.WaitContext(ctx)
+		ok, err := confirmation.WaitContext(ctxPub)
 		if err != nil || !ok {
-			return fmt.Errorf("publisher confirmation nack or error: %w", err)
+			nackErr := fmt.Errorf("publisher confirmation nack or error: %w", err)
+			if span != nil {
+				span.RecordError(nackErr)
+				span.SetStatus(codes.Error, nackErr.Error())
+			}
+			if telemetry.OutboxErrorsCounter != nil {
+				telemetry.OutboxErrorsCounter.Add(ctxPub, 1, metric.WithAttributes(attribute.String("source", rec.Source)))
+			}
+			return nackErr
 		}
+	}
+
+	durationSec := time.Since(pubStart).Seconds()
+	if telemetry.OutboxDurationHistogram != nil {
+		telemetry.OutboxDurationHistogram.Record(ctxPub, durationSec, metric.WithAttributes(attribute.String("source", rec.Source)))
+	}
+	if telemetry.OutboxPublishedCounter != nil {
+		telemetry.OutboxPublishedCounter.Add(ctxPub, 1, metric.WithAttributes(attribute.String("source", rec.Source)))
 	}
 
 	return nil
 }
-
