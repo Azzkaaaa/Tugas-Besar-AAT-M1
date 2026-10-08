@@ -1,10 +1,10 @@
 version: v2
 plugins:
-  - local: C:\Users\rizac\go\bin\protoc-gen-go.exe
+  - remote: buf.build/protocolbuffers/go:v1.36.12
     out: packages/bnpb-aggregator-go
     opt:
       - paths=source_relative
-  - local: C:\Users\rizac\go\bin\protoc-gen-go-grpc.exe
+  - remote: buf.build/grpc/go:v1.6.2
     out: packages/bnpb-aggregator-go
     opt:
       - paths=source_relative
