@@ -2,6 +2,8 @@ syntax = "proto3";
 
 package bnpb.common.v1;
 
+option go_package = "github.com/Azzkaaaa/Tugas-Besar-AAT-M1/packages/bnpb-aggregator-go/bnpb/common/v1;commonv1";
+
 import "google/protobuf/struct.proto";
 import "google/protobuf/timestamp.proto";
 
