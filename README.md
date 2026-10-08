@@ -153,11 +153,12 @@ Docker, library tambahan, atau database yang sedang Anda gunakan.
 ## Pengembangan kontrak BNPB
 
 Bagian berikut dipakai ketika mengembangkan service BNPB; tidak diperlukan
-untuk menjalankan mock. Prasyarat: buf.
+untuk menjalankan mock. Prasyarat: Go 1.26 dan buf.
 
 ```bash
-npx nx run envoy:generate-descriptor   # image Envoy membangun salinannya sendiri
-buf generate
+npx nx run bnpb-aggregator-go:check-proto     # stub gRPC Go sesuai contracts/proto
+npx nx run bnpb-gateway-go:generate-openapi   # server REST dari contracts/openapi/gateway.yaml
+npx nx run api-gateway:test                   # respons gateway divalidasi terhadap OpenAPI
 ```
 
 Lihat [arsitektur](docs/architecture.md), [pemetaan data](docs/data-mapping.md),

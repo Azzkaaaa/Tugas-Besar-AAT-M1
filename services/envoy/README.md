@@ -1,14 +1,16 @@
-# Envoy: gateway tunggal
+# Envoy: edge proxy
 
 Satu proses Envoy melayani seluruh lalu lintas publik pada `localhost:8080`:
-SPA, Auth bridge, hosted login Zitadel, dan API REST→gRPC. Tidak ada lagi
-`gateway-transcoder` terpisah; request API tidak melewati Auth bridge.
+SPA, Auth bridge, hosted login Zitadel, dan API. Envoy hanya mengautentikasi
+request API lalu meneruskannya ke [api-gateway](../api-gateway/README.md), yang
+mengimplementasikan kontrak REST dan memanggil service gRPC. Request API tidak
+melewati Auth bridge.
 
 | Host / prefix | Tujuan |
 | --- | --- |
 | `auth.localhost` | Zitadel; `/ui/v2/login` ke Login UI v2 |
 | `localhost` `/auth/` | Auth bridge (login, callback, sesi, refresh, logout) |
-| `localhost` `/api/` | Filter API (di bawah), lalu transcoder ke service gRPC |
+| `localhost` `/api/` | Filter API (di bawah), lalu api-gateway |
 | `localhost` `/` | SPA |
 
 ## Alur request API
@@ -17,9 +19,7 @@ SPA, Auth bridge, hosted login Zitadel, dan API REST→gRPC. Tidak ada lagi
 browser ──cookie bnpb_access──► Envoy
   1. bnpb.cookie_to_bearer (Lua)   cookie → Authorization: Bearer, Origin/CSRF untuk mutasi
   2. bnpb.token_exchange (BOE)     RFC 8693 ke Zitadel: token opaque → JWT
-  3. bnpb.sse_filter (Lua)         alias feed, flatten query, NDJSON → SSE
-  4. grpc_json_transcoder          REST → gRPC
-  5. router                        aggregator / webhook / notification / feed
+  3. router                        api-gateway (HTTP/1.1, tanpa timeout route untuk SSE)
 ```
 
 - **Cookie ke bearer.** Cookie tidak pernah diteruskan ke service. Request yang
@@ -37,7 +37,10 @@ browser ──cookie bnpb_access──► Envoy
   Zitadel melalui Actions v2 target
   [`zitadel-claims`](../zitadel-claims/README.md). Envoy hanya mengautentikasi;
   pemeriksaan scope per method (misalnya Media meminta `view=full`) menjadi tugas
-  service. Validasi JWT di service belum termasuk perubahan ini.
+  service backend.
+- **Kontrak REST.** Transcoder gRPC-JSON dan filter SSE Lua telah dihapus karena
+  ProtoJSON tidak sesuai OpenAPI (prefiks enum, pembungkus `oneof`, kode status,
+  problem+json, framing SSE). Semua itu kini ditangani api-gateway.
 - Error yang dibuat gateway memakai `application/problem+json`.
 
 Pada `compose.auth.yaml` service bisnis tidak ada, sehingga request API yang lolos
@@ -56,7 +59,7 @@ kosong. Nilai default ada di [`envoy.env.example`](envoy.env.example) dan anchor
 | --- | --- |
 | Listener dan host | `ENVOY_LISTEN_PORT`, `APP_HOST`, `APP_ORIGIN`, `AUTH_HOST` |
 | Prefix route | `AUTH_ROUTE_PREFIX`, `API_ROUTE_PREFIX`, `LOGIN_UI_ROUTE_PREFIX` |
-| Upstream | `ZITADEL_*`, `ZITADEL_LOGIN_*`, `AUTH_BRIDGE_*`, `SPA_*`, `AGGREGATOR_*`, `WEBHOOK_*`, `NOTIFICATION_*`, `FEED_*` (`_ADDRESS`, `_PORT`) |
+| Upstream | `ZITADEL_*`, `ZITADEL_LOGIN_*`, `AUTH_BRIDGE_*`, `SPA_*`, `API_GATEWAY_*` (`_ADDRESS`, `_PORT`) |
 | Token exchange | `TOKEN_EXCHANGE_URL`, `TOKEN_EXCHANGE_CLIENT_ID`, `TOKEN_EXCHANGE_CLIENT_SECRET` |
 | Lua | `AUTH_ACCESS_COOKIE`, `AUTH_COOKIE_PREFIX` |
 
@@ -65,8 +68,7 @@ membacanya dari `/bootstrap/oidc.json` (volume `auth_client_config`, read-only),
 sehingga Envoy baru mulai setelah `auth-bootstrap` selesai.
 
 Image dibangun dari root repository: tahap pertama membangun `libcomposer.so` dari
-sumber BOE, tahap kedua membuat `bnpb_descriptor.pb` dengan buf, tahap akhir
-memakai `envoyproxy/envoy:v1.38.6`.
+sumber BOE, tahap akhir memakai `envoyproxy/envoy:v1.38.6`.
 
 ## Nx
 
@@ -74,12 +76,4 @@ memakai `envoyproxy/envoy:v1.38.6`.
 npx nx run envoy:build                # docker build -f services/envoy/Dockerfile .
 npx nx run envoy:render               # render template ke services/envoy/dist
 npx nx run envoy:validate             # envoy --mode validate dengan envoy.env.example
-npx nx run envoy:generate-descriptor  # bnpb_descriptor.pb lokal untuk inspeksi
 ```
-
-## Batas implementasi bisnis
-
-Transcoder dan filter SSE masih perlu diselaraskan dengan
-[OpenAPI Gateway](../../contracts/openapi/gateway.yaml). ProtoJSON langsung bukan
-bentuk respons REST yang dijanjikan: enum, pembungkus `oneof`, pagination, dan
-framing/replay SSE harus diuji pada service nyata.

@@ -112,8 +112,8 @@ Image distroless memakai `/event-live-feed --healthcheck` sebagai healthcheck gR
 
 ## Belum termasuk
 
-- Filter SSE Envoy belum memetakan header `Last-Event-ID` ke `resume_after`.
-- Heartbeat SSE dan `stream_idle_timeout` Envoy merupakan urusan Gateway.
+- SSE, `Last-Event-ID` → `resume_after`, `reset_required`, dan heartbeat ditangani
+  [api-gateway](../api-gateway/README.md).
 - Store replay Redis (port `ReplayStore` sudah memisahkannya).
 - Pengujian end-to-end (Aggregator → RabbitMQ → feed → SSE dengan login Zitadel,
   termasuk stream yang bertahan melewati 60 detik) dilakukan di sesi terpisah.

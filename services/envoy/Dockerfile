@@ -1,4 +1,4 @@
-# Build context: repository root (buf.yaml and contracts/proto are needed).
+# Build context: repository root (the COPY paths below are repository-relative).
 #   docker build -f services/envoy/Dockerfile .
 
 # Built On Envoy composer: Go dynamic module that embeds the token-exchange filter.
@@ -10,19 +10,11 @@ WORKDIR /src/extensions/composer
 RUN go mod download
 RUN CGO_ENABLED=1 go build -trimpath -buildmode=c-shared -o /out/libcomposer.so ./main
 
-# gRPC-JSON transcoder descriptor, generated from the shared contracts.
-FROM bufbuild/buf:1.73.0 AS descriptor
-WORKDIR /workspace
-COPY buf.yaml buf.lock ./
-COPY contracts/proto contracts/proto
-RUN mkdir -p /out && buf build -o /out/bnpb_descriptor.pb --exclude-imports=false
-
 FROM envoyproxy/envoy:v1.38.6
 RUN apt-get update \
   && apt-get install -y --no-install-recommends gettext-base \
   && rm -rf /var/lib/apt/lists/*
 COPY --from=composer /out/libcomposer.so /usr/local/lib/envoy/libcomposer.so
-COPY --from=descriptor /out/bnpb_descriptor.pb /etc/envoy/bnpb_descriptor.pb
 COPY services/envoy/templates /etc/envoy/templates
 # No COPY --chmod: it needs BuildKit, and the legacy builder must work too.
 COPY services/envoy/docker-entrypoint.sh /usr/local/bin/gateway-entrypoint.sh

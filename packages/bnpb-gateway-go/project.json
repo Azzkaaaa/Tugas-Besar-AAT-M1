@@ -1,0 +1,38 @@
+{
+  "name": "bnpb-gateway-go",
+  "$schema": "../../node_modules/nx/schemas/project-schema.json",
+  "projectType": "library",
+  "sourceRoot": "packages/bnpb-gateway-go",
+  "targets": {
+    "clean-openapi": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "git clean -fdX {projectRoot}",
+        "cwd": "{workspaceRoot}"
+      },
+      "cache": false
+    },
+    "generate-openapi": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "go tool oapi-codegen -config oapi-codegen.yaml ../../contracts/openapi/gateway.yaml",
+        "cwd": "{projectRoot}"
+      },
+      "cache": true,
+      "inputs": [
+        "{projectRoot}/oapi-codegen.yaml",
+        "{projectRoot}/go.mod",
+        "{workspaceRoot}/contracts/openapi/gateway.yaml"
+      ],
+      "outputs": ["{projectRoot}/gatewayapi/gateway.gen.go"]
+    },
+    "clean": {
+      "dependsOn": ["clean-openapi"]
+    },
+    "build": {
+      "dependsOn": ["generate-openapi"],
+      "executor": "nx:run-commands",
+      "options": { "command": "go build ./...", "cwd": "{projectRoot}" }
+    }
+  }
+}

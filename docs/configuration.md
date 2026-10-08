@@ -28,7 +28,7 @@ ada di [panduan mock](mock-services.md).
 | `API_DOCS_PORT` | `8090` | Penampil Swagger UI; bind localhost |
 | `APP_ENV` | `development` | Rencana konfigurasi aplikasi BNPB; belum dibaca mock |
 | `LOG_LEVEL` | `info` | Rencana konfigurasi aplikasi BNPB; mock mencatat log JSON tanpa override ini |
-| `GATEWAY_HTTP_PORT` | `8080` | Gateway |
+| `GATEWAY_HTTP_PORT` | `8080` | api-gateway (port container; Envoy memakai `API_GATEWAY_PORT`) |
 | `BMKG_HTTP_PORT` | `8081` | Listener BMKG lokal; port host saat memakai Compose |
 | `PVMBG_HTTP_PORT` | `8082` | Listener PVMBG lokal; port host saat memakai Compose |
 | `AGGREGATOR_GRPC_PORT` | `9091` | Aggregator |
@@ -37,10 +37,10 @@ ada di [panduan mock](mock-services.md).
 | `NOTIFICATION_GRPC_PORT` | `9095` | Danger Notification |
 | `BMKG_BASE_URL` | `http://bmkg-mock:8080` | Aggregator pada jaringan Compose |
 | `PVMBG_BASE_URL` | `http://pvmbg-mock:8080` | Aggregator pada jaringan Compose |
-| `AGGREGATOR_GRPC_ADDRESS` | `aggregator:9091` | Gateway, Danger Notification untuk freshness |
-| `EVENT_FEED_GRPC_ADDRESS` | `event-live-feed:9093` | Gateway |
-| `WEBHOOK_GRPC_ADDRESS` | `webhook-provider:9094` | Gateway |
-| `NOTIFICATION_GRPC_ADDRESS` | `danger-notification:9095` | Gateway |
+| `AGGREGATOR_GRPC_ADDRESS` | `aggregator-service:9091` | api-gateway, Danger Notification untuk freshness |
+| `EVENT_FEED_GRPC_ADDRESS` | `feed-service:9093` | api-gateway |
+| `WEBHOOK_GRPC_ADDRESS` | `webhook-provider:9094` | api-gateway |
+| `NOTIFICATION_GRPC_ADDRESS` | `notification-service:9095` | api-gateway |
 
 Kedua container mock mendengarkan port internal **8080**; host secara default
 memakai **8081** untuk BMKG dan **8082** untuk PVMBG. Nama service hanya berlaku
@@ -169,7 +169,9 @@ Aturan scope, pencabutan sesi, dan metadata ada di
 | `PVMBG_REQUEST_TIMEOUT_MS` | `3500` | Aggregator; timeout satu panggilan HTTP PVMBG |
 | `SOURCE_STALE_AFTER_MS` | `10000` | Aggregator; freshness window sejak polling sukses terakhir |
 | `GATEWAY_REQUEST_TIMEOUT_MS` | `2000` | Gateway; deadline request unary, bukan lifetime seluruh SSE |
-| `GATEWAY_MAX_IN_FLIGHT` | `100` | Gateway; batas kerja serentak, overload ditolak terkontrol |
+| `GATEWAY_MAX_IN_FLIGHT` | `100` | Gateway; batas request unary serentak (feed tidak dihitung), kelebihan → 429/503 |
+| `GATEWAY_RETRY_AFTER_SECONDS` | `5` | Gateway; header `Retry-After` pada 429/503 |
+| `GATEWAY_SSE_HEARTBEAT_SECONDS` | `15` | Gateway; interval komentar heartbeat SSE |
 | `FEED_REPLAY_RETENTION_SECONDS` | `600` | Kedua feed; buffer masing-masing, bukan retensi queue RabbitMQ |
 | `PAGE_TOKEN_TTL_SECONDS` | `300` | Aggregator dan Danger Notification; snapshot cursor masing-masing |
 

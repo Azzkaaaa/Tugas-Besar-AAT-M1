@@ -1,4 +1,5 @@
-# Single gateway: SPA, Auth bridge, Zitadel hosted login, and the REST→gRPC API.
+# Edge proxy: SPA, Auth bridge, Zitadel hosted login, and authenticated /api/ traffic, which
+# is forwarded to the api-gateway service (REST contract → gRPC backends).
 # Rendered by docker-entrypoint.sh with envsubst; every substituted variable is listed there.
 static_resources:
   listeners:
@@ -27,9 +28,6 @@ static_resources:
                         bnpb.token_exchange:
                           "@type": type.googleapis.com/envoy.config.route.v3.FilterConfig
                           disabled: true
-                        bnpb.sse_filter:
-                          "@type": type.googleapis.com/envoy.config.route.v3.FilterConfig
-                          disabled: true
                       routes:
                         - match: { path: / }
                           redirect: { path_redirect: "${LOGIN_UI_ROUTE_PREFIX}/" }
@@ -45,19 +43,11 @@ static_resources:
                           route: { cluster: auth_bridge, timeout: 30s }
                           typed_per_filter_config: *api_filters_disabled
 
-                        # The transcoder rewrites REST paths to gRPC paths and clears the route
-                        # cache, so these routes are selected after authentication and exchange.
-                        - match: { prefix: /bnpb.aggregator.v1.AggregatorService/ }
-                          route: { cluster: aggregator, timeout: 0s }
-                        - match: { prefix: /bnpb.webhook.v1.WebhookService/ }
-                          route: { cluster: webhook, timeout: 0s }
-                        - match: { prefix: /bnpb.notification.v1.DangerNotificationService/ }
-                          route: { cluster: notification, timeout: 0s }
-                        - match: { prefix: /bnpb.feed.v1.EventFeedService/ }
-                          route: { cluster: feed, timeout: 0s }
-                        # REST paths without a transcoder binding.
+                        # Authenticated and exchanged above; api-gateway implements the REST
+                        # contract. No route timeout: feeds are long-lived SSE responses kept
+                        # alive by the gateway's heartbeat comments.
                         - match: { prefix: "${API_ROUTE_PREFIX}" }
-                          direct_response: { status: 404, body: { inline_string: not_found } }
+                          route: { cluster: api_gateway, timeout: 0s }
 
                         - match: { prefix: / }
                           route: { cluster: spa, timeout: 30s }
@@ -108,30 +98,6 @@ static_resources:
                             "requested_token_type": "urn:ietf:params:oauth:token-type:jwt"
                           }
 
-                  # 3. Feed path aliases, query flattening, and NDJSON → SSE framing.
-                  - name: bnpb.sse_filter
-                    typed_config:
-                      "@type": type.googleapis.com/envoy.extensions.filters.http.lua.v3.Lua
-                      default_source_code:
-                        filename: ${ENVOY_RENDER_DIR}/lua/sse_filter.lua
-
-                  # 4. REST → gRPC. Runs after the Lua rewrites and before routing.
-                  - name: envoy.filters.http.grpc_json_transcoder
-                    typed_config:
-                      "@type": type.googleapis.com/envoy.extensions.filters.http.grpc_json_transcoder.v3.GrpcJsonTranscoder
-                      proto_descriptor: ${ENVOY_DESCRIPTOR_PATH}
-                      services:
-                        - bnpb.webhook.v1.WebhookService
-                        - bnpb.notification.v1.DangerNotificationService
-                        - bnpb.feed.v1.EventFeedService
-                        - bnpb.aggregator.v1.AggregatorService
-                      print_options:
-                        add_whitespace: false
-                        always_print_primitive_fields: true
-                        always_print_enums_as_ints: false
-                        preserve_proto_field_names: true
-                        stream_newline_delimited: true
-
                   - name: envoy.filters.http.router
                     typed_config:
                       "@type": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
@@ -178,43 +144,12 @@ static_resources:
           - lb_endpoints:
               - endpoint: { address: { socket_address: { address: ${SPA_ADDRESS}, port_value: ${SPA_PORT} } } }
 
-    # --- gRPC services (no endpoints in the standalone Auth stack → 503) ---
-    - name: aggregator
+    # --- Business API (backends absent in the standalone Auth stack → 503 problem) ---
+    - name: api_gateway
       type: STRICT_DNS
       connect_timeout: 5s
-      typed_extension_protocol_options: *http2
       load_assignment:
-        cluster_name: aggregator
+        cluster_name: api_gateway
         endpoints:
           - lb_endpoints:
-              - endpoint: { address: { socket_address: { address: ${AGGREGATOR_ADDRESS}, port_value: ${AGGREGATOR_PORT} } } }
-
-    - name: webhook
-      type: STRICT_DNS
-      connect_timeout: 5s
-      typed_extension_protocol_options: *http2
-      load_assignment:
-        cluster_name: webhook
-        endpoints:
-          - lb_endpoints:
-              - endpoint: { address: { socket_address: { address: ${WEBHOOK_ADDRESS}, port_value: ${WEBHOOK_PORT} } } }
-
-    - name: notification
-      type: STRICT_DNS
-      connect_timeout: 5s
-      typed_extension_protocol_options: *http2
-      load_assignment:
-        cluster_name: notification
-        endpoints:
-          - lb_endpoints:
-              - endpoint: { address: { socket_address: { address: ${NOTIFICATION_ADDRESS}, port_value: ${NOTIFICATION_PORT} } } }
-
-    - name: feed
-      type: STRICT_DNS
-      connect_timeout: 5s
-      typed_extension_protocol_options: *http2
-      load_assignment:
-        cluster_name: feed
-        endpoints:
-          - lb_endpoints:
-              - endpoint: { address: { socket_address: { address: ${FEED_ADDRESS}, port_value: ${FEED_PORT} } } }
+              - endpoint: { address: { socket_address: { address: ${API_GATEWAY_ADDRESS}, port_value: ${API_GATEWAY_PORT} } } }

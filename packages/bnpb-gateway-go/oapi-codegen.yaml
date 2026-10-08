@@ -1,0 +1,18 @@
+# Chi strict-server interfaces, models and embedded spec for contracts/openapi/gateway.yaml.
+#   npx nx run bnpb-gateway-go:generate-openapi
+package: gatewayapi
+output: gatewayapi/gateway.gen.go
+generate:
+  models: true
+  chi-server: true
+  strict-server: true
+  embedded-spec: true
+output-options:
+  skip-prune: true
+  # Inline objects (webhook filters) become named types instead of anonymous structs.
+  generate-types-for-anonymous-schemas: true
+  type-mapping:
+    # The float32 default would truncate coordinates.
+    number:
+      default:
+        type: float64
