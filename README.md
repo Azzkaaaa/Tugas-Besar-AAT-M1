@@ -146,7 +146,9 @@ python -m unittest discover -s services/bmkg-mock -p test_storage.py -v
 
 Tes end-to-end sistem lengkap (`tests/test_e2e_*.py`) dilewati kecuali
 `BNPB_E2E=1` dan stack `compose.yaml` sudah berjalan; lihat
-[panduan e2e](docs/e2e-testing.md).
+[panduan e2e](docs/e2e-testing.md). Uji beban aggregator lewat Envoy (k6,
+50 koneksi paralel, 60 detik) dan uji isolasi BMKG–PVMBG (p95 BMKG-only < 300 ms
+saat PVMBG lambat) dijelaskan di [panduan uji beban](docs/load-testing.md).
 
 Pengujian menjalankan proses Python terpisah lewat jaringan HTTP dengan port
 sementara, SQLite sementara, dan secret acak. Skenario mencakup kontrak data,
