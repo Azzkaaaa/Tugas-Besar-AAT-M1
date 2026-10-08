@@ -1,0 +1,7 @@
+# Build context is the repository root; only send what the image needs.
+*
+!buf.yaml
+!buf.lock
+!contracts/proto/**
+!services/envoy/templates/**
+!services/envoy/docker-entrypoint.sh

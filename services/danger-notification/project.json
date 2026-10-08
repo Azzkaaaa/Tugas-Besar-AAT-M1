@@ -3,10 +3,14 @@
   "$schema": "../../node_modules/nx/schemas/project-schema.json",
   "projectType": "application",
   "sourceRoot": "services/danger-notification",
-  "implicitDependencies": ["bnpb-notification-dotnet"],
+  "implicitDependencies": [
+    "bnpb-notification-dotnet"
+  ],
   "targets": {
     "build": {
-      "dependsOn": ["^build"],
+      "dependsOn": [
+        "^build"
+      ],
       "executor": "nx:run-commands",
       "options": {
         "command": "dotnet build",
@@ -23,6 +27,17 @@
         "{projectRoot}/**/bin/**/*",
         "{projectRoot}/**/obj/**/*"
       ]
+    },
+    "test": {
+      "dependsOn": [
+        "build"
+      ],
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "dotnet test",
+        "cwd": "{projectRoot}"
+      },
+      "cache": false
     }
   }
 }

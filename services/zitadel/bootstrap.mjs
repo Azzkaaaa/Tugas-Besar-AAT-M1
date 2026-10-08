@@ -1,15 +1,25 @@
-// Local provisioning only. Uses the pinned Zitadel Management API v1.
+// Local provisioning only. Uses the pinned Zitadel Management API v1 and the v2 feature/action APIs.
 // Never log request bodies, API secrets, tokens, or initial passwords.
 import { readFile, writeFile, rename, mkdir } from 'node:fs/promises';
+import { request } from 'node:http';
 import { dirname } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 
 const issuer = process.env.OIDC_ISSUER || 'http://auth.localhost:8080';
 const appUrl = process.env.APP_PUBLIC_URL || 'http://localhost:8080';
+// Provisioning talks to Zitadel directly so it does not depend on the gateway,
+// which itself needs the credentials written here. The Host header selects the instance.
+const apiUrl = process.env.ZITADEL_API_URL || issuer;
+const apiHost = process.env.ZITADEL_API_HOST || '';
+const claimsEndpoint = process.env.ACTIONS_CLAIMS_ENDPOINT || 'http://zitadel-claims:3002/claims';
+const claimsTargetName = 'BNPB scope claims';
 const output = process.env.OIDC_CONFIG_FILE || '/bootstrap/oidc.json';
+// Separate file and volume for the claims service, so it never sees client secrets.
+const actionsOutput = process.env.ACTIONS_CONFIG_FILE || '/actions/actions.json';
 const patPath = process.env.ZITADEL_ADMIN_PAT_FILE || '/admin/admin.pat';
 let token;
 let saved = {};
+let actions = {};
 
 function seconds(name, fallback) {
   const value = process.env[name] || String(fallback);
@@ -19,26 +29,53 @@ function seconds(name, fallback) {
   return Number(value);
 }
 
-async function persist() {
-  await mkdir(dirname(output), { recursive: true });
-  // Read-only mounted into the bridge; no IAM_OWNER PAT is written here.
-  await writeFile(`${output}.tmp`, JSON.stringify(saved, null, 2) + '\n', { mode: 0o644 });
-  await rename(`${output}.tmp`, output);
+async function write(path, data) {
+  await mkdir(dirname(path), { recursive: true });
+  await writeFile(`${path}.tmp`, JSON.stringify(data, null, 2) + '\n', { mode: 0o644 });
+  await rename(`${path}.tmp`, path);
+}
+
+// Read-only mounted into the bridge; no IAM_OWNER PAT is written here.
+const persist = () => write(output, saved);
+// Read-only mounted into the claims service: signing key and the IDs it filters on, no client secrets.
+const persistActions = () => write(actionsOutput, actions);
+
+async function load(path, what) {
+  try { return JSON.parse(await readFile(path, 'utf8')); }
+  catch (error) { if (error.code !== 'ENOENT') throw new Error(`Cannot read persisted ${what}.`); return {}; }
+}
+
+// node:http instead of fetch: fetch silently drops a custom Host header.
+function send(path, body, method) {
+  const payload = body === undefined ? undefined : JSON.stringify(body);
+  return new Promise((resolve, reject) => {
+    const req = request(new URL(path, apiUrl), {
+      method,
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json',
+        ...(apiHost ? { Host: apiHost } : {}) },
+      signal: AbortSignal.timeout(20000),
+    }, response => {
+      const chunks = [];
+      response.on('data', chunk => chunks.push(chunk));
+      response.on('end', () => {
+        let json = {};
+        try { json = JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}'); } catch { /* status is enough */ }
+        resolve({ status: response.statusCode, json });
+      });
+      response.on('error', reject);
+    });
+    req.on('error', reject);
+    req.end(payload);
+  });
 }
 
 async function api(path, body, method = body === undefined ? 'GET' : 'POST') {
-  const response = await fetch(`${issuer}${path}`, {
-    method,
-    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-    signal: AbortSignal.timeout(20000),
-  });
-  if (!response.ok) {
-    const payload = await response.json().catch(() => ({}));
+  const { status, json } = await send(path, body, method);
+  if (status < 200 || status >= 300) {
     // Provider messages might echo submitted values. Only log numeric status/code.
-    throw new Error(`Provisioning ${method} ${path} failed: HTTP ${response.status}, code ${Number(payload.code) || 0}`);
+    throw new Error(`Provisioning ${method} ${path} failed: HTTP ${status}, code ${Number(json.code) || 0}`);
   }
-  return response.json();
+  return json;
 }
 
 async function all(path) {
@@ -66,7 +103,7 @@ async function ensureUser(username, firstName, lastName, passwordKey) {
   return created.userId;
 }
 
-async function ensureApp(projectId, name, kind, prefix) {
+async function ensureApp(projectId, name, kind, prefix, config) {
   const found = (await all(`/management/v1/projects/${projectId}/apps/_search`)).find(app => app.name === name);
   const idKey = prefix ? `${prefix}_app_id` : 'app_id';
   const clientKey = prefix ? `${prefix}_client_id` : 'client_id';
@@ -78,22 +115,7 @@ async function ensureApp(projectId, name, kind, prefix) {
     }
     return;
   }
-  const config = kind === 'oidc' ? {
-    name,
-    redirectUris: [`${appUrl}/auth/callback`],
-    responseTypes: ['OIDC_RESPONSE_TYPE_CODE'],
-    grantTypes: ['OIDC_GRANT_TYPE_AUTHORIZATION_CODE', 'OIDC_GRANT_TYPE_REFRESH_TOKEN'],
-    appType: 'OIDC_APP_TYPE_WEB',
-    authMethodType: 'OIDC_AUTH_METHOD_TYPE_BASIC',
-    postLogoutRedirectUris: [`${appUrl}/`],
-    version: 'OIDC_VERSION_1_0',
-    // HTTP is permitted only for this loopback-only development stack.
-    devMode: true,
-    accessTokenType: 'OIDC_TOKEN_TYPE_BEARER',
-    idTokenRoleAssertion: true,
-    loginVersion: { loginV2: { baseUri: `${issuer}/ui/v2/login/` } },
-  } : { name, authMethodType: 'API_AUTH_METHOD_TYPE_BASIC' };
-  const created = await api(`/management/v1/projects/${projectId}/apps/${kind}`, config);
+  const created = await api(`/management/v1/projects/${projectId}/apps/${kind}`, { name, ...config });
   if (!created.clientId || !created.clientSecret) throw new Error(`Zitadel did not return client credentials for ${name}.`);
   saved[idKey] = created.appId;
   saved[clientKey] = created.clientId;
@@ -101,11 +123,75 @@ async function ensureApp(projectId, name, kind, prefix) {
   await persist();
 }
 
+function oidcApp(overrides) {
+  return {
+    redirectUris: [`${appUrl}/auth/callback`],
+    responseTypes: ['OIDC_RESPONSE_TYPE_CODE'],
+    appType: 'OIDC_APP_TYPE_WEB',
+    authMethodType: 'OIDC_AUTH_METHOD_TYPE_BASIC',
+    postLogoutRedirectUris: [`${appUrl}/`],
+    version: 'OIDC_VERSION_1_0',
+    // HTTP is permitted only for this loopback-only development stack.
+    devMode: true,
+    loginVersion: { loginV2: { baseUri: `${issuer}/ui/v2/login/` } },
+    ...overrides,
+  };
+}
+
+// The gateway exchanges browser access tokens for JWTs (RFC 8693); beta feature in Zitadel v4.
+async function ensureTokenExchange() {
+  const features = await api('/v2/features/instance');
+  if (features.oidcTokenExchange?.enabled !== true) {
+    await api('/v2/features/instance', { oidcTokenExchange: true }, 'PUT');
+  }
+}
+
+// Actions v2: Zitadel calls the claims service to append role/scopes claims to userinfo,
+// introspection (preuserinfo) and JWT access tokens (preaccesstoken).
+async function ensureClaimsAction() {
+  const { targets = [] } = await api('/v2/actions/targets/search', { pagination: { limit: 1000 } });
+  const found = targets.find(target => target.name === claimsTargetName);
+  if (found) {
+    if (actions.actions_target_id !== found.id || !actions.actions_signing_key) {
+      throw new Error(`Existing ${claimsTargetName} target has no matching persisted signing key. Restore auth_actions_config volume; keys are not automatically rotated.`);
+    }
+  } else {
+    const created = await api('/v2/actions/targets', {
+      name: claimsTargetName,
+      restCall: { interruptOnError: true },
+      endpoint: claimsEndpoint,
+      timeout: '5s',
+      payloadType: 'PAYLOAD_TYPE_JSON',
+    });
+    if (!created.id || !created.signingKey) throw new Error('Zitadel did not return a target signing key.');
+    actions.actions_target_id = created.id;
+    actions.actions_signing_key = created.signingKey;
+  }
+  // Rewritten every run so the filter IDs follow the provisioned applications.
+  actions = { ...actions, client_ids: [saved.client_id, saved.introspection_client_id, saved.gateway_client_id],
+    project_id: saved.project_id, organization_id: saved.organization_id };
+  await persistActions();
+  for (const name of ['preuserinfo', 'preaccesstoken']) {
+    await api('/v2/actions/executions', { condition: { function: { name } }, targets: [actions.actions_target_id] }, 'PUT');
+  }
+}
+
+// Volumes provisioned before the claims service split kept the target in oidc.json.
+// Move it (actions.json first, so a crash in between loses nothing); keys cannot be re-read from Zitadel.
+async function migrateActions() {
+  if (actions.actions_signing_key || !saved.actions_signing_key) return;
+  actions = { ...actions, actions_target_id: saved.actions_target_id, actions_signing_key: saved.actions_signing_key };
+  await persistActions();
+  delete saved.actions_target_id;
+  delete saved.actions_signing_key;
+  await persist();
+}
+
 async function main() {
   token = (await readFile(patPath, 'utf8')).trim();
   if (!token) throw new Error('The bootstrap PAT file is empty.');
-  try { saved = JSON.parse(await readFile(output, 'utf8')); }
-  catch (error) { if (error.code !== 'ENOENT') throw new Error('Cannot read persisted OIDC configuration.'); }
+  saved = await load(output, 'OIDC configuration');
+  actions = await load(actionsOutput, 'actions configuration');
   if (saved.issuer && (saved.issuer !== issuer || saved.app_public_url !== appUrl)) {
     throw new Error('The persisted issuer/callback differs from this deployment. Update the existing Zitadel application explicitly.');
   }
@@ -122,6 +208,7 @@ async function main() {
   if (saved.project_id && saved.project_id !== projectId) throw new Error('Persisted client configuration belongs to another project/database.');
   saved = { ...saved, issuer, app_public_url: appUrl, project_id: projectId, organization_id: organization.id };
   await persist();
+  await migrateActions();
 
   // All four durations must be supplied together to the instance OIDC settings API.
   // Reapply on restart so an explicitly changed TTL also takes effect on persisted data.
@@ -163,8 +250,21 @@ async function main() {
       await api(`/management/v1/projects/${projectId}/roles`, { roleKey: key, displayName, group: 'BNPB' });
     }
   }
-  await ensureApp(projectId, 'BNPB browser bridge', 'oidc', '');
-  await ensureApp(projectId, 'BNPB token introspection', 'api', 'introspection');
+  await ensureTokenExchange();
+  await ensureApp(projectId, 'BNPB browser bridge', 'oidc', '', oidcApp({
+    grantTypes: ['OIDC_GRANT_TYPE_AUTHORIZATION_CODE', 'OIDC_GRANT_TYPE_REFRESH_TOKEN'],
+    accessTokenType: 'OIDC_TOKEN_TYPE_BEARER',
+    idTokenRoleAssertion: true,
+  }));
+  await ensureApp(projectId, 'BNPB token introspection', 'api', 'introspection', { authMethodType: 'API_AUTH_METHOD_TYPE_BASIC' });
+  // Same project as the bridge: Zitadel only exchanges tokens whose audience holds this project.
+  // Zitadel requires the authorization_code grant for any app with the `code` response type.
+  await ensureApp(projectId, 'BNPB gateway token exchange', 'oidc', 'gateway', oidcApp({
+    grantTypes: ['OIDC_GRANT_TYPE_AUTHORIZATION_CODE', 'OIDC_GRANT_TYPE_TOKEN_EXCHANGE'],
+    accessTokenType: 'OIDC_TOKEN_TYPE_JWT',
+    accessTokenRoleAssertion: true,
+  }));
+  await ensureClaimsAction();
   for (const [role, , username, firstName, lastName, passwordKey] of accounts) {
     const userId = await ensureUser(username, firstName, lastName, passwordKey);
     const grants = await all('/management/v1/users/grants/_search');
@@ -179,8 +279,8 @@ async function main() {
   if (!admins.some(member => member.userId === adminId)) {
     await api('/admin/v1/members', { userId: adminId, roles: ['IAM_OWNER'] });
   }
-  console.log('Auth provisioning complete. Project, roles, two applications, and local users are ready.');
-  console.log('Existing passwords and client secrets were preserved. No credentials are printed.');
+  console.log('Auth provisioning complete. Project, roles, three applications, claims action, and local users are ready.');
+  console.log('Existing passwords, client secrets, and signing keys were preserved. No credentials are printed.');
   console.log(`Access token lifetime: ${accessLifetime}s; maximum refresh/session lifetime: ${sessionLifetime}s.`);
 }
 

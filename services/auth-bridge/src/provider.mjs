@@ -5,22 +5,20 @@ export const requestContext = new AsyncLocalStorage();
 export class AuthError extends Error {
   constructor(status, code) { super(code); this.status = status; this.code = code; }
 }
-const scopesByRole = {
-  MEDIA: ['hazards:read:summary', 'notifications:read', 'webhooks:read'],
-  FIELD_TEAM: ['hazards:read:summary', 'hazards:read:full', 'notifications:read', 'webhooks:read', 'webhooks:write'],
-  BNPB_INTERNAL: ['hazards:read:summary', 'hazards:read:full', 'notifications:read', 'webhooks:read', 'webhooks:write'],
-};
 
+// Precedence and scopes live in the zitadel-claims service; this only checks the role is known.
+const roles = ['BNPB_INTERNAL', 'FIELD_TEAM', 'MEDIA'];
+
+/** Role and scopes are appended by the zitadel-claims Actions v2 target (services/zitadel-claims). */
 export function identityFromClaims(claims, config) {
   const audiences = Array.isArray(claims.aud) ? claims.aud : [claims.aud];
   if (claims.active !== true || typeof claims.sub !== 'string' || !claims.sub || !Number.isFinite(claims.exp) || claims.exp * 1000 <= Date.now()
     || !audiences.includes(config.oidc.project_id) || (claims.iss && claims.iss !== config.issuer)) throw new AuthError(401, 'invalid_token');
-  const roles = claims[`urn:zitadel:iam:org:project:${config.oidc.project_id}:roles`] || {};
-  const allowed = ['BNPB_INTERNAL', 'FIELD_TEAM', 'MEDIA'].filter(role => roles[role]
-    && Object.hasOwn(roles[role], config.oidc.organization_id));
-  if (!allowed.length) throw new AuthError(403, 'role_required');
-  const role = allowed[0];
-  return { user: { id: claims.sub, name: claims.name || claims.preferred_username || claims.sub, role, scopes: scopesByRole[role], mode: 'oidc' }, expiresAt: claims.exp * 1000 };
+  const { role, scopes } = claims;
+  if (!roles.includes(role) || !Array.isArray(scopes) || !scopes.length || !scopes.every(scope => typeof scope === 'string')) {
+    throw new AuthError(403, 'role_required');
+  }
+  return { user: { id: claims.sub, name: claims.name || claims.preferred_username || claims.sub, role, scopes: [...scopes], mode: 'oidc' }, expiresAt: claims.exp * 1000 };
 }
 
 export class ZitadelProvider {
@@ -96,6 +94,11 @@ export class ZitadelProvider {
       oidc.tokenRevocation(web, session.refreshToken, { token_type_hint: 'refresh_token' }),
       oidc.tokenRevocation(web, session.accessToken, { token_type_hint: 'access_token' }),
     ]);
+  }
+  // The gateway validates tokens at Zitadel, so a replaced access token must be revoked there too.
+  async revokeAccessToken(token) {
+    const { web } = await this.clients();
+    await oidc.tokenRevocation(web, token, { token_type_hint: 'access_token' });
   }
   async logoutUrl() {
     const { web } = await this.clients();

@@ -23,18 +23,11 @@ services:
     extends:
       file: compose.auth.yaml
       service: auth-bridge
-    environment:
-      GATEWAY_UPSTREAM_URL: http://gateway-transcoder:8080
 
-  # Private boundary: public API traffic must pass Auth bridge first.
-  gateway-transcoder:
-    image: envoyproxy/envoy:v1.31-latest
-    volumes:
-      - ./services/envoy/envoy.yaml:/etc/envoy/envoy.yaml:ro
-      - ./services/envoy/sse_filter.lua:/etc/envoy/lua/sse_filter.lua:ro
-      - ./services/envoy/bnpb_descriptor.pb:/etc/envoy/bnpb_descriptor.pb:ro
-    networks:
-      bnpb_net: {}
+  zitadel-claims:
+    extends:
+      file: compose.auth.yaml
+      service: zitadel-claims
 
   zitadel:
     extends:
@@ -73,18 +66,49 @@ services:
           - webhook-provider.local
 
   notification-service:
-    # Set your image/build context here
+    build:
+      context: .
+      dockerfile: services/danger-notification/Dockerfile
+    environment:
+      Aggregator__Address: http://aggregator-service:9091
+      RabbitMq__HostName: rabbitmq
+      RabbitMq__UserName: ${RABBITMQ_DEFAULT_USER}
+      RabbitMq__Password: ${RABBITMQ_DEFAULT_PASS}
+      RabbitMq__VirtualHost: ${RABBITMQ_DEFAULT_VHOST}
+      RabbitMq__QueueName: ${CONSUMER_3_QUEUE}
+      RabbitMq__DeadLetterQueue: ${CONSUMER_3_DLQ}
+      Auth__Authority: ${NOTIFICATION_AUTH_AUTHORITY:-http://auth.localhost:8080}
+      # The local Zitadel only serves plain HTTP.
+      Auth__RequireHttpsMetadata: "false"
+      GOOGLE_APPLICATION_CREDENTIALS: /run/secrets/firebase-credentials.json
+    ports:
+      - "9095:9095"
+    volumes:
+      # Long syntax so a missing file fails instead of Docker creating a directory.
+      - type: bind
+        source: ${FIREBASE_CREDENTIALS_PATH:-./.secrets/firebase-credentials.json}
+        target: /run/secrets/firebase-credentials.json
+        read_only: true
+        bind:
+          create_host_path: false
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      aggregator-service:
+        condition: service_started
+    # The RabbitMQ consumer connects once at startup.
+    restart: unless-stopped
     networks:
       bnpb_net:
         aliases:
           - notification-service.local
 
-  feed-service:
-    # Set your image/build context here
-    networks:
-      bnpb_net:
-        aliases:
-          - feed-service.local
+  #feed-service:
+  #  # Set your image/build context here
+  #  networks:
+  #    bnpb_net:
+  #      aliases:
+  #        - feed-service.local
 
   aggregator-service:
     build:
@@ -175,6 +199,7 @@ volumes:
   zitadel_admin_bootstrap:
   zitadel_login_bootstrap:
   auth_client_config:
+  auth_actions_config:
   auth_sessions:
   bmkg_data:
   pvmbg_data:

@@ -1,0 +1,36 @@
+{
+  "$schema": "../../node_modules/nx/schemas/project-schema.json",
+  "name": "zitadel-claims",
+  "projectType": "application",
+  "sourceRoot": "services/zitadel-claims/src",
+  "targets": {
+    "build": {
+      "executor": "nx:run-commands",
+      "options": { "command": "cargo build --release --locked", "cwd": "services/zitadel-claims" },
+      "cache": true,
+      "inputs": ["{projectRoot}/src/**/*", "{projectRoot}/Cargo.toml", "{projectRoot}/Cargo.lock"],
+      "outputs": ["{projectRoot}/target/release/zitadel-claims"]
+    },
+    "test": {
+      "executor": "nx:run-commands",
+      "options": { "command": "cargo test --locked", "cwd": "services/zitadel-claims" },
+      "cache": true,
+      "inputs": ["{projectRoot}/src/**/*", "{projectRoot}/Cargo.toml", "{projectRoot}/Cargo.lock"]
+    },
+    "lint": {
+      "executor": "nx:run-commands",
+      "options": {
+        "commands": ["cargo fmt --check", "cargo clippy --all-targets --locked -- -D warnings"],
+        "parallel": false,
+        "cwd": "services/zitadel-claims"
+      },
+      "cache": true,
+      "inputs": ["{projectRoot}/src/**/*", "{projectRoot}/Cargo.toml", "{projectRoot}/Cargo.lock", "{projectRoot}/rustfmt.toml"]
+    },
+    "docker": {
+      "executor": "nx:run-commands",
+      "options": { "command": "docker build -t bnpb/zitadel-claims services/zitadel-claims", "cwd": "{workspaceRoot}" },
+      "cache": false
+    }
+  }
+}

@@ -7,14 +7,30 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <PackageReference Include="Cronos" Version="0.13.0" />
     <PackageReference Include="FirebaseAdmin" Version="3.7.0" />
     <PackageReference Include="Grpc.AspNetCore" Version="2.64.0" />
+    <PackageReference Include="Grpc.AspNetCore.HealthChecks" Version="2.64.0" />
+    <PackageReference Include="Mapster" Version="10.0.13" />
+    <PackageReference Include="MemoryPack" Version="1.21.4" />
     <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="10.0.12" />
     <PackageReference Include="RabbitMQ.Client" Version="7.2.2" />
+    <PackageReference Include="Scrutor" Version="7.0.0" />
+    <PackageReference Include="StackExchange.Redis" Version="3.3.1" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Using Include="System.Collections.Immutable" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="BNPB.Notification.Server.Tests" />
   </ItemGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\..\..\packages\bnpb-notification-dotnet\BNPB.Notification\BNPB.Notification.csproj" />
+    <ProjectReference Include="..\..\..\packages\bnpb-aggregator-dotnet\BNPB.Aggregator\BNPB.Aggregator.csproj" />
+    <ProjectReference Include="..\..\..\packages\bnpb-event-dotnet\BNPB.Event\BNPB.Event.csproj" />
   </ItemGroup>
 
 </Project>

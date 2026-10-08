@@ -5,6 +5,7 @@
 !.env.auth.example
 *.pem
 *.key
+.secrets/
 
 # Contract tooling and generated artifacts
 node_modules/

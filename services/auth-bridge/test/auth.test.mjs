@@ -11,6 +11,18 @@ import { createAuthServer } from '../src/server.mjs';
 import { SessionStore } from '../src/store.mjs';
 import { ZitadelProvider } from '../src/provider.mjs';
 
+const oidcConfig = {
+  client_id: 'web-test', client_secret: 'web-secret', introspection_client_id: 'api-test',
+  introspection_client_secret: 'api-secret', gateway_client_id: 'gateway-test',
+  project_id: 'project-test', organization_id: 'org-test',
+};
+// What the zitadel-claims Actions target appends (services/zitadel-claims/src/claims.rs).
+const scopesByRole = {
+  MEDIA: ['hazards:read:summary', 'notifications:read', 'webhooks:read'],
+  FIELD_TEAM: ['hazards:read:summary', 'hazards:read:full', 'notifications:read', 'webhooks:read', 'webhooks:write'],
+  BNPB_INTERNAL: ['hazards:read:summary', 'hazards:read:full', 'notifications:read', 'webhooks:read', 'webhooks:write'],
+};
+
 const { privateKey, publicKey } = generateKeyPairSync('rsa', { modulusLength: 2048 });
 const { privateKey: wrongKey } = generateKeyPairSync('rsa', { modulusLength: 2048 });
 const encoded = value => Buffer.from(JSON.stringify(value)).toString('base64url');
@@ -25,14 +37,18 @@ async function stop(server) { const done = new Promise(resolve => server.close(r
 // This is not a substitute for the separate Docker/Zitadel acceptance test.
 async function fixture(t, options = {}) {
   const codes = new Map(), tokens = new Map(), refreshTokens = new Map();
-  const state = { role: 'FIELD_TEAM', ttl: 60, ...options, exchanges: 0, refreshes: 0, upstream: [], logs: [] };
+  const state = { role: 'FIELD_TEAM', ttl: 60, ...options, exchanges: 0, refreshes: 0, logs: [] };
   let issuer;
   function issue(nonce) {
     const access = randomBytes(24).toString('base64url');
     const refresh = randomBytes(24).toString('base64url');
     const exp = Math.floor(Date.now() / 1000) + state.ttl;
-    const claims = { active: true, iss: issuer, sub: 'user-test', aud: [state.audience || 'project-test'], exp,
-      name: 'User Test', 'urn:zitadel:iam:org:project:project-test:roles': { [state.role]: { [state.organization || 'org-test']: 'test.localhost' } } };
+    // Introspection carries the claims Zitadel's preuserinfo execution appends via the claims target,
+    // which appends nothing for grants of another organization or unknown roles.
+    const appended = (state.organization || 'org-test') === 'org-test' && scopesByRole[state.role]
+      ? { role: state.role, scopes: scopesByRole[state.role] } : {};
+    const claims = { active: true, iss: issuer, sub: 'user-test', aud: [state.audience || 'project-test'], exp, name: 'User Test',
+      ...appended };
     tokens.set(access, claims); refreshTokens.set(refresh, true);
     return { access_token: access, refresh_token: refresh, token_type: 'Bearer', expires_in: state.ttl,
       id_token: jwt({ iss: issuer, sub: 'user-test', aud: 'web-test', iat: Math.floor(Date.now() / 1000), exp,
@@ -90,21 +106,8 @@ async function fixture(t, options = {}) {
     json(404, {});
   });
   issuer = await listen(idp);
-  const upstream = createServer((req, res) => {
-    state.upstream.push({ headers: req.headers, url: req.url });
-    if (req.url.startsWith('/api/v1/feeds/')) {
-      res.writeHead(200, { 'Content-Type': 'text/event-stream' }); res.write(': connected\n\n');
-      return;
-    }
-    res.writeHead(200, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ items: [] }));
-  });
-  const upstreamUrl = await listen(upstream);
   const config = { appUrl: 'http://127.0.0.1', issuer, allowHttp: true, secureCookies: false,
-    sessionTtl: 3600, databasePath: ':memory:', sessionKey: randomBytes(32).toString('hex'),
-    upstream: upstreamUrl, serviceToken: 'private-service-test', oidc: {
-      client_id: 'web-test', client_secret: 'web-secret', introspection_client_id: 'api-test',
-      introspection_client_secret: 'api-secret', project_id: 'project-test', organization_id: 'org-test',
-    } };
+    sessionTtl: 3600, databasePath: ':memory:', sessionKey: randomBytes(32).toString('hex'), oidc: { ...oidcConfig } };
   const logger = message => state.logs.push(message);
   const provider = new ZitadelProvider(config, logger);
   const complete = provider.complete.bind(provider);
@@ -114,7 +117,7 @@ async function fixture(t, options = {}) {
   };
   const { server, store } = createAuthServer(config, { provider, logger });
   config.appUrl = await listen(server);
-  t.after(async () => { await stop(server); store.close(); await stop(upstream); await stop(idp); });
+  t.after(async () => { await stop(server); store.close(); await stop(idp); });
   const jar = new Map();
   const cookieHeader = () => [...jar].map(([key, value]) => `${key}=${value}`).join('; ');
   async function request(path, init = {}) {
@@ -141,7 +144,7 @@ async function fixture(t, options = {}) {
   return { state, config, store, tokens, jar, request, login, authorization, cookieHeader };
 }
 
-test('signed code+PKCE login sets HttpOnly cookies, hides tokens, and proxies authenticated metadata', async t => {
+test('signed code+PKCE login sets HttpOnly cookies, hides tokens, and returns action-issued scopes', async t => {
   const f = await fixture(t);
   const login = await f.login();
   for (const value of login.headers.getSetCookie()) {
@@ -150,27 +153,19 @@ test('signed code+PKCE login sets HttpOnly cookies, hides tokens, and proxies au
   const response = await f.request('/auth/session');
   const session = await response.json();
   assert.equal(response.status, 200); assert.equal(session.user.role, 'FIELD_TEAM');
+  assert.ok(session.user.scopes.includes('hazards:read:full'));
   assert.deepEqual(Object.keys(session).sort(), ['csrf_token', 'expires_at', 'user']);
   assert.ok(!JSON.stringify(session).includes(f.jar.get('bnpb_access')));
-  const api = await f.request('/api/v1/hazards?view=full', { headers: { 'X-Correlation-ID': 'test-correlation', 'X-Service-Token': 'attacker' } });
-  assert.equal(api.status, 200);
-  const forwarded = f.state.upstream.at(-1).headers;
-  assert.equal(forwarded.authorization, `Bearer ${f.jar.get('bnpb_access')}`);
-  assert.equal(forwarded['x-service-token'], 'private-service-test');
-  assert.equal(forwarded['x-correlation-id'], 'test-correlation'); assert.equal(forwarded.cookie, undefined);
   assert.ok(!f.state.logs.join('').includes(f.jar.get('bnpb_access')));
 });
 
-test('anonymous and Media full requests are rejected before upstream', async t => {
+test('Media session carries summary-only scopes and the bridge no longer serves the API', async t => {
   const f = await fixture(t, { role: 'MEDIA' });
-  assert.equal((await f.request('/api/v1/hazards')).status, 401);
   await f.login();
-  assert.equal((await f.request('/api/v1/hazards?view=full')).status, 403);
-  assert.equal((await f.request('/api/v1/feeds/events?view=full')).status, 403);
-  assert.equal((await f.request('/api/v1/webhooks', { method: 'POST' })).status, 403);
-  assert.equal(f.state.upstream.length, 0);
-  assert.equal((await f.request('/api/v1/hazards?view=summary&view=full')).status, 400);
-  assert.equal((await f.request('/api/v1/hazards?view=summary')).status, 200);
+  const session = await (await f.request('/auth/session')).json();
+  assert.equal(session.user.role, 'MEDIA');
+  assert.deepEqual(session.user.scopes, ['hazards:read:summary', 'notifications:read', 'webhooks:read']);
+  assert.equal((await f.request('/api/v1/hazards')).status, 404);
 });
 
 test('callback is bound to browser and single use', async t => {
@@ -194,7 +189,7 @@ for (const [name, option] of Object.entries({ signature: { badSignature: true },
   });
 }
 
-test('refresh requires Origin and CSRF; simultaneous requests share rotation and old bearer is denied', async t => {
+test('refresh requires Origin and CSRF; simultaneous requests share rotation and old access token is denied', async t => {
   const f = await fixture(t); await f.login();
   const session = await (await f.request('/auth/session')).json();
   const oldAccess = f.jar.get('bnpb_access');
@@ -204,8 +199,13 @@ test('refresh requires Origin and CSRF; simultaneous requests share rotation and
   const responses = await Promise.all([1, 2].map(() => f.request('/auth/refresh', { method: 'POST', headers })));
   assert.ok(responses.every(r => r.status === 200)); assert.equal(f.state.refreshes, 1);
   assert.notEqual(f.jar.get('bnpb_access'), oldAccess);
-  assert.equal((await f.request('/api/v1/hazards', { headers: { Cookie: '', Authorization: `Bearer ${oldAccess}` } })).status, 401);
-  assert.equal((await f.request('/api/v1/hazards')).status, 200);
+  const stale = `bnpb_session=${f.jar.get('bnpb_session')}; bnpb_access=${oldAccess}`;
+  assert.equal((await f.request('/auth/session', { headers: { Cookie: stale } })).status, 401);
+  assert.equal(f.store.isRevoked(oldAccess), true);
+  // Revoked at the provider too, so the gateway's token exchange rejects it.
+  await delay(50);
+  assert.equal(f.tokens.has(oldAccess), false);
+  assert.equal((await f.request('/auth/session')).status, 200);
 });
 
 test('naturally expired access cookie recovers with server refresh token without login', async t => {
@@ -218,21 +218,17 @@ test('naturally expired access cookie recovers with server refresh token without
   assert.equal(refreshed.status, 200); assert.equal(f.state.exchanges, 1); assert.equal(f.state.refreshes, 1);
 });
 
-test('logout deletes persisted session, revokes bearer and closes open SSE', async t => {
+test('logout deletes persisted session and revokes tokens at the provider', async t => {
   const f = await fixture(t); await f.login();
   const session = await (await f.request('/auth/session')).json();
   const oldCookie = f.cookieHeader(), oldAccess = f.jar.get('bnpb_access');
-  const controller = new AbortController();
-  const stream = await f.request('/api/v1/feeds/events', { signal: controller.signal });
-  const reader = stream.body.getReader(); await reader.read();
-  const ended = reader.read().then(() => true, () => true);
   const response = await f.request('/auth/logout', { method: 'POST', headers: { Origin: f.config.appUrl, 'X-CSRF-Token': session.csrf_token } });
   assert.equal(response.status, 200);
   assert.match((await response.json()).logout_url, /\/logout\?/);
   assert.equal(f.jar.size, 0);
-  assert.equal(await Promise.race([ended, delay(1000).then(() => false)]), true); controller.abort();
   assert.equal((await f.request('/auth/session', { headers: { Cookie: oldCookie } })).status, 401);
-  assert.equal((await f.request('/api/v1/hazards', { headers: { Authorization: `Bearer ${oldAccess}`, Cookie: '' } })).status, 401);
+  // The gateway exchanges access tokens at Zitadel, so provider revocation is what blocks the API.
+  assert.equal(f.tokens.has(oldAccess), false);
 });
 
 test('encrypted SQLite sessions survive reopening and retain token denylist', () => {

@@ -1,17 +1,28 @@
 # Pengujian frontend dan Auth
 
-Jalankan perintah dari root repository. Login memakai Zitadel dan Auth bridge.
+Jalankan perintah dari root repository. Login memakai Zitadel dan Auth bridge;
+API melewati gateway Envoy (cookie → bearer → token exchange → gRPC).
 Data dashboard standalone masih fixture lokal karena service BNPB belum lengkap.
 
 ## Status verifikasi
 
+- **Gateway tunggal sudah diuji pada stack Docker/Zitadel nyata: 48 pemeriksaan
+  `tools/test_auth_browser.mjs` lulus** untuk tiga akun melalui hosted UI: role dari
+  klaim Actions v2, cookie HttpOnly, CSRF bridge dan gateway, token exchange
+  (API terautentikasi → 503 tanpa backend), refresh otomatis, penolakan token lama,
+  expiry alami 60 detik, restart bridge, dan logout. Token exchange manual dengan
+  client gateway menghasilkan JWT berisi klaim `role`, `scopes`, dan audiens project.
+  `GET /api/v1/hazards?view=full` saat ini 400 dari transcoder karena enum proto
+  (`VIEW_FULL`) belum dipetakan ke nilai REST `full`; ini pekerjaan kontrak backend.
 - 12 tes bridge lokal lulus: signature/nonce/state/PKCE, audience/organisasi/role,
-  cookie, CSRF, refresh bersamaan, expiry alami, token lama, logout/SSE, SQLite.
+  cookie, CSRF, refresh bersamaan, expiry alami, token lama, logout, SQLite.
+- 7 tes Rust `zitadel-claims` lulus: signature Actions v2 (tampering, header rusak,
+  toleransi waktu, beberapa `v1`), pemetaan dan prioritas klaim, endpoint 401/400.
 - 18 unit test dan 14 skenario browser frontend lulus. Tes browser Auth memakai
   respons yang diintersep; build produksi juga berhasil.
-- 3 tes helper env dan 4 tes bootstrap lulus dengan provider terkendali.
+- 3 tes helper env dan 6 tes bootstrap lulus dengan provider terkendali.
 - Konfigurasi Compose standalone lulus pemeriksaan `config --quiet`.
-- **Stack Docker/Zitadel nyata sudah diuji: 45 pemeriksaan lulus.** Login/logout
+- Arsitektur sebelumnya (API melalui bridge) lulus 45 pemeriksaan. Login/logout
   tiga akun melalui hosted UI, role, cookie HttpOnly, CSRF, refresh otomatis,
   penolakan token lama, expiry alami 60 detik, pemulihan tanpa password, dan
   persistensi sesi setelah restart bridge berhasil. Bootstrap ulang juga berhasil
@@ -78,9 +89,11 @@ await fetch('/api/v1/hazards?view=full').then(r => r.status)
 await fetch('/auth/refresh', {method: 'POST'}).then(r => r.status)
 ```
 
-Request pertama: Media **403**, Tim Lapangan/BNPB **503** pada standalone Auth
-karena backend belum dikonfigurasi. Anonim **401**. Setelah integrasi backend,
-full yang diizinkan diharapkan 200. Request kedua harus **403** karena tanpa CSRF.
+Request pertama: semua role **503** pada standalone Auth karena gateway menerima
+token hasil exchange tetapi service bisnis tidak ada. Anonim **401**. Pemeriksaan
+scope (Media meminta `view=full` → 403) dilakukan service setelah integrasi
+backend. Request kedua harus **403** karena tanpa CSRF. Mutasi API tanpa header
+`X-CSRF-Token` juga ditolak gateway dengan **403**.
 
 ## Refresh dan expiry alami
 
@@ -107,9 +120,8 @@ console.assert(before.user.id === after.user.id);
 ```
 
 Access cookie kedaluwarsa tetapi sesi/refresh token server masih dapat memulihkan
-login. Penolakan bearer lama setelah refresh sudah diuji pada provider Docker
-nyata. Tes bridge lokal juga mencakup kasus provider masih menganggap token lama
-aktif, untuk memeriksa daftar penolakan token pada bridge.
+login. Setelah refresh, bridge mencabut access token lama di Zitadel, sehingga
+token exchange gateway menolaknya (401).
 
 ## Logout dan persistensi
 
@@ -159,15 +171,15 @@ Jangan menjalankan demo interaktif bersamaan dengan tes restart ini.
 Proses memerlukan sekitar 2–3 menit karena menunggu umur token secara nyata.
 Laporan ada di `.cache/auth-browser-test-results.json`; password, cookie, token,
 screenshot login, dan trace tidak disimpan. Script ini ditujukan untuk Compose
-Auth standalone dengan backend kosong: akses full yang diizinkan mendapat 503.
+Auth standalone dengan backend kosong: request API terautentikasi mendapat 503.
 
 ## Tes otomatis tanpa Docker
 
 Gunakan Node.js 24 untuk bridge, serta Python untuk helper:
 
 ```powershell
-npm --prefix services/auth-bridge ci
-npm --prefix services/auth-bridge test
+npx nx run auth-bridge:test
+npx nx run envoy:validate
 python -m unittest discover -s tools -p test_setup_auth_env.py -v
 node --test services/zitadel/bootstrap.test.mjs
 npm --prefix services/frontend ci
@@ -179,7 +191,7 @@ Bridge diuji dengan HTTP provider terkendali bertanda tangan RSA dan library
 OIDC sebenarnya. Browser frontend memakai respons sesi yang diintersep. Tes
 tersebut tidak menggantikan pengujian form login dan konfigurasi Docker nyata.
 
-Compose utama mewarisi Auth yang sama dan memakai `gateway-transcoder` privat.
+Compose utama mewarisi Auth dan gateway Envoy yang sama.
 Setelah service BNPB selesai, gunakan kedua env: `--env-file .env --env-file .env.auth`.
 Saat ini compose utama masih memuat service BNPB placeholder; gunakan
 `compose.auth.yaml` untuk pekerjaan Auth. Lihat [implementasi bridge](../services/auth-bridge/README.md)

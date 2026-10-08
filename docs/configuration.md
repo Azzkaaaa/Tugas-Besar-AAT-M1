@@ -87,8 +87,6 @@ PKCE; cookie mengirim access token kepada bridge. Konfigurasi tidak memakai
 | `AUTH_DATABASE_PATH` | `/data/sessions.sqlite` | Bridge; volume `auth_sessions` |
 | `AUTH_SESSION_TTL_SECONDS` | `86400` | Batas sesi lokal dan konfigurasi refresh di provisioning |
 | `ZITADEL_ACCESS_TOKEN_TTL_SECONDS` | `60` | Bootstrap; mengatur TTL access token di Zitadel sesuai M1 |
-| `GATEWAY_UPSTREAM_URL` | kosong pada standalone Auth | Bridge; 503 bila API bisnis belum dikonfigurasi |
-| `GATEWAY_SERVICE_TOKEN` | nilai acak dari setup | Bridge; identitas pemanggil pada `x-service-token` ke Gateway internal |
 | `ZITADEL_MASTERKEY` | 32 karakter dari setup | Zitadel; pertahankan selama memakai database yang sama |
 | `AUTH_POSTGRES_PASSWORD` | nilai acak dari setup | PostgreSQL dan Zitadel |
 | `LOGIN_SESSION_COOKIE_SECRET` | nilai acak dari setup | Hosted Login UI Zitadel |
@@ -99,11 +97,17 @@ PKCE; cookie mengirim access token kepada bridge. Konfigurasi tidak memakai
 | `FRONTEND_DATA_MODE` | `mock` pada standalone Auth | Build Compose: `mock` memakai fixture, `gateway` memakai API |
 
 Bootstrap menyimpan `issuer`, `client_id`, `client_secret`, `project_id`,
-`organization_id`, `introspection_client_id`, dan `introspection_client_secret`
-di volume `auth_client_config`. Nilai secret ini hanya untuk server. SPA tidak
+`organization_id`, `introspection_client_id`, `introspection_client_secret`,
+`gateway_client_id`, dan `gateway_client_secret` di `oidc.json` (volume
+`auth_client_config`). Nilai secret ini hanya untuk server (bridge dan gateway
+Envoy). `actions_target_id`, `actions_signing_key`, `client_ids`, `project_id`, dan
+`organization_id` ditulis terpisah ke `actions.json` (volume `auth_actions_config`,
+variabel `ACTIONS_CONFIG_FILE`) yang hanya dibaca `zitadel-claims`. SPA tidak
 menerima file tersebut dan tidak boleh memakai variabel `VITE_*` untuk secret.
 Grant harus berasal dari proyek dan organisasi yang tercantum di konfigurasi;
-bridge memetakannya ke scope aplikasi sesuai [kontrak gRPC](../contracts/proto/README.md).
+target Actions v2 [`zitadel-claims`](../services/zitadel-claims/README.md)
+memetakannya ke klaim `scopes` sesuai [kontrak gRPC](../contracts/proto/README.md).
+Variabel template gateway Envoy dijelaskan di [README Envoy](../services/envoy/README.md).
 
 Jalankan ulang provisioning setelah perubahan kebijakan TTL dengan
 `docker compose --env-file .env.auth -f compose.auth.yaml run --rm auth-bootstrap`.
@@ -114,13 +118,14 @@ pada database yang sudah berisi data.
 Build Auth memakai `VITE_APP_MODE=oidc` dan `VITE_ENABLE_DEMO=false`. Mode data
 terpisah: `VITE_DATA_MODE=mock` berarti autentikasi nyata, tetapi event masih
 fixture frontend. Untuk data nyata, gunakan `VITE_DATA_MODE=gateway` dan
-`VITE_API_BASE_URL=/api/v1`, lalu hubungkan bridge ke Gateway yang siap.
-Compose utama menetapkan upstream internal `http://gateway-transcoder:8080`.
+`VITE_API_BASE_URL=/api/v1`; gateway Envoy pada `compose.yaml` meneruskan API ke
+service gRPC.
 Perubahan variabel `VITE_*` memerlukan build ulang karena dibaca saat build.
 
 Cookie `bnpb_access` dan `bnpb_session` adalah host-only, `HttpOnly`, `Path=/`,
-dan `SameSite=Lax`. POST refresh/logout dan mutasi API berbasis cookie juga
-memerlukan Origin aplikasi dan `X-CSRF-Token` dari `/auth/session`. CSRF token
+dan `SameSite=Lax`. POST refresh/logout memerlukan Origin aplikasi dan
+`X-CSRF-Token` dari `/auth/session`; mutasi API berbasis cookie diperiksa gateway
+(Origin dan header `X-CSRF-Token`). CSRF token
 bukan access token. Refresh token disimpan terenkripsi di SQLite; akun/password
 pengguna disimpan oleh Zitadel di PostgreSQL. Detail implementasi dan testing
 ada di [Auth bridge](../services/auth-bridge/README.md) dan
@@ -132,7 +137,6 @@ ada di [Auth bridge](../services/auth-bridge/README.md) dan
 | --- | --- |
 | `BMKG_API_KEY` | BMKG Mock sebagai validator, Aggregator sebagai pemanggil |
 | `PVMBG_BEARER_TOKEN` | PVMBG Mock sebagai validator, Aggregator sebagai pemanggil |
-| `GATEWAY_SERVICE_TOKEN` | Auth bridge sebagai pemanggil; downstream perlu validator identitas ini |
 | `AGGREGATOR_SERVICE_TOKEN` | Identitas outbound Aggregator pada integrasi antar-service berikutnya |
 | `EVENT_FEED_SERVICE_TOKEN` | Identitas outbound Event Live Feed pada integrasi berikutnya |
 | `WEBHOOK_SERVICE_TOKEN` | Identitas outbound Webhook Provider pada integrasi berikutnya |
