@@ -1,8 +1,8 @@
 // Local provisioning only. Uses the pinned Zitadel Management API v1 and the v2 feature/action APIs.
 // Never log request bodies, API secrets, tokens, or initial passwords.
-import { readFile, writeFile, rename, mkdir } from 'node:fs/promises';
+import { readFile, writeFile, rename, mkdir, access } from 'node:fs/promises';
 import { request } from 'node:http';
-import { dirname } from 'node:path';
+import { dirname, join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 
 const issuer = process.env.OIDC_ISSUER || 'http://auth.localhost:8080';
@@ -17,6 +17,9 @@ const output = process.env.OIDC_CONFIG_FILE || '/bootstrap/oidc.json';
 // Separate file and volume for the claims service, so it never sees client secrets.
 const actionsOutput = process.env.ACTIONS_CONFIG_FILE || '/actions/actions.json';
 const patPath = process.env.ZITADEL_ADMIN_PAT_FILE || '/admin/admin.pat';
+// Host bind mount (.cache/auth): one raw value per file so scripts can `cat` them.
+// Kept out of oidc.json, which the bridge, gateway and feed service mount.
+const serviceAccountsDir = process.env.SERVICE_ACCOUNTS_DIR || '/service-accounts';
 let token;
 let saved = {};
 let actions = {};
@@ -33,6 +36,18 @@ async function write(path, data) {
   await mkdir(dirname(path), { recursive: true });
   await writeFile(`${path}.tmp`, JSON.stringify(data, null, 2) + '\n', { mode: 0o644 });
   await rename(`${path}.tmp`, path);
+}
+
+// Raw value without JSON or trailing newline, for `$(cat file)` in scripts.
+async function writeRaw(path, value) {
+  await mkdir(dirname(path), { recursive: true });
+  await writeFile(`${path}.tmp`, value, { mode: 0o644 });
+  await rename(`${path}.tmp`, path);
+}
+
+async function exists(path) {
+  try { await access(path); return true; }
+  catch (error) { if (error.code === 'ENOENT') return false; throw error; }
 }
 
 // Read-only mounted into the bridge; no IAM_OWNER PAT is written here.
@@ -101,6 +116,39 @@ async function ensureUser(username, firstName, lastName, passwordKey) {
     passwordChangeRequired: false,
   });
   return created.userId;
+}
+
+// Machine user for non-browser API clients (client_credentials). The client ID is the username;
+// Zitadel generates the secret and cannot return it again, so it is only created when none exists.
+async function ensureServiceUser(username, name) {
+  let user = (await all('/management/v1/users/_search')).find(item => item.userName === username);
+  if (!user) {
+    const created = await api('/management/v1/users/machine', {
+      userName: username, name, description: 'Local non-browser API client',
+      accessTokenType: 'ACCESS_TOKEN_TYPE_BEARER',
+    });
+    user = { id: created.userId, machine: { hasSecret: false } };
+  }
+  const secretFile = join(serviceAccountsDir, `${username}.secret`);
+  if (await exists(secretFile)) return user.id;
+  if (user.machine?.hasSecret) {
+    throw new Error(`Existing ${username} has no persisted secret. Restore .cache/auth/${username}.secret; secrets are not automatically rotated.`);
+  }
+  const secret = await api(`/management/v1/users/${user.id}/secret`, {}, 'PUT');
+  if (secret.clientId !== username || !secret.clientSecret) {
+    throw new Error(`Zitadel did not return client credentials matching ${username}.`);
+  }
+  await writeRaw(secretFile, secret.clientSecret);
+  return user.id;
+}
+
+async function ensureGrant(userId, username, role, projectId) {
+  const grants = await all('/management/v1/users/grants/_search');
+  const existing = grants.find(grant => grant.userId === userId && grant.projectId === projectId);
+  if (!existing) await api(`/management/v1/users/${userId}/grants`, { projectId, roleKeys: [role] });
+  else if (existing.roleKeys?.length !== 1 || existing.roleKeys[0] !== role) {
+    throw new Error(`Existing ${username} role grant differs from the local seed. Review the user's project grants in Zitadel; grants are not silently overwritten.`);
+  }
 }
 
 async function ensureApp(projectId, name, kind, prefix, config) {
@@ -245,6 +293,11 @@ async function main() {
     ['FIELD_TEAM', 'Tim Lapangan', 'lapangan-demo', 'Tim', 'Lapangan', 'AUTH_FIELD_TEAM_PASSWORD'],
     ['BNPB_INTERNAL', 'BNPB Pusat', 'bnpb-demo', 'BNPB', 'Pusat', 'AUTH_BNPB_PASSWORD'],
   ];
+  const serviceAccounts = [
+    ['MEDIA', 'svc-media', 'Media service'],
+    ['FIELD_TEAM', 'svc-lapangan', 'Tim Lapangan service'],
+    ['BNPB_INTERNAL', 'svc-bnpb', 'BNPB Pusat service'],
+  ];
   const roles = await all(`/management/v1/projects/${projectId}/roles/_search`);
   for (const [key, displayName] of accounts) {
     if (!roles.some(role => role.key === key)) {
@@ -274,20 +327,19 @@ async function main() {
   }));
   await ensureClaimsAction();
   for (const [role, , username, firstName, lastName, passwordKey] of accounts) {
-    const userId = await ensureUser(username, firstName, lastName, passwordKey);
-    const grants = await all('/management/v1/users/grants/_search');
-    const existing = grants.find(grant => grant.userId === userId && grant.projectId === projectId);
-    if (!existing) await api(`/management/v1/users/${userId}/grants`, { projectId, roleKeys: [role] });
-    else if (existing.roleKeys?.length !== 1 || existing.roleKeys[0] !== role) {
-      throw new Error(`Existing ${username} role grant differs from the local seed. Review the user's project grants in Zitadel; grants are not silently overwritten.`);
-    }
+    await ensureGrant(await ensureUser(username, firstName, lastName, passwordKey), username, role, projectId);
+  }
+  // Needed for the client_credentials audience scope urn:zitadel:iam:org:project:id:<id>:aud.
+  await writeRaw(join(serviceAccountsDir, 'project-id'), projectId);
+  for (const [role, username, name] of serviceAccounts) {
+    await ensureGrant(await ensureServiceUser(username, name), username, role, projectId);
   }
   const adminId = await ensureUser('admin@bnpb.local', 'Local', 'Administrator', 'AUTH_ADMIN_PASSWORD');
   const admins = await all('/admin/v1/members/_search');
   if (!admins.some(member => member.userId === adminId)) {
     await api('/admin/v1/members', { userId: adminId, roles: ['IAM_OWNER'] });
   }
-  console.log('Auth provisioning complete. Project, roles, four applications, claims action, and local users are ready.');
+  console.log('Auth provisioning complete. Project, roles, four applications, claims action, local users, and service users are ready.');
   console.log('Existing passwords, client secrets, and signing keys were preserved. No credentials are printed.');
   console.log(`Access token lifetime: ${accessLifetime}s; maximum refresh/session lifetime: ${sessionLifetime}s.`);
 }

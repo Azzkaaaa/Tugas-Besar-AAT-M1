@@ -121,6 +121,7 @@ services:
       ZITADEL_ADMIN_PAT_FILE: /admin/admin.pat
       OIDC_CONFIG_FILE: /bootstrap/oidc.json
       ACTIONS_CONFIG_FILE: /actions/actions.json
+      SERVICE_ACCOUNTS_DIR: /service-accounts
       AUTH_ADMIN_PASSWORD: "${AUTH_ADMIN_PASSWORD:?Run python tools/setup_auth_env.py}"
       AUTH_MEDIA_PASSWORD: "${AUTH_MEDIA_PASSWORD:?Run python tools/setup_auth_env.py}"
       AUTH_FIELD_TEAM_PASSWORD: "${AUTH_FIELD_TEAM_PASSWORD:?Run python tools/setup_auth_env.py}"
@@ -132,6 +133,8 @@ services:
       - zitadel_admin_bootstrap:/admin:ro
       - auth_client_config:/bootstrap
       - auth_actions_config:/actions
+      # Service-user secrets and project ID for local scripts; .cache/ is gitignored.
+      - ./.cache/auth:/service-accounts
     depends_on:
       zitadel: {condition: service_healthy}
       # Zitadel resolves the Actions target host when the target is created.

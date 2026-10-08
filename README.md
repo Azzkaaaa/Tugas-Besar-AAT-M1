@@ -144,6 +144,10 @@ python -m unittest discover -s tests -v
 python -m unittest discover -s services/bmkg-mock -p test_storage.py -v
 ```
 
+Tes end-to-end sistem lengkap (`tests/test_e2e_*.py`) dilewati kecuali
+`BNPB_E2E=1` dan stack `compose.yaml` sudah berjalan; lihat
+[panduan e2e](docs/e2e-testing.md).
+
 Pengujian menjalankan proses Python terpisah lewat jaringan HTTP dengan port
 sementara, SQLite sementara, dan secret acak. Skenario mencakup kontrak data,
 autentikasi silang, filter waktu, generator, perubahan skema/outage saat berjalan,

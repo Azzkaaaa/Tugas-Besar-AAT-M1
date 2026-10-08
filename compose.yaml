@@ -82,6 +82,9 @@ services:
       - OTEL_SERVICE_NAME=webhook-provider
     ports:
       - "9094:9094"
+    # Lets e2e tests (tests/test_e2e_webhooks.py) receive deliveries on the host under Linux.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
       - webhook_data:/data
     depends_on:
