@@ -14,12 +14,13 @@ Data dashboard standalone masih fixture lokal karena service BNPB belum lengkap.
   client gateway menghasilkan JWT berisi klaim `role`, `scopes`, dan audiens project.
   `GET /api/v1/hazards?view=full` saat ini 400 dari transcoder karena enum proto
   (`VIEW_FULL`) belum dipetakan ke nilai REST `full`; ini pekerjaan kontrak backend.
-- 15 tes bridge lokal lulus: signature/nonce/state/PKCE, audience/organisasi/role,
-  cookie, CSRF, refresh bersamaan, expiry alami, token lama, logout, SQLite,
-  signature dan pemetaan klaim Actions v2.
+- 12 tes bridge lokal lulus: signature/nonce/state/PKCE, audience/organisasi/role,
+  cookie, CSRF, refresh bersamaan, expiry alami, token lama, logout, SQLite.
+- 7 tes Rust `zitadel-claims` lulus: signature Actions v2 (tampering, header rusak,
+  toleransi waktu, beberapa `v1`), pemetaan dan prioritas klaim, endpoint 401/400.
 - 18 unit test dan 14 skenario browser frontend lulus. Tes browser Auth memakai
   respons yang diintersep; build produksi juga berhasil.
-- 3 tes helper env dan 5 tes bootstrap lulus dengan provider terkendali.
+- 3 tes helper env dan 6 tes bootstrap lulus dengan provider terkendali.
 - Konfigurasi Compose standalone lulus pemeriksaan `config --quiet`.
 - Arsitektur sebelumnya (API melalui bridge) lulus 45 pemeriksaan. Login/logout
   tiga akun melalui hosted UI, role, cookie HttpOnly, CSRF, refresh otomatis,

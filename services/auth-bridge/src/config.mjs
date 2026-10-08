@@ -18,7 +18,7 @@ export function loadConfig(env = process.env) {
   const issuer = publicUrl(env.OIDC_ISSUER || oidc.issuer, 'OIDC_ISSUER');
   if (oidc.issuer !== issuer) throw new Error('Provisioned issuer differs from OIDC_ISSUER');
   for (const key of ['client_id', 'client_secret', 'introspection_client_id', 'introspection_client_secret', 'gateway_client_id',
-    'actions_signing_key', 'project_id', 'organization_id']) {
+    'project_id', 'organization_id']) {
     if (typeof oidc[key] !== 'string' || !oidc[key]) throw new ProvisioningPending(`Missing OIDC ${key}`);
   }
   if (!/^[a-f\d]{64}$/i.test(env.AUTH_SESSION_KEY || '')) throw new Error('AUTH_SESSION_KEY must contain 64 hex characters');

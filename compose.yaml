@@ -24,6 +24,11 @@ services:
       file: compose.auth.yaml
       service: auth-bridge
 
+  zitadel-claims:
+    extends:
+      file: compose.auth.yaml
+      service: zitadel-claims
+
   zitadel:
     extends:
       file: compose.auth.yaml
@@ -192,6 +197,7 @@ volumes:
   zitadel_admin_bootstrap:
   zitadel_login_bootstrap:
   auth_client_config:
+  auth_actions_config:
   auth_sessions:
   bmkg_data:
   pvmbg_data:

@@ -34,8 +34,8 @@ browser ──cookie bnpb_access──► Envoy
   menghasilkan 401, sehingga SPA melakukan `/auth/refresh` lalu mengulang request.
   Zitadel tidak dapat dihubungi menghasilkan 502.
 - **Scope.** JWT hasil exchange membawa klaim `role` dan `scopes` yang ditambahkan
-  Zitadel melalui Actions v2 target pada Auth bridge
-  ([`claims.mjs`](../auth-bridge/src/claims.mjs)). Envoy hanya mengautentikasi;
+  Zitadel melalui Actions v2 target
+  [`zitadel-claims`](../zitadel-claims/README.md). Envoy hanya mengautentikasi;
   pemeriksaan scope per method (misalnya Media meminta `view=full`) menjadi tugas
   service. Validasi JWT di service belum termasuk perubahan ini.
 - Error yang dibuat gateway memakai `application/problem+json`.

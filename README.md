@@ -5,7 +5,8 @@ SQLite. Keduanya berjalan sebagai service REST terpisah dengan database,
 kredensial, generator data, dan Dockerfile masing-masing. Komponen BNPB lainnya
 masih berupa kerangka/kontrak. Frontend **SPA React + TypeScript** menyediakan
 dashboard sederhana dan login melalui **Zitadel**. Auth bridge menangani OIDC,
-cookie HttpOnly, sesi SQLite, refresh, dan logout. Data dashboard standalone
+cookie HttpOnly, sesi SQLite, refresh, dan logout; service Rust `zitadel-claims`
+menambahkan klaim `role`/`scopes` melalui Zitadel Actions v2. Data dashboard standalone
 masih berupa fixture Gateway; belum tersambung ke service BNPB.
 
 ## Menjalankan frontend dengan Auth

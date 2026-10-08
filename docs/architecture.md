@@ -18,6 +18,7 @@ flowchart TB
   edge -->|auth.localhost| idp[Zitadel + hosted login]
   auth -->|OIDC / introspection| idp
   idp --> idpdb[(PostgreSQL Zitadel)]
+  idp -->|Actions v2: role/scopes| claims[zitadel-claims Rust]
   auth --> authdb[(SQLite sesi)]
   auth -->|bearer aktor + service token| gateway[Gateway internal / transcoder]
   gateway -->|gRPC| aggregator[Aggregator]
@@ -51,7 +52,8 @@ dipilih: document store atau relational store dengan kolom JSON harus menerima
 ## Login dan sesi browser
 
 `compose.auth.yaml` menjalankan Envoy publik, SPA, Auth bridge Node.js 24,
-Zitadel 4.16 beserta Login UI v2, dan PostgreSQL 17. Browser membuka
+target Actions `zitadel-claims` (Rust), Zitadel 4.16 beserta Login UI v2, dan
+PostgreSQL 17. Browser membuka
 `http://localhost:8080`; issuer dan hosted login memakai
 `http://auth.localhost:8080`. Kedua alamat harus konsisten dengan konfigurasi
 OIDC. Cookie aplikasi bersifat host-only dan tidak dibagikan ke host Zitadel.
@@ -82,7 +84,7 @@ aplikasi yang tepat dan `X-CSRF-Token` milik sesi. CSRF token bukan kredensial
 akses API. Tidak ada password pengguna atau refresh token di storage JavaScript.
 Ketiga akun demo adalah pengguna Zitadel yang berbeda; role diperoleh dari
 grant proyek/organisasi yang dikonfigurasi. Zitadel menambahkan klaim `role` dan
-`scopes` ke token melalui target Actions v2 pada Auth bridge.
+`scopes` ke token melalui target Actions v2 pada service Rust `zitadel-claims`.
 
 Mode `VITE_APP_MODE=oidc` menentukan autentikasi, sedangkan `VITE_DATA_MODE`
 menentukan data dashboard. Standalone Auth memakai `VITE_DATA_MODE=mock`

@@ -6,7 +6,6 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { loadConfig, ProvisioningPending } from './config.mjs';
 import { SessionStore, randomSecret, equal } from './store.mjs';
 import { ZitadelProvider, AuthError, requestContext } from './provider.mjs';
-import { claimsFor, verifySignature } from './claims.mjs';
 
 const payload = session => ({ user: session.user, csrf_token: session.csrf,
   expires_at: new Date(session.expiresAt).toISOString() });
@@ -40,16 +39,6 @@ export function createAuthServer(config, { store = new SessionStore(config.datab
   async function inspect(token) {
     if (!token || store.isRevoked(token)) throw new AuthError(401, 'invalid_token');
     return provider.inspect(token);
-  }
-  async function body(req) {
-    const chunks = [];
-    let size = 0;
-    for await (const chunk of req) {
-      size += chunk.length;
-      if (size > 1024 * 1024) throw new AuthError(413, 'body_too_large');
-      chunks.push(chunk);
-    }
-    return Buffer.concat(chunks);
   }
   async function handle(req, res) {
     // Construct from the configured origin, never from an untrusted Host header.
@@ -143,14 +132,6 @@ export function createAuthServer(config, { store = new SessionStore(config.datab
       try { logoutUrl = await provider.logoutUrl(); await provider.revoke(session); } catch { /* session already invalidated */ }
       return json(res, 200, { logout_url: logoutUrl });
     }
-    // Zitadel Actions v2 target. Envoy only routes /auth/ here, so this path is internal.
-    if (url.pathname === '/internal/zitadel/claims' && req.method === 'POST') {
-      const raw = await body(req);
-      if (!verifySignature(raw, req.headers['zitadel-signature'], config.oidc.actions_signing_key)) throw new AuthError(401, 'invalid_signature');
-      let context;
-      try { context = JSON.parse(raw.toString('utf8')); } catch { throw new AuthError(400, 'invalid_payload'); }
-      return json(res, 200, claimsFor(context, config.oidc));
-    }
     throw new AuthError(404, 'not_found');
   }
   const server = createServer((req, res) => {
@@ -174,8 +155,7 @@ export function createAuthServer(config, { store = new SessionStore(config.datab
   return { server, store };
 }
 
-// auth-bootstrap writes oidc.json only after Zitadel can resolve this container
-// (it registers the Actions target URL), so start first and wait for the file.
+// auth-bootstrap writes oidc.json after Zitadel is provisioned; start first and wait for the file.
 async function provisionedConfig() {
   for (let attempt = 0; ; attempt++) {
     try { return loadConfig(); }

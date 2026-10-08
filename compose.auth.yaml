@@ -76,7 +76,7 @@ services:
       ZITADEL_SAML_DEFAULTLOGINURLV2: http://auth.localhost:8080/ui/v2/login/login?samlRequest=
       ZITADEL_LOGSTORE_ACCESS_STDOUT_ENABLED: "false"
       # Local stack only: the default deny list blocks 172.16.0.0/12, where Docker places
-      # bnpb_net, so Zitadel could not call the Auth bridge Actions target. Do not reuse.
+      # bnpb_net, so Zitadel could not call the zitadel-claims Actions target. Do not reuse.
       ZITADEL_HTTPCLIENT_DENYLIST: "localhost,0.0.0.0/8,10.0.0.0/8,100.64.0.0/10,127.0.0.0/8,169.254.0.0/16,192.168.0.0/16,198.18.0.0/15,::/128,::1/128,fc00::/7,fe80::/10"
     volumes:
       - zitadel_admin_bootstrap:/bootstrap/admin
@@ -122,9 +122,10 @@ services:
       # Direct to Zitadel: the gateway starts only after this job writes its credentials.
       ZITADEL_API_URL: http://zitadel:8080
       ZITADEL_API_HOST: auth.localhost:8080
-      ACTIONS_CLAIMS_ENDPOINT: http://auth-bridge:3001/internal/zitadel/claims
+      ACTIONS_CLAIMS_ENDPOINT: http://zitadel-claims:3002/claims
       ZITADEL_ADMIN_PAT_FILE: /admin/admin.pat
       OIDC_CONFIG_FILE: /bootstrap/oidc.json
+      ACTIONS_CONFIG_FILE: /actions/actions.json
       AUTH_ADMIN_PASSWORD: "${AUTH_ADMIN_PASSWORD:?Run python tools/setup_auth_env.py}"
       AUTH_MEDIA_PASSWORD: "${AUTH_MEDIA_PASSWORD:?Run python tools/setup_auth_env.py}"
       AUTH_FIELD_TEAM_PASSWORD: "${AUTH_FIELD_TEAM_PASSWORD:?Run python tools/setup_auth_env.py}"
@@ -135,10 +136,29 @@ services:
       - ./services/zitadel/bootstrap.mjs:/scripts/bootstrap.mjs:ro
       - zitadel_admin_bootstrap:/admin:ro
       - auth_client_config:/bootstrap
+      - auth_actions_config:/actions
     depends_on:
       zitadel: {condition: service_healthy}
       # Zitadel resolves the Actions target host when the target is created.
-      auth-bridge: {condition: service_started}
+      zitadel-claims: {condition: service_started}
+    networks: [bnpb_net]
+
+  # Zitadel Actions v2 target: appends role/scopes claims to userinfo, introspection and JWT access tokens.
+  zitadel-claims:
+    build: ./services/zitadel-claims
+    environment:
+      PORT: 3002
+      ACTIONS_CONFIG_FILE: /actions/actions.json
+    volumes:
+      # Own volume: signing key and filter IDs only, no client secrets.
+      - auth_actions_config:/actions:ro
+    # Starts before auth-bootstrap and waits for actions.json (see config::provisioned).
+    healthcheck:
+      test: [CMD, /zitadel-claims, --healthcheck]
+      start_period: 300s
+      interval: 5s
+      timeout: 5s
+      retries: 20
     networks: [bnpb_net]
 
   auth-bridge:
@@ -205,4 +225,5 @@ volumes:
   zitadel_admin_bootstrap:
   zitadel_login_bootstrap:
   auth_client_config:
+  auth_actions_config:
   auth_sessions:

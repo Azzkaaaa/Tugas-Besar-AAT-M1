@@ -11,12 +11,15 @@ const appUrl = process.env.APP_PUBLIC_URL || 'http://localhost:8080';
 // which itself needs the credentials written here. The Host header selects the instance.
 const apiUrl = process.env.ZITADEL_API_URL || issuer;
 const apiHost = process.env.ZITADEL_API_HOST || '';
-const claimsEndpoint = process.env.ACTIONS_CLAIMS_ENDPOINT || 'http://auth-bridge:3001/internal/zitadel/claims';
+const claimsEndpoint = process.env.ACTIONS_CLAIMS_ENDPOINT || 'http://zitadel-claims:3002/claims';
 const claimsTargetName = 'BNPB scope claims';
 const output = process.env.OIDC_CONFIG_FILE || '/bootstrap/oidc.json';
+// Separate file and volume for the claims service, so it never sees client secrets.
+const actionsOutput = process.env.ACTIONS_CONFIG_FILE || '/actions/actions.json';
 const patPath = process.env.ZITADEL_ADMIN_PAT_FILE || '/admin/admin.pat';
 let token;
 let saved = {};
+let actions = {};
 
 function seconds(name, fallback) {
   const value = process.env[name] || String(fallback);
@@ -26,11 +29,20 @@ function seconds(name, fallback) {
   return Number(value);
 }
 
-async function persist() {
-  await mkdir(dirname(output), { recursive: true });
-  // Read-only mounted into the bridge; no IAM_OWNER PAT is written here.
-  await writeFile(`${output}.tmp`, JSON.stringify(saved, null, 2) + '\n', { mode: 0o644 });
-  await rename(`${output}.tmp`, output);
+async function write(path, data) {
+  await mkdir(dirname(path), { recursive: true });
+  await writeFile(`${path}.tmp`, JSON.stringify(data, null, 2) + '\n', { mode: 0o644 });
+  await rename(`${path}.tmp`, path);
+}
+
+// Read-only mounted into the bridge; no IAM_OWNER PAT is written here.
+const persist = () => write(output, saved);
+// Read-only mounted into the claims service: signing key and the IDs it filters on, no client secrets.
+const persistActions = () => write(actionsOutput, actions);
+
+async function load(path, what) {
+  try { return JSON.parse(await readFile(path, 'utf8')); }
+  catch (error) { if (error.code !== 'ENOENT') throw new Error(`Cannot read persisted ${what}.`); return {}; }
 }
 
 // node:http instead of fetch: fetch silently drops a custom Host header.
@@ -134,14 +146,14 @@ async function ensureTokenExchange() {
   }
 }
 
-// Actions v2: Zitadel calls the bridge to append role/scopes claims to userinfo,
+// Actions v2: Zitadel calls the claims service to append role/scopes claims to userinfo,
 // introspection (preuserinfo) and JWT access tokens (preaccesstoken).
 async function ensureClaimsAction() {
   const { targets = [] } = await api('/v2/actions/targets/search', { pagination: { limit: 1000 } });
   const found = targets.find(target => target.name === claimsTargetName);
   if (found) {
-    if (saved.actions_target_id !== found.id || !saved.actions_signing_key) {
-      throw new Error(`Existing ${claimsTargetName} target has no matching persisted signing key. Restore auth_client_config volume; keys are not automatically rotated.`);
+    if (actions.actions_target_id !== found.id || !actions.actions_signing_key) {
+      throw new Error(`Existing ${claimsTargetName} target has no matching persisted signing key. Restore auth_actions_config volume; keys are not automatically rotated.`);
     }
   } else {
     const created = await api('/v2/actions/targets', {
@@ -152,20 +164,34 @@ async function ensureClaimsAction() {
       payloadType: 'PAYLOAD_TYPE_JSON',
     });
     if (!created.id || !created.signingKey) throw new Error('Zitadel did not return a target signing key.');
-    saved.actions_target_id = created.id;
-    saved.actions_signing_key = created.signingKey;
-    await persist();
+    actions.actions_target_id = created.id;
+    actions.actions_signing_key = created.signingKey;
   }
+  // Rewritten every run so the filter IDs follow the provisioned applications.
+  actions = { ...actions, client_ids: [saved.client_id, saved.introspection_client_id, saved.gateway_client_id],
+    project_id: saved.project_id, organization_id: saved.organization_id };
+  await persistActions();
   for (const name of ['preuserinfo', 'preaccesstoken']) {
-    await api('/v2/actions/executions', { condition: { function: { name } }, targets: [saved.actions_target_id] }, 'PUT');
+    await api('/v2/actions/executions', { condition: { function: { name } }, targets: [actions.actions_target_id] }, 'PUT');
   }
+}
+
+// Volumes provisioned before the claims service split kept the target in oidc.json.
+// Move it (actions.json first, so a crash in between loses nothing); keys cannot be re-read from Zitadel.
+async function migrateActions() {
+  if (actions.actions_signing_key || !saved.actions_signing_key) return;
+  actions = { ...actions, actions_target_id: saved.actions_target_id, actions_signing_key: saved.actions_signing_key };
+  await persistActions();
+  delete saved.actions_target_id;
+  delete saved.actions_signing_key;
+  await persist();
 }
 
 async function main() {
   token = (await readFile(patPath, 'utf8')).trim();
   if (!token) throw new Error('The bootstrap PAT file is empty.');
-  try { saved = JSON.parse(await readFile(output, 'utf8')); }
-  catch (error) { if (error.code !== 'ENOENT') throw new Error('Cannot read persisted OIDC configuration.'); }
+  saved = await load(output, 'OIDC configuration');
+  actions = await load(actionsOutput, 'actions configuration');
   if (saved.issuer && (saved.issuer !== issuer || saved.app_public_url !== appUrl)) {
     throw new Error('The persisted issuer/callback differs from this deployment. Update the existing Zitadel application explicitly.');
   }
@@ -182,6 +208,7 @@ async function main() {
   if (saved.project_id && saved.project_id !== projectId) throw new Error('Persisted client configuration belongs to another project/database.');
   saved = { ...saved, issuer, app_public_url: appUrl, project_id: projectId, organization_id: organization.id };
   await persist();
+  await migrateActions();
 
   // All four durations must be supplied together to the instance OIDC settings API.
   // Reapply on restart so an explicitly changed TTL also takes effect on persisted data.

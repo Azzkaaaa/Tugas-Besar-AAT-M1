@@ -16,6 +16,7 @@ const script = fileURLToPath(new URL('./bootstrap.mjs', import.meta.url));
 async function fixture(t) {
   const directory = await mkdtemp(join(tmpdir(), 'bnpb-bootstrap-'));
   const configFile = join(directory, 'oidc.json');
+  const actionsFile = join(directory, 'actions', 'actions.json');
   const patFile = join(directory, 'admin.pat');
   await writeFile(patFile, 'test-admin-pat');
   const state = { projects: [], apps: [], roles: [], users: [], grants: [], members: [], policies: null, oidc: {},
@@ -102,6 +103,7 @@ async function fixture(t) {
     ZITADEL_API_HOST: 'auth.localhost:8080',
     APP_PUBLIC_URL: 'http://localhost:8080',
     OIDC_CONFIG_FILE: configFile,
+    ACTIONS_CONFIG_FILE: actionsFile,
     ZITADEL_ADMIN_PAT_FILE: patFile,
     AUTH_MEDIA_PASSWORD: 'TestMedia1!',
     AUTH_FIELD_TEAM_PASSWORD: 'TestField1!',
@@ -110,13 +112,14 @@ async function fixture(t) {
     ZITADEL_ACCESS_TOKEN_TTL_SECONDS: '60',
     AUTH_SESSION_TTL_SECONDS: '86400',
   };
-  return { state, configFile, run: overrides => runFile(process.execPath, [script], { env: { ...env, ...overrides }, timeout: 15000 }) };
+  return { state, configFile, actionsFile, run: overrides => runFile(process.execPath, [script], { env: { ...env, ...overrides }, timeout: 15000 }) };
 }
 
 test('seed is idempotent, preserves credentials, and configures 60-second tokens', async t => {
   const f = await fixture(t);
   const firstRun = await f.run();
   const saved = await readFile(f.configFile, 'utf8');
+  const savedActions = await readFile(f.actionsFile, 'utf8');
   const changes = f.state.changes;
   assert.equal(f.state.apps.length, 3);
   assert.deepEqual([...f.state.hosts], ['auth.localhost:8080']);
@@ -125,14 +128,18 @@ test('seed is idempotent, preserves credentials, and configures 60-second tokens
   assert.deepEqual(gateway.grantTypes, ['OIDC_GRANT_TYPE_AUTHORIZATION_CODE', 'OIDC_GRANT_TYPE_TOKEN_EXCHANGE']);
   assert.equal(gateway.accessTokenType, 'OIDC_TOKEN_TYPE_JWT');
   assert.equal(f.state.targets.length, 1);
-  assert.equal(f.state.targets[0].endpoint, 'http://auth-bridge:3001/internal/zitadel/claims');
+  assert.equal(f.state.targets[0].endpoint, 'http://zitadel-claims:3002/claims');
   assert.deepEqual(f.state.targets[0].restCall, { interruptOnError: true });
   assert.deepEqual(f.state.executions, { preuserinfo: ['target0'], preaccesstoken: ['target0'] });
   const config = JSON.parse(await readFile(f.configFile, 'utf8'));
   assert.equal(config.gateway_client_id, 'app2-client');
   assert.equal(config.gateway_client_secret, 'app2-test-secret');
-  assert.equal(config.actions_target_id, 'target0');
-  assert.equal(config.actions_signing_key, 'target0-test-signing-key');
+  assert.equal(config.actions_target_id, undefined);
+  assert.equal(config.actions_signing_key, undefined);
+  // The claims service gets only the signing key and the IDs it filters on.
+  assert.deepEqual(JSON.parse(savedActions), { actions_target_id: 'target0', actions_signing_key: 'target0-test-signing-key',
+    client_ids: [config.client_id, config.introspection_client_id, config.gateway_client_id],
+    project_id: config.project_id, organization_id: config.organization_id });
   assert.equal(f.state.users.length, 4);
   assert.deepEqual(f.state.grants.map(grant => grant.roleKeys), [['MEDIA'], ['FIELD_TEAM'], ['BNPB_INTERNAL']]);
   assert.deepEqual(f.state.oidc, { accessTokenLifetime: '60s', idTokenLifetime: '60s', refreshTokenIdleExpiration: '86400s', refreshTokenExpiration: '86400s' });
@@ -144,6 +151,7 @@ test('seed is idempotent, preserves credentials, and configures 60-second tokens
   await f.run({ AUTH_MEDIA_PASSWORD: 'DifferentPassword1!' });
   assert.equal(f.state.changes, changes);
   assert.equal(await readFile(f.configFile, 'utf8'), saved);
+  assert.equal(await readFile(f.actionsFile, 'utf8'), savedActions);
   assert.equal(f.state.users[0].password, 'TestMedia1!');
   await f.run({ ZITADEL_ACCESS_TOKEN_TTL_SECONDS: '90' });
   assert.equal(f.state.oidc.accessTokenLifetime, '90s');
@@ -163,13 +171,29 @@ test('existing application without matching saved secret fails without rotation'
 test('existing claims target without saved signing key fails without rotation', async t => {
   const f = await fixture(t);
   await f.run();
-  const saved = JSON.parse(await readFile(f.configFile, 'utf8'));
+  const saved = JSON.parse(await readFile(f.actionsFile, 'utf8'));
   delete saved.actions_signing_key;
-  await writeFile(f.configFile, JSON.stringify(saved));
+  await writeFile(f.actionsFile, JSON.stringify(saved));
   const changes = f.state.changes;
   await assert.rejects(f.run(), error => /no matching persisted signing key/.test(error.stderr));
   assert.equal(f.state.changes, changes);
   assert.equal(f.state.targets.length, 1);
+});
+
+test('signing key persisted in oidc.json by earlier versions moves to actions.json', async t => {
+  const f = await fixture(t);
+  await f.run();
+  const actions = JSON.parse(await readFile(f.actionsFile, 'utf8'));
+  const config = JSON.parse(await readFile(f.configFile, 'utf8'));
+  await writeFile(f.configFile, JSON.stringify({ ...config, actions_target_id: actions.actions_target_id,
+    actions_signing_key: actions.actions_signing_key }));
+  await rm(f.actionsFile);
+  const changes = f.state.changes;
+  await f.run();
+  assert.equal(f.state.changes, changes);
+  assert.equal(f.state.targets.length, 1);
+  assert.deepEqual(JSON.parse(await readFile(f.actionsFile, 'utf8')), actions);
+  assert.deepEqual(JSON.parse(await readFile(f.configFile, 'utf8')), config);
 });
 
 test('changed seed grants and callback origins are not silently overwritten', async t => {

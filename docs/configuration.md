@@ -98,11 +98,14 @@ PKCE; cookie mengirim access token kepada bridge. Konfigurasi tidak memakai
 
 Bootstrap menyimpan `issuer`, `client_id`, `client_secret`, `project_id`,
 `organization_id`, `introspection_client_id`, `introspection_client_secret`,
-`gateway_client_id`, `gateway_client_secret`, `actions_target_id`, dan
-`actions_signing_key` di volume `auth_client_config`. Nilai secret ini hanya untuk
-server (bridge dan gateway Envoy). SPA tidak menerima file tersebut dan tidak boleh
-memakai variabel `VITE_*` untuk secret. Grant harus berasal dari proyek dan
-organisasi yang tercantum di konfigurasi; target Actions v2 pada bridge
+`gateway_client_id`, dan `gateway_client_secret` di `oidc.json` (volume
+`auth_client_config`). Nilai secret ini hanya untuk server (bridge dan gateway
+Envoy). `actions_target_id`, `actions_signing_key`, `client_ids`, `project_id`, dan
+`organization_id` ditulis terpisah ke `actions.json` (volume `auth_actions_config`,
+variabel `ACTIONS_CONFIG_FILE`) yang hanya dibaca `zitadel-claims`. SPA tidak
+menerima file tersebut dan tidak boleh memakai variabel `VITE_*` untuk secret.
+Grant harus berasal dari proyek dan organisasi yang tercantum di konfigurasi;
+target Actions v2 [`zitadel-claims`](../services/zitadel-claims/README.md)
 memetakannya ke klaim `scopes` sesuai [kontrak gRPC](../contracts/proto/README.md).
 Variabel template gateway Envoy dijelaskan di [README Envoy](../services/envoy/README.md).
 

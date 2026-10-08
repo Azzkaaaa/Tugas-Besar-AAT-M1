@@ -1,13 +1,15 @@
 import * as oidc from 'openid-client';
 import { AsyncLocalStorage } from 'node:async_hooks';
-import { roles } from './claims.mjs';
 
 export const requestContext = new AsyncLocalStorage();
 export class AuthError extends Error {
   constructor(status, code) { super(code); this.status = status; this.code = code; }
 }
 
-/** Role and scopes are appended by the bridge's own Zitadel Actions v2 target (claims.mjs). */
+// Precedence and scopes live in the zitadel-claims service; this only checks the role is known.
+const roles = ['BNPB_INTERNAL', 'FIELD_TEAM', 'MEDIA'];
+
+/** Role and scopes are appended by the zitadel-claims Actions v2 target (services/zitadel-claims). */
 export function identityFromClaims(claims, config) {
   const audiences = Array.isArray(claims.aud) ? claims.aud : [claims.aud];
   if (claims.active !== true || typeof claims.sub !== 'string' || !claims.sub || !Number.isFinite(claims.exp) || claims.exp * 1000 <= Date.now()

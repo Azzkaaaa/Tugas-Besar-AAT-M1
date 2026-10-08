@@ -51,12 +51,14 @@ provisioning selesai. Script membuat:
   project yang sama karena Zitadel hanya menukar token yang audiensnya memuat
   project tersebut;
 - feature instance `oidcTokenExchange` (masih beta di Zitadel v4);
-- target Actions v2 `BNPB scope claims` ke `http://auth-bridge:3001/internal/zitadel/claims`
+- target Actions v2 `BNPB scope claims` ke `http://zitadel-claims:3002/claims`
   beserta execution untuk function `preuserinfo` dan `preaccesstoken`. Target ini
-  menambahkan klaim `role` dan `scopes`; lihat [Auth bridge](../auth-bridge/README.md).
+  menambahkan klaim `role` dan `scopes`; lihat [zitadel-claims](../zitadel-claims/README.md).
 
 Signing key target dan secret client gateway hanya diberikan Zitadel sekali saat
-dibuat, sehingga disimpan di `oidc.json` dan tidak dirotasi otomatis.
+dibuat, sehingga disimpan (secret client di `oidc.json`, signing key di
+`actions.json`) dan tidak dirotasi otomatis. Volume lama yang masih menyimpan
+signing key di `oidc.json` dipindahkan otomatis ke `actions.json` saat provisioning.
 
 Zitadel v4 menolak memanggil alamat privat secara default. `compose.auth.yaml`
 menghapus `172.16.0.0/12` dari `ZITADEL_HTTPCLIENT_DENYLIST` agar target Actions di
@@ -89,6 +91,7 @@ pemeriksaan manual; script tidak mengembalikan izin pengguna secara diam-diam.
 | `zitadel_admin_bootstrap` | PAT administrator untuk provisioning; tidak dipasang pada SPA/bridge |
 | `zitadel_login_bootstrap` | PAT khusus Login UI dengan role `IAM_LOGIN_CLIENT` |
 | `auth_client_config` | `oidc.json`, client ID/secret dan identitas project/organisasi |
+| `auth_actions_config` | `actions.json`, signing key target Actions dan ID yang difilter `zitadel-claims` |
 | `auth_sessions` | SQLite `/data/sessions.sqlite` milik Auth bridge |
 
 `oidc.json` dibaca bridge melalui mount read-only. Refresh token disimpan oleh

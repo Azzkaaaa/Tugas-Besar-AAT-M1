@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
-import { generateKeyPairSync, sign, createHash, createHmac, randomBytes } from 'node:crypto';
+import { generateKeyPairSync, sign, createHash, randomBytes } from 'node:crypto';
 import { once } from 'node:events';
 import { setTimeout as delay } from 'node:timers/promises';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
@@ -10,17 +10,18 @@ import { join, resolve } from 'node:path';
 import { createAuthServer } from '../src/server.mjs';
 import { SessionStore } from '../src/store.mjs';
 import { ZitadelProvider } from '../src/provider.mjs';
-import { claimsFor, verifySignature } from '../src/claims.mjs';
 
 const oidcConfig = {
   client_id: 'web-test', client_secret: 'web-secret', introspection_client_id: 'api-test',
-  introspection_client_secret: 'api-secret', gateway_client_id: 'gateway-test', actions_signing_key: 'signing-test',
+  introspection_client_secret: 'api-secret', gateway_client_id: 'gateway-test',
   project_id: 'project-test', organization_id: 'org-test',
 };
-const grant = (roles, extra = {}) => ({ project_id: 'project-test', resource_owner: 'org-test', roles, state: 1, ...extra });
-function signed(body, key = 'signing-test', time = Math.floor(Date.now() / 1000)) {
-  return `t=${time},v1=${createHmac('sha256', key).update(`${time}.${body}`).digest('hex')}`;
-}
+// What the zitadel-claims Actions target appends (services/zitadel-claims/src/claims.rs).
+const scopesByRole = {
+  MEDIA: ['hazards:read:summary', 'notifications:read', 'webhooks:read'],
+  FIELD_TEAM: ['hazards:read:summary', 'hazards:read:full', 'notifications:read', 'webhooks:read', 'webhooks:write'],
+  BNPB_INTERNAL: ['hazards:read:summary', 'hazards:read:full', 'notifications:read', 'webhooks:read', 'webhooks:write'],
+};
 
 const { privateKey, publicKey } = generateKeyPairSync('rsa', { modulusLength: 2048 });
 const { privateKey: wrongKey } = generateKeyPairSync('rsa', { modulusLength: 2048 });
@@ -42,11 +43,12 @@ async function fixture(t, options = {}) {
     const access = randomBytes(24).toString('base64url');
     const refresh = randomBytes(24).toString('base64url');
     const exp = Math.floor(Date.now() / 1000) + state.ttl;
-    // Introspection carries the claims Zitadel's preuserinfo execution appends via the bridge target.
-    const action = claimsFor({ application: { client_id: 'api-test' },
-      user_grants: [grant([state.role], { resource_owner: state.organization || 'org-test' })] }, oidcConfig);
+    // Introspection carries the claims Zitadel's preuserinfo execution appends via the claims target,
+    // which appends nothing for grants of another organization or unknown roles.
+    const appended = (state.organization || 'org-test') === 'org-test' && scopesByRole[state.role]
+      ? { role: state.role, scopes: scopesByRole[state.role] } : {};
     const claims = { active: true, iss: issuer, sub: 'user-test', aud: [state.audience || 'project-test'], exp, name: 'User Test',
-      ...Object.fromEntries((action.append_claims || []).map(claim => [claim.key, claim.value])) };
+      ...appended };
     tokens.set(access, claims); refreshTokens.set(refresh, true);
     return { access_token: access, refresh_token: refresh, token_type: 'Bearer', expires_in: state.ttl,
       id_token: jwt({ iss: issuer, sub: 'user-test', aud: 'web-test', iat: Math.floor(Date.now() / 1000), exp,
@@ -164,40 +166,6 @@ test('Media session carries summary-only scopes and the bridge no longer serves 
   assert.equal(session.user.role, 'MEDIA');
   assert.deepEqual(session.user.scopes, ['hazards:read:summary', 'notifications:read', 'webhooks:read']);
   assert.equal((await f.request('/api/v1/hazards')).status, 404);
-});
-
-test('claims endpoint requires a valid Zitadel signature', async t => {
-  const f = await fixture(t);
-  const body = JSON.stringify({ application: { client_id: 'gateway-test' }, user_grants: [grant(['MEDIA'])] });
-  const post = signature => f.request('/internal/zitadel/claims', { method: 'POST', body,
-    headers: { 'Content-Type': 'application/json', ...(signature ? { 'ZITADEL-Signature': signature } : {}) } });
-  const accepted = await post(signed(body));
-  assert.equal(accepted.status, 200);
-  assert.deepEqual(await accepted.json(), { append_claims: [{ key: 'role', value: 'MEDIA' },
-    { key: 'scopes', value: ['hazards:read:summary', 'notifications:read', 'webhooks:read'] }] });
-  assert.equal((await post()).status, 401);
-  assert.equal((await post(signed(body, 'wrong-key'))).status, 401);
-  assert.equal((await post(signed(body, 'signing-test', Math.floor(Date.now() / 1000) - 600))).status, 401);
-});
-
-test('signature verification rejects tampered bodies and malformed headers', () => {
-  const body = Buffer.from('{"a":1}');
-  assert.equal(verifySignature(body, signed(body), 'signing-test'), true);
-  assert.equal(verifySignature(Buffer.from('{"a":2}'), signed(body), 'signing-test'), false);
-  assert.equal(verifySignature(body, 'v1=00', 'signing-test'), false);
-  assert.equal(verifySignature(body, undefined, 'signing-test'), false);
-  assert.equal(verifySignature(body, signed(body), ''), false);
-});
-
-test('claims are scoped to project applications, the configured org and active grants', () => {
-  const app = { client_id: 'web-test' };
-  assert.deepEqual(claimsFor({ application: { client_id: 'console' }, user_grants: [grant(['BNPB_INTERNAL'])] }, oidcConfig), {});
-  assert.deepEqual(claimsFor({ application: app, user_grants: [grant(['MEDIA'], { project_id: 'other' })] }, oidcConfig), {});
-  assert.deepEqual(claimsFor({ application: app, user_grants: [grant(['MEDIA'], { resource_owner: 'other' })] }, oidcConfig), {});
-  assert.deepEqual(claimsFor({ application: app, user_grants: [grant(['MEDIA'], { state: 2 })] }, oidcConfig), {});
-  assert.deepEqual(claimsFor({ application: app }, oidcConfig), {});
-  const both = claimsFor({ application: app, user_grants: [grant(['MEDIA']), grant(['FIELD_TEAM', 'BNPB_INTERNAL'])] }, oidcConfig);
-  assert.equal(both.append_claims[0].value, 'BNPB_INTERNAL');
 });
 
 test('callback is bound to browser and single use', async t => {
