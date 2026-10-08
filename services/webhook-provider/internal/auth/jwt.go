@@ -138,20 +138,27 @@ func extractCallerContext(claims jwt.MapClaims) *CallerContextData {
 		c.Role = role
 	}
 
-	// Scopes can be a space-separated string or a slice.
-	if scopeStr, ok := claims["scope"].(string); ok {
-		c.Scopes = strings.Fields(scopeStr)
-	} else if scopesSlice, ok := claims["scopes"].([]any); ok {
+	// 1. Prefer the custom `scopes` claim (array or space-separated string).
+	if scopesSlice, ok := claims["scopes"].([]any); ok {
 		for _, s := range scopesSlice {
 			if sStr, ok := s.(string); ok {
 				c.Scopes = append(c.Scopes, sStr)
 			}
 		}
-	} else if scopeSlice, ok := claims["scope"].([]any); ok {
-		for _, s := range scopeSlice {
-			if sStr, ok := s.(string); ok {
-				c.Scopes = append(c.Scopes, sStr)
+	} else if scopesStr, ok := claims["scopes"].(string); ok {
+		c.Scopes = strings.Fields(scopesStr)
+	}
+
+	// 2. Fall back to `scope` only if `scopes` was absent.
+	if len(c.Scopes) == 0 {
+		if scopeSlice, ok := claims["scope"].([]any); ok {
+			for _, s := range scopeSlice {
+				if sStr, ok := s.(string); ok {
+					c.Scopes = append(c.Scopes, sStr)
+				}
 			}
+		} else if scopeStr, ok := claims["scope"].(string); ok {
+			c.Scopes = strings.Fields(scopeStr)
 		}
 	}
 
