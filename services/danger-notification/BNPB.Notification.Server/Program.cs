@@ -5,18 +5,51 @@ using BNPB.Aggregator.V1;
 using BNPB.Common.V1;
 using BNPB.Notification.Server.Adapters.Inbound;
 using BNPB.Notification.Server.Adapters.Outbound;
+using BNPB.Notification.Server.Adapters.Telemetry;
 using BNPB.Notification.Server.Core.Services;
 using BNPB.Notification.Server.Core.Ports.Inbound;
 using BNPB.Notification.Server.Core.Ports.Outbound;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
+using OpenTelemetry;
+using OpenTelemetry.Logs;
+using OpenTelemetry.Metrics;
+using OpenTelemetry.Resources;
+using OpenTelemetry.Trace;
 
 using IInboundMessageProvider = BNPB.Notification.Server.Core.Ports.Inbound.IMessageProvider;
 using IInboundSourceProvider = BNPB.Notification.Server.Core.Ports.Inbound.ISourceProvider;
 using IOutboundSourceProvider = BNPB.Notification.Server.Core.Ports.Outbound.ISourceProvider;
 
 var builder = WebApplication.CreateBuilder(args);
+
+// Telemetry
+var otel = builder.Services
+  .AddOpenTelemetry()
+  .ConfigureResource(resource =>
+    resource.AddService(builder.Configuration["OTEL_SERVICE_NAME"] ?? "danger-notification"))
+  .WithTracing(tracing => tracing
+    .AddSource(NotificationTelemetry.Name)
+    .AddAspNetCoreInstrumentation(options =>
+      options.Filter = context => !context.Request.Path.StartsWithSegments("/grpc.health.v1.Health"))
+    .AddHttpClientInstrumentation())
+  .WithMetrics(metrics => metrics
+    .AddMeter(NotificationTelemetry.Name)
+    .AddAspNetCoreInstrumentation()
+    .AddHttpClientInstrumentation()
+    .AddRuntimeInstrumentation());
+
+builder.Logging.AddOpenTelemetry(options =>
+{
+  options.IncludeScopes = true;
+  options.IncludeFormattedMessage = true;
+});
+
+// The exporter reads OTEL_EXPORTER_OTLP_ENDPOINT/PROTOCOL itself. Without an
+// endpoint nothing is exported, like the other services.
+if (!string.IsNullOrWhiteSpace(builder.Configuration["OTEL_EXPORTER_OTLP_ENDPOINT"]))
+  otel.UseOtlpExporter();
 
 // Push
 builder.Services.AddSingleton(_ =>

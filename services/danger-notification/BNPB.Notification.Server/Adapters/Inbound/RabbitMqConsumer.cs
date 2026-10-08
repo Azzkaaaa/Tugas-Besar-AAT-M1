@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Text;
 using BNPB.Event.V1;
 using Google.Protobuf;
@@ -5,6 +6,7 @@ using RabbitMQ.Client;
 using RabbitMQ.Client.Events;
 using BNPB.Notification.Server.Core.Models;
 using BNPB.Notification.Server.Core.Ports.Inbound;
+using BNPB.Notification.Server.Adapters.Telemetry;
 
 namespace BNPB.Notification.Server.Adapters.Inbound;
 
@@ -100,12 +102,26 @@ public class RabbitMqConsumer : BackgroundService
       var body = ea.Body.ToArray();
       string? eventId = null;
 
+      using var activity = NotificationTelemetry.Source.StartActivity(
+        "rabbitmq.consume",
+        ActivityKind.Consumer,
+        NotificationTelemetry.ExtractAmqpParent(ea.BasicProperties.Headers));
+
+      activity?.SetTag("messaging.system", "rabbitmq");
+      activity?.SetTag("messaging.destination", _queueName);
+      activity?.SetTag("messaging.message_id", ea.BasicProperties.MessageId);
+
       try
       {
         _logger.LogInformation("Processing message");
 
         var externalEvent = HazardEventPublished.Parser.ParseFrom(body);
         eventId = externalEvent.EventId;
+
+        activity?.SetTag("event.id", eventId);
+        activity?.SetTag("hazard.id", externalEvent.Payload.HazardId);
+        activity?.SetTag("hazard.source", externalEvent.Payload.Source.ToString());
+        activity?.SetTag("hazard.severity", externalEvent.Payload.Severity.ToString());
 
         HazardSource source = externalEvent.Payload.Source switch
         {
@@ -146,10 +162,15 @@ public class RabbitMqConsumer : BackgroundService
         await _broadcastProvider.FilterAndBroadcastAsync(internalEvent);
 
         await _channel.BasicAckAsync(deliveryTag: ea.DeliveryTag, multiple: false);
+
+        NotificationTelemetry.EventsConsumed.Add(1, new KeyValuePair<string, object?>("outcome", "acked"));
       }
       catch (Exception ex)
       {
         var requeue = ShouldRequeue(ex, ea.Redelivered);
+
+        activity?.AddException(ex);
+        activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
 
         _logger.LogError(ex,
           "Error processing message {EventId}; {Outcome}",
@@ -157,6 +178,9 @@ public class RabbitMqConsumer : BackgroundService
           requeue ? "requeued" : "dead-lettered");
 
         await _channel.BasicNackAsync(deliveryTag: ea.DeliveryTag, multiple: false, requeue: requeue);
+
+        NotificationTelemetry.EventsConsumed.Add(1,
+          new KeyValuePair<string, object?>("outcome", requeue ? "requeued" : "dead_lettered"));
       }
     };
 

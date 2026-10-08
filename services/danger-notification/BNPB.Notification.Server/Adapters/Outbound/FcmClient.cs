@@ -1,3 +1,5 @@
+using System.Diagnostics;
+using BNPB.Notification.Server.Adapters.Telemetry;
 using BNPB.Notification.Server.Core.Ports.Outbound;
 using BNPB.Notification.Server.Core.Models;
 using FirebaseAdmin.Messaging;
@@ -83,20 +85,45 @@ public class FcmClient : IPushProvider
       }
     };
 
+    using var activity = NotificationTelemetry.Source.StartActivity("fcm.send", ActivityKind.Client);
+    activity?.SetTag("messaging.system", "fcm");
+    activity?.SetTag("messaging.destination", _topic);
+    activity?.SetTag("hazard.id", messageId);
+    activity?.SetTag("hazard.severity", message.Severity.ToString());
+
+    var severity = new KeyValuePair<string, object?>("hazard.severity", message.Severity.ToString());
+    var started = Stopwatch.GetTimestamp();
+
     try
     {
       var fcmMessageId = await _messaging.SendAsync(fcmMessage, cancellationToken);
+
+      activity?.SetTag("messaging.message_id", fcmMessageId);
+      NotificationTelemetry.Broadcasts.Add(1, new KeyValuePair<string, object?>("result", "success"), severity);
 
       _logger.LogInformation(
         "Broadcast hazard {MessageId} to topic {Topic} (FCM id: {FcmMessageId})",
         messageId, _topic, fcmMessageId);
     }
-    catch (FirebaseMessagingException ex)
+    catch (Exception ex)
     {
-      _logger.LogError(ex,
-        "FCM broadcast failed for hazard {MessageId} on topic {Topic}: {ErrorCode}",
-        messageId, _topic, ex.MessagingErrorCode);
+      activity?.AddException(ex);
+      activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
+      NotificationTelemetry.Broadcasts.Add(1, new KeyValuePair<string, object?>("result", "error"), severity);
+
+      if (ex is FirebaseMessagingException fcmEx)
+      {
+        activity?.SetTag("fcm.error_code", fcmEx.MessagingErrorCode?.ToString());
+        _logger.LogError(ex,
+          "FCM broadcast failed for hazard {MessageId} on topic {Topic}: {ErrorCode}",
+          messageId, _topic, fcmEx.MessagingErrorCode);
+      }
+
       throw;
+    }
+    finally
+    {
+      NotificationTelemetry.BroadcastDuration.Record(Stopwatch.GetElapsedTime(started).TotalSeconds, severity);
     }
   }
 

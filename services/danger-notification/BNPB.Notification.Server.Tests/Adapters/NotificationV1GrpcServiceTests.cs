@@ -315,6 +315,8 @@ public class NotificationV1GrpcServiceTests : IClassFixture<NotificationV1GrpcSe
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
       builder.UseSetting("Aggregator:Address", "http://aggregator.invalid:9091");
+      // TestAuthHandler issues the scope claim; appsettings.json may name a different one.
+      builder.UseSetting("Auth:ScopeClaim", "scope");
 
       builder.ConfigureTestServices(services =>
       {

@@ -113,6 +113,9 @@ services:
       # The local Zitadel only serves plain HTTP.
       Auth__RequireHttpsMetadata: "false"
       GOOGLE_APPLICATION_CREDENTIALS: /run/secrets/firebase-credentials.json
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-lgtm:4318
+      OTEL_EXPORTER_OTLP_PROTOCOL: http/protobuf
+      OTEL_SERVICE_NAME: danger-notification
     ports:
       - "9095:9095"
     volumes:
@@ -127,6 +130,8 @@ services:
       rabbitmq:
         condition: service_healthy
       aggregator-service:
+        condition: service_started
+      otel-lgtm:
         condition: service_started
     # The RabbitMQ consumer connects once at startup.
     restart: unless-stopped

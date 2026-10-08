@@ -16,7 +16,9 @@ Implementasi dan bahasa belum dipilih.
   mengolah event broker paling baru. Panggilan ke Auth/Aggregator memakai token
   service Notification sendiri dengan bearer aktor asli pada jalur baca.
 
-Health memakai `grpc.health.v1.Health`. TODO: runtime/Dockerfile, consumer,
-storage, retry/dead-letter, gRPC, otorisasi/proyeksi, telemetry, dan uji recovery
-tanpa notifikasi ganda. Pengiriman email/SMS/push eksternal belum menjadi
+Health memakai `grpc.health.v1.Health`. Trace, metrik, dan log dikirim lewat
+OTLP bila `OTEL_EXPORTER_OTLP_ENDPOINT` diisi; trace melanjutkan `traceparent`
+dari header AMQP aggregator. TODO: runtime/Dockerfile, consumer, storage,
+retry/dead-letter, gRPC, otorisasi/proyeksi, dan uji recovery tanpa notifikasi
+ganda. Pengiriman email/SMS/push eksternal belum menjadi
 kontrak implementasi. Lihat [konfigurasi](../../docs/configuration.md).
