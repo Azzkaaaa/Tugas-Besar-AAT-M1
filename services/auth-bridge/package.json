@@ -1,0 +1,17 @@
+{
+  "name": "@bnpb/auth-bridge",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "engines": {
+    "node": ">=24.0.0"
+  },
+  "scripts": {
+    "start": "node src/server.mjs",
+    "test": "node --test test/*.test.mjs"
+  },
+  "dependencies": {
+    "cookie": "2.0.1",
+    "openid-client": "6.8.8"
+  }
+}

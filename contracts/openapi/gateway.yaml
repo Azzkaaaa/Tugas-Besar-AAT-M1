@@ -9,12 +9,25 @@ info:
 
     Three independently provisioned client classes are MEDIA, FIELD_TEAM, and
     BNPB_INTERNAL. Credentials, grants, quotas, and sessions are isolated per
-    client and managed via Zitadel. MEDIA receives hazards:read:summary and notifications:read;
+    user and managed via Zitadel. MEDIA receives hazards:read:summary,
+    notifications:read, and webhooks:read;
     FIELD_TEAM and BNPB_INTERNAL receive hazards:read:summary,
-    hazards:read:full, and notifications:read by default. A deployment may narrow
+    hazards:read:full, notifications:read, webhooks:read, and webhooks:write by default. A deployment may narrow
     grants. A full projection requires both hazards:read:summary and
     hazards:read:full. Requesting it
     without the grant returns 403, never a silently downgraded projection.
+
+    The browser uses the same origin as the SPA and sends both HttpOnly cookies
+    bnpb_access and bnpb_session. Auth bridge binds the token to its server-side
+    session, introspects it at Zitadel, and derives application scopes from
+    allowlisted project and organization role grants. Browser JavaScript never
+    reads tokens. Non-browser clients may use Authorization: Bearer instead.
+    Cookie-authenticated mutations require the configured application Origin
+    and X-CSRF-Token obtained from /auth/session. These headers do not replace
+    authentication. Auth lifecycle endpoints are specified in auth.yaml.
+    Auth bridge forwards the original actor bearer to the internal gateway;
+    there is no internal JWT exchange. Business services must still validate
+    their callers and enforce projections. Their end-to-end integration is pending.
 
     Summary projections contain exactly the seven HazardSummary fields. Raw
     upstream data, coordinates, source reference identifiers, and attributes must
@@ -29,8 +42,10 @@ info:
   license:
     name: UNLICENSED
 servers:
+  - url: http://localhost:8080
+    description: Browser same-origin Gateway through Auth bridge
   - url: http://api.localhost:8080
-    description: API Gateway
+    description: API clients through Auth bridge; not an authentication bypass
 tags:
   - name: Hazards
     description: Canonical cached hazard queries.
@@ -43,6 +58,8 @@ tags:
   - name: Health
     description: Process health.
 security:
+  - BrowserAccessCookie: []
+    BrowserSessionCookie: []
   - ZitadelOIDC: []
 paths:
   /api/v1/hazards:
@@ -404,6 +421,8 @@ paths:
       x-required-scopes: [notifications:read]
       parameters:
         - $ref: '#/components/parameters/CorrelationId'
+        - $ref: '#/components/parameters/Origin'
+        - $ref: '#/components/parameters/CsrfToken'
       requestBody:
         required: true
         content:
@@ -433,6 +452,8 @@ paths:
       x-required-scopes: [notifications:read]
       parameters:
         - $ref: '#/components/parameters/CorrelationId'
+        - $ref: '#/components/parameters/Origin'
+        - $ref: '#/components/parameters/CsrfToken'
       requestBody:
         required: true
         content:
@@ -495,6 +516,8 @@ paths:
       x-required-scopes: [webhooks:write]
       parameters:
         - $ref: '#/components/parameters/CorrelationId'
+        - $ref: '#/components/parameters/Origin'
+        - $ref: '#/components/parameters/CsrfToken'
       requestBody:
         required: true
         content:
@@ -565,6 +588,8 @@ paths:
       x-required-scopes: [webhooks:write]
       parameters:
         - $ref: '#/components/parameters/CorrelationId'
+        - $ref: '#/components/parameters/Origin'
+        - $ref: '#/components/parameters/CsrfToken'
         - name: webhook_id
           in: path
           required: true
@@ -637,6 +662,8 @@ paths:
       x-required-scopes: [webhooks:write]
       parameters:
         - $ref: '#/components/parameters/CorrelationId'
+        - $ref: '#/components/parameters/Origin'
+        - $ref: '#/components/parameters/CsrfToken'
         - name: webhook_id
           in: path
           required: true
@@ -666,12 +693,40 @@ paths:
           $ref: '#/components/responses/Unavailable'
 components:
   securitySchemes:
+    BrowserAccessCookie:
+      type: apiKey
+      in: cookie
+      name: bnpb_access
+      description: HttpOnly access token, bound to bnpb_session and introspected by Auth bridge. Secure on HTTPS; Path=/; SameSite=Lax.
+    BrowserSessionCookie:
+      type: apiKey
+      in: cookie
+      name: bnpb_session
+      description: HttpOnly opaque session identifier. Required together with bnpb_access for browser API access.
     ZitadelOIDC:
       type: openIdConnect
       openIdConnectUrl: http://auth.localhost:8080/.well-known/openid-configuration
       description: |
-        Zitadel managed OpenID Connect authentication flow for end users. Validate tokens via API Gateway middleware.
+        Zitadel OpenID Connect access token in Authorization: Bearer for API
+        clients. Auth bridge validates it by introspection, including issuer,
+        project audience, and role grants. Browser login uses the Auth bridge.
   parameters:
+    CsrfToken:
+      name: X-CSRF-Token
+      in: header
+      required: false
+      description: Required for cookie-authenticated mutations; obtained from /auth/session and bound to that session. Not required for bearer-only API clients.
+      schema:
+        type: string
+        minLength: 1
+    Origin:
+      name: Origin
+      in: header
+      required: false
+      description: Browser supplies this automatically. Required to equal the configured application origin for cookie-authenticated mutations.
+      schema:
+        type: string
+        format: uri
     CorrelationId:
       name: X-Correlation-ID
       in: header
@@ -786,7 +841,7 @@ components:
           schema:
             $ref: '#/components/schemas/Problem'
     Forbidden:
-      description: Authenticated client lacks a required scope.
+      description: Authenticated client lacks a required scope, or a cookie-authenticated mutation has invalid Origin/CSRF protection.
       headers:
         X-Correlation-ID:
           $ref: '#/components/headers/CorrelationId'

@@ -1,0 +1,244 @@
+openapi: 3.1.0
+info:
+  title: BNPB Browser Authentication API
+  version: 1.0.0
+  description: |
+    Same-origin HTTP boundary between the React SPA and the confidential OIDC
+    client (Auth bridge). The login form is hosted by Zitadel. Authorization
+    Code with PKCE, state, and nonce is completed on the server. There is no
+    password endpoint, frontend client secret, or internal JWT exchange.
+
+    Browser access uses two host-only HttpOnly cookies, bnpb_access (the original
+    opaque access token) and bnpb_session (an opaque local session ID), with
+    Path=/ and SameSite=Lax. Secure is required on HTTPS; the standalone local
+    HTTP compose explicitly disables it. JavaScript receives identity, expiry,
+    and a CSRF token only. Refresh tokens are encrypted in the bridge's SQLite
+    session store and never returned to the browser.
+
+    Responses must not be cached. POST lifecycle requests require the exact
+    configured application Origin and a session-bound X-CSRF-Token. A CSRF
+    token is not an access token. Anonymous requests do not receive a session.
+    Cookie-authenticated business API requests are specified in gateway.yaml.
+  license:
+    name: UNLICENSED
+servers:
+  - url: http://localhost:8080
+tags:
+  - name: Authentication
+paths:
+  /auth/login:
+    get:
+      tags: [Authentication]
+      operationId: beginLogin
+      summary: Redirect to the Zitadel hosted login page
+      description: |
+        Creates a short-lived server-side authorization transaction bound to
+        the browser, generates state, nonce, and an S256 PKCE challenge, then
+        redirects to the provider. The browser does not choose its application
+        role. The return destination is fixed by the server.
+      security: []
+      responses:
+        '302':
+          description: Redirect to the provider's authorization endpoint.
+          headers:
+            Location:
+              schema: {type: string, format: uri}
+        '503':
+          $ref: '#/components/responses/Unavailable'
+  /auth/callback:
+    get:
+      tags: [Authentication]
+      operationId: finishLogin
+      summary: Complete the provider authorization response
+      description: |
+        Validates state and the browser transaction, exchanges the single-use
+        code with the PKCE verifier, verifies the ID token signature, issuer,
+        audience, expiry and nonce, and introspects the access token. Roles are
+        accepted only for the configured Zitadel project and organization.
+        Success creates the local session and sets both authentication cookies.
+        Failure never reflects provider errors or token values to the browser.
+      security: []
+      parameters:
+        - name: code
+          in: query
+          schema: {type: string}
+          description: Single-use code returned by the provider on success.
+        - name: state
+          in: query
+          schema: {type: string}
+          description: Must match the browser's pending authorization transaction.
+        - name: error
+          in: query
+          schema: {type: string}
+          description: Provider error instead of a successful code response.
+      responses:
+        '302':
+          description: Redirect to /#/dashboard on success or /#/login?error=login_failed on failure.
+          headers:
+            Location:
+              schema: {type: string}
+  /auth/session:
+    get:
+      tags: [Authentication]
+      operationId: getSession
+      summary: Read current identity without exposing tokens
+      security:
+        - BrowserSessionCookie: []
+          BrowserAccessCookie: []
+      responses:
+        '200':
+          description: Active session and introspected access token.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Session'}
+        '401':
+          description: |
+            No authenticated identity. If the access token expired but a valid
+            local session remains, refresh_required=true and csrf_token let the
+            SPA call POST /auth/refresh. An anonymous request has neither.
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/SessionProblem'}
+        '503':
+          $ref: '#/components/responses/Unavailable'
+  /auth/refresh:
+    post:
+      tags: [Authentication]
+      operationId: refreshSession
+      summary: Refresh through the server-held refresh token
+      description: |
+        Requires a valid local session and its CSRF token, even when the access
+        cookie expired. Performs the provider refresh grant, validates the new
+        tokens, persists the rotated refresh token encrypted, and replaces the
+        access cookie. Tokens are never returned in JSON.
+      security:
+        - BrowserSessionCookie: []
+      parameters:
+        - $ref: '#/components/parameters/Origin'
+        - $ref: '#/components/parameters/CsrfToken'
+      responses:
+        '200':
+          description: Refreshed session.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Session'}
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+  /auth/logout:
+    post:
+      tags: [Authentication]
+      operationId: endSession
+      summary: Revoke tokens and end the local session
+      description: |
+        Requires the session CSRF token and configured Origin. Revokes the
+        provider tokens, deletes the local session, clears the cookies, and
+        returns the provider logout URL. The SPA navigates to logout_url to
+        terminate the provider's browser SSO session as well.
+      security:
+        - BrowserSessionCookie: []
+      parameters:
+        - $ref: '#/components/parameters/Origin'
+        - $ref: '#/components/parameters/CsrfToken'
+      responses:
+        '200':
+          description: Local session ended; follow logout_url to finish provider logout.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [logout_url]
+                additionalProperties: false
+                properties:
+                  logout_url: {type: string, format: uri}
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+components:
+  securitySchemes:
+    BrowserAccessCookie:
+      type: apiKey
+      in: cookie
+      name: bnpb_access
+      description: Original opaque access token; HttpOnly, host-only, Path=/, SameSite=Lax, Secure on HTTPS.
+    BrowserSessionCookie:
+      type: apiKey
+      in: cookie
+      name: bnpb_session
+      description: Opaque local session identifier; same cookie attributes as bnpb_access.
+  parameters:
+    Origin:
+      name: Origin
+      in: header
+      required: true
+      description: Must equal the configured application origin; browsers send it automatically.
+      schema: {type: string, format: uri}
+    CsrfToken:
+      name: X-CSRF-Token
+      in: header
+      required: true
+      description: Session-bound token obtained from GET /auth/session.
+      schema: {type: string, minLength: 1}
+  responses:
+    Unauthorized:
+      description: Session or provider credentials are missing, expired, invalid, or revoked.
+      content:
+        application/problem+json:
+          schema: {$ref: '#/components/schemas/SessionProblem'}
+    Forbidden:
+      description: Origin, CSRF token, or authorized role is invalid.
+      content:
+        application/problem+json:
+          schema: {$ref: '#/components/schemas/SessionProblem'}
+    Unavailable:
+      description: Authentication dependency is unavailable; requests are not permitted without validation.
+      content:
+        application/problem+json:
+          schema: {$ref: '#/components/schemas/SessionProblem'}
+  schemas:
+    Session:
+      type: object
+      required: [user, csrf_token, expires_at]
+      additionalProperties: false
+      properties:
+        user:
+          type: object
+          required: [id, name, role, scopes, mode]
+          additionalProperties: false
+          properties:
+            id: {type: string}
+            name: {type: string}
+            role:
+              type: string
+              enum: [MEDIA, FIELD_TEAM, BNPB_INTERNAL]
+            scopes:
+              type: array
+              items: {type: string}
+              description: Application grants mapped by the server, not frontend-selected OAuth scopes.
+            mode:
+              type: string
+              const: oidc
+        csrf_token: {type: string, minLength: 1}
+        expires_at: {type: string, format: date-time}
+    SessionProblem:
+      type: object
+      required: [type, title, status]
+      properties:
+        type: {type: string}
+        title: {type: string}
+        status: {type: integer, minimum: 400, maximum: 599}
+        detail: {type: string}
+        instance: {type: string}
+        correlation_id: {type: string}
+        refresh_required:
+          type: boolean
+          description: Present only when an existing local session permits a refresh attempt.
+        csrf_token:
+          type: string
+          description: Present with refresh_required=true; never issued to an anonymous browser.

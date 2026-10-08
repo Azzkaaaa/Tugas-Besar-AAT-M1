@@ -1,10 +1,120 @@
-# Auth & Identity (Zitadel)
+# Auth lokal dengan Zitadel
 
-Rencana service identitas, token, dan otorisasi kini menggunakan **Zitadel** sebagai Identity Provider (IdP) terpusat, menggantikan implementasi custom gRPC sebelumnya. Layanan autentikasi ini terekspos pada `http://auth.localhost:8080`.
+Stack `compose.auth.yaml` menyediakan PostgreSQL, Zitadel, halaman login resmi
+Zitadel Login V2, provisioning awal, Auth bridge, SPA, dan Envoy. Halaman SPA tidak
+menerima password; pengguna diarahkan ke halaman login Zitadel.
 
-- **Input:** Klien melakukan autentikasi menggunakan standar OpenID Connect (OIDC) / OAuth 2.0. Gateway memvalidasi access token eksternal (bearer) ini dan menangani token exchange menjadi short-lived asymmetric JWT untuk otorisasi internal.
-- **Output:** Access Token (JWT) terverifikasi yang memuat profil principal beserta role dan scope spesifik mereka (misal: `hazards:read:summary`, `hazards:read:full`). Kegagalan verifikasi token di Gateway tidak boleh menghasilkan akses yang diizinkan.
-- **Storage internal:** Data identitas pengguna, verifier secret, sesi pengguna, refresh token, dan state pencabutan (revocation) sepenuhnya disimpan dan dikelola oleh database bawaan Zitadel (menggantikan `AUTH_STORE_DSN` dan `AUTH_CACHE_DSN` kustom).
-- **Tanggung jawab:** Mengelola otentikasi untuk tiga kelas client independen (MEDIA, FIELD_TEAM, dan BNPB_INTERNAL). Zitadel bertanggung jawab atas penetapan role/scope, rotasi refresh token, manajemen TTL token, dan pencabutan token (revocation). API Gateway membaca token ini untuk mengeksekusi kontrol akses sebelum meneruskan request ke service gRPC internal.
+Jalankan dari root repository setelah Docker Desktop aktif:
 
-Health check kini menggunakan endpoint standar bawaan Zitadel. TODO: Skrip provisioning awal Zitadel (setup Project, Applications, Policies, User Grants), pemetaan OIDC custom claims, integrasi middleware validasi token di API Gateway, telemetry bebas token rahasia, serta pengujian E2E untuk token expiry, refresh otomatis, dan stream revocation. Detail setup dan konfigurasi secret ada di [konfigurasi](../../docs/configuration.md).
+```powershell
+python tools/setup_auth_env.py
+docker compose --env-file .env.auth -f compose.auth.yaml up -d --build
+docker compose --env-file .env.auth -f compose.auth.yaml ps -a
+```
+
+Buka **http://localhost:8080**. Issuer dan halaman login ada di
+**http://auth.localhost:8080**. Gunakan URL ini persis agar issuer dan callback
+sesuai; port 8080 tidak boleh sedang dipakai stack Compose lain. Browser modern
+memetakan `*.localhost` ke loopback, sedangkan jaringan Docker memakai alias Envoy.
+
+| Akun Zitadel | Role project | Password awal di `.env.auth` |
+| --- | --- | --- |
+| `media-demo` | `MEDIA` | `AUTH_MEDIA_PASSWORD` |
+| `lapangan-demo` | `FIELD_TEAM` | `AUTH_FIELD_TEAM_PASSWORD` |
+| `bnpb-demo` | `BNPB_INTERNAL` | `AUTH_BNPB_PASSWORD` |
+| `admin@bnpb.local` | Administrator instance, bukan pengguna dashboard | `AUTH_ADMIN_PASSWORD` |
+
+Keempat akun adalah pengguna sungguhan di database Zitadel. Nama `demo` hanya
+menandai akun untuk tugas lokal. Password dihasilkan acak sekali per komputer.
+Console administrasi ada di `http://auth.localhost:8080/ui/console`.
+
+## Provisioning dan konfigurasi
+
+`tools/setup_auth_env.py` membuat `.env.auth` dari `.env.auth.example`. Script
+mengisi secret kosong atau placeholder, serta mempertahankan nilai yang sudah
+ada. File `.env.auth` bersifat lokal dan tidak di-push. Script tidak mereset
+password pengguna yang sudah dibuat dalam Zitadel; perubahan password dilakukan
+melalui Zitadel.
+
+Container sekali-jalan `auth-bootstrap` menjalankan `bootstrap.mjs` setelah
+Zitadel siap. Script membuat project `BNPB M1`, tiga role dan grant pengguna,
+application OIDC confidential untuk Auth bridge, serta application API untuk
+introspection. Aplikasi OIDC menggunakan authorization code, PKCE oleh bridge,
+client-secret Basic, access token opaque, dan refresh token. Callback yang
+terdaftar adalah `http://localhost:8080/auth/callback`.
+
+`ZITADEL_ACCESS_TOKEN_TTL_SECONDS` mengatur masa berlaku access token dan ID token,
+dengan default **60 detik** sesuai M1. `AUTH_SESSION_TTL_SECONDS` membatasi refresh
+token dan sesi bridge, default **86400 detik / 24 jam**. Provisioner mengatur
+keempat durasi OIDC melalui Admin API, termasuk pada database yang sudah ada.
+Setelah mengubah TTL, jalankan ulang provisioning lalu buat sesi login baru:
+
+```powershell
+docker compose --env-file .env.auth -f compose.auth.yaml run --rm auth-bootstrap
+docker compose --env-file .env.auth -f compose.auth.yaml up -d auth-bridge
+```
+
+Provisioning yang diulang tidak menggandakan project, application, user, atau
+grant. Password dan client secret tidak diputar otomatis. Jika application sudah
+ada tetapi file client secret hilang, provisioning berhenti dengan pesan untuk
+memulihkan volume konfigurasi. Jika grant akun seed sudah diubah, script meminta
+pemeriksaan manual; script tidak mengembalikan izin pengguna secara diam-diam.
+
+## Penyimpanan
+
+| Named volume | Isi |
+| --- | --- |
+| `auth_postgres` | Database identitas, kebijakan, dan sesi Zitadel |
+| `zitadel_admin_bootstrap` | PAT administrator untuk provisioning; tidak dipasang pada SPA/bridge |
+| `zitadel_login_bootstrap` | PAT khusus Login UI dengan role `IAM_LOGIN_CLIENT` |
+| `auth_client_config` | `oidc.json`, client ID/secret dan identitas project/organisasi |
+| `auth_sessions` | SQLite `/data/sessions.sqlite` milik Auth bridge |
+
+`oidc.json` dibaca bridge melalui mount read-only. Refresh token disimpan oleh
+bridge, bukan di penyimpanan JavaScript browser. Volume dan file SQLite tidak
+perlu dibuat manual atau disimpan di Git. Komputer rekan membuat database dan
+akun lokalnya sendiri ketika menjalankan stack pertama kali.
+
+`docker compose ... down` mempertahankan volume. Opsi `down -v` menghapus data
+Auth, client secret, dan sesi; jangan gunakan untuk sekadar menghentikan demo.
+Cadangan `.env.auth` dan seluruh volume Auth harus sesuai. Jangan mengganti
+master key atau password database pada instalasi yang sudah berisi data.
+
+## Hubungan dengan backend BNPB
+
+`FRONTEND_DATA_MODE=mock` berarti login OIDC sungguhan dengan kejadian fixture di
+browser. BMKG/PVMBG tetap diakses melalui Aggregator dan Gateway ketika backend
+tersedia. Untuk integrasi, atur `GATEWAY_UPSTREAM_URL` pada alamat internal Gateway,
+set `FRONTEND_DATA_MODE=gateway`, kemudian build ulang SPA. Gateway harus menerima
+kontrak identitas terverifikasi dari bridge dan menjaga otorisasi data Media.
+
+Envoy meneruskan `/auth/*` dan `/api/*` ke bridge pada origin aplikasi. API tidak
+dapat melewati pemeriksaan Auth dengan mengakses `api.localhost:8080`. Bila
+Gateway belum dikonfigurasi, endpoint API yang dilindungi mengembalikan 503 untuk
+pengguna terautentikasi. Sumber BMKG/PVMBG tidak diekspos lewat cookie browser.
+
+HTTP dan cookie tanpa atribut `Secure` hanya untuk loopback lokal pada stack ini.
+Server di luar komputer lokal membutuhkan HTTPS, issuer/callback yang sesuai,
+cookie `Secure`, dan kebijakan login yang disesuaikan. Port PostgreSQL, Zitadel
+internal, dan bridge tidak dipublikasikan ke host.
+
+## Pemeriksaan
+
+```powershell
+python -m unittest discover -s tools -p test_setup_auth_env.py -v
+node --check services/zitadel/bootstrap.mjs
+node --test services/zitadel/bootstrap.test.mjs
+docker compose --env-file .env.auth -f compose.auth.yaml config --quiet
+docker compose --env-file .env.auth -f compose.auth.yaml logs auth-bootstrap
+```
+
+Lihat [panduan Auth](../../docs/auth-testing.md) untuk alur login, cookie, refresh,
+logout, dan pemeriksaan hak akses. Pengujian bootstrap lokal memakai provider
+HTTP terkendali untuk memeriksa idempotensi; pengujian itu tidak menggantikan
+pengujian stack Zitadel sebenarnya. Pengujian browser langsung terhadap Docker
+telah lulus 45 pemeriksaan melalui `node tools/test_auth_browser.mjs`, termasuk
+expiry alami 60 detik dan restart bridge. Saat logout, selesaikan konfirmasi
+**End Session** pada halaman resmi Zitadel.
+
+Konfigurasi mengikuti [Compose resmi versi v4.16.0](https://github.com/zitadel/zitadel/blob/v4.16.0/deploy/compose/docker-compose.yml)
+dan [Admin API pengaturan OIDC](https://zitadel.com/docs/reference/api/admin/zitadel.admin.v1.AdminService.UpdateOIDCSettings).
