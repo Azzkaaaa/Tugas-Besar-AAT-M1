@@ -288,6 +288,7 @@ deployment; variabel di atas belum menjalankan broker.
 | `OTEL_COLLECTOR_ADDRESS`, `OTEL_COLLECTOR_GRPC_PORT` | `otel-lgtm`, `4317` | Envoy (template; OTLP/gRPC) |
 | `NGINX_OTEL_TRACE`, `NGINX_OTEL_ENDPOINT` | `off`, `localhost:4317` (image); `on`, `otel-lgtm:4317` (`compose.yaml`) | spa-server (`ngx_otel_module`, gRPC saja) |
 | `ZITADEL_INSTRUMENTATION_*` | `auto` (`compose.yaml`) | Zitadel; `auto` membaca variabel `OTEL_*` standar |
+| `ENVOY_HEALTH_PATH` | `/healthz` | Envoy; route health tanpa trace untuk probe |
 
 `compose.yaml` menjalankan `grafana/otel-lgtm` (Grafana `:3000`, OTLP `:4317`/`:4318`,
 Prometheus `:9090`). Sinyal yang dikirim:
@@ -296,11 +297,13 @@ Prometheus `:9090`). Sinyal yang dikirim:
 | --- | --- | --- | --- |
 | aggregator, webhook-provider | ya | ya | tidak |
 | danger-notification | ya | ya | ya |
-| api-gateway, event-live-feed | ya | tidak | tidak |
+| api-gateway | ya | ya (durasi klien gRPC dan server HTTP) | tidak |
+| event-live-feed | ya | tidak | tidak |
 | envoy | ya | ya (stats sink) | tidak |
 | zitadel | ya | ya | ya |
 | zitadel-login | ya | ya | — |
-| auth-bridge, zitadel-claims | ya | tidak | tidak |
+| auth-bridge | ya | ya (durasi panggilan ke Zitadel) | tidak |
+| zitadel-claims | ya | tidak | tidak |
 | spa-server | ya | tidak | tidak |
 | aggregator-db, auth-db, rabbitmq | — | di-scrape collector | — |
 
@@ -308,6 +311,71 @@ Scraping Postgres dan RabbitMQ didefinisikan di `services/otel-lgtm/otelcol-extr
 digabung dengan konfigurasi bawaan image melalui `OTELCOL_EXTRA_ARGS`. Saat merge,
 list diganti (bukan ditambah), sehingga receiver bawaan `otlp` dan
 `prometheus/collector` harus tetap ditulis. Validasi dengan `nx run otel-lgtm:validate`.
+
+### Health check
+
+`blackbox` (`prom/blackbox-exporter`, modul di `services/blackbox/blackbox.yml`)
+memeriksa setiap service; collector otel-lgtm men-scrape `/probe` per target
+(`prometheus/blackbox` di `otelcol-extra.yaml`) sehingga Prometheus menerima
+`probe_success{service="..."}` (1 sehat, 0 gagal) dan `probe_duration_seconds`.
+
+| Probe | Target |
+| --- | --- |
+| gRPC `grpc.health.v1` | aggregator-service, feed-service, webhook-provider, notification-service |
+| HTTP | api-gateway `/healthz`, auth-bridge `/health`, zitadel-claims `/health`, zitadel `/debug/healthz`, zitadel-login `/ui/v2/login/healthy`, spa-server `/health`, envoy `/healthz` (Host `localhost`) |
+| TCP | aggregator-db, auth-db, rabbitmq |
+
+Mock BMKG/PVMBG tidak diprobe: keduanya mewakili API eksternal, dan kesehatannya
+terlihat dari sisi aggregator (span klien, node service graph, alert latensi keluar).
+
+Container `blackbox` memakai `dns: [127.0.0.1]`. grpc-go mencari record TXT
+`_grpc_config.<host>` sebelum setiap dial; pada host dengan resolver upstream yang
+lambat, pencarian itu menunggu 10 detik sehingga setiap probe gRPC melewati batas
+waktu scrape. Nama service tetap di-resolve oleh DNS internal Docker.
+
+Request health tidak di-trace (api-gateway, auth-bridge, zitadel-claims, health
+gRPC pada aggregator dan webhook-provider, route health Envoy) agar trace dan
+span metrics Tempo tidak tertutup probe yang berjalan setiap beberapa detik.
+
+### Latensi panggilan keluar
+
+Span klien mencatat setiap panggilan keluar: Envoy ke upstream, api-gateway ke
+backend gRPC, aggregator ke mock, RabbitMQ, dan Postgres (`otelpgx`, hanya di dalam
+span pemanggil; polling outbox 200 ms tidak membuat trace), webhook-provider ke URL
+subscriber, danger-notification ke HTTP luar, auth-bridge ke Zitadel, dan
+event-live-feed ke Zitadel (discovery, JWKS, token exchange).
+
+api-gateway menamai span server menurut route (`GET /api/v1/hazards/{hazard_id}`)
+setelah chi mencocokkan request, sehingga latensi per endpoint terpisah. Klien gRPC-nya
+memakai `grpc.WithDisableServiceConfig()`: tanpa itu, lookup TXT `_grpc_config` yang
+lambat membuat semua request gagal 503 selama ~10 detik setelah gateway mulai.
+
+Token exchange Envoy (modul BOE) memanggil Zitadel tanpa span dan tanpa
+`traceparent`; panggilan itu muncul sebagai trace terpisah di Zitadel
+(`/oauth/v2/token`), dan latensinya termasuk waktu upstream cluster `zitadel` Envoy.
+
+Tempo memakai `services/otel-lgtm/tempo-config.yaml` (salinan konfigurasi image
+`grafana/otel-lgtm:0.35.0`; sinkronkan ulang saat upgrade). Perubahannya:
+`server.address` menjadi dimensi span metrics (`traces_spanmetrics_*{server_address}`)
+dan peer attribute service graph, sehingga target tanpa span sendiri (mock, URL
+webhook, FCM, Postgres) muncul sebagai node dengan latensi sisi klien
+(`traces_service_graph_request_client_seconds`).
+
+### Alert dan dashboard
+
+`services/otel-lgtm/grafana/` di-mount ke provisioning Grafana:
+
+| Alert | Kondisi |
+| --- | --- |
+| Service down | `probe_success` < 1 selama 1 menit |
+| Health probes not running | scrape `health-*` gagal selama 2 menit (blackbox mati) |
+| High error rate | > 5% span server error selama 5 menit |
+| Slow outgoing calls | p95 panggilan antar-node service graph > 2 detik selama 5 menit (kecuali ke mock) |
+| Slow upstream source | p95 polling aggregator ke mock > 5 detik (mock sengaja menunda hingga 3 detik) |
+
+Belum ada contact point; alert yang aktif terlihat di Grafana > Alerting.
+Dashboard **BNPB Health & Traces** (folder BNPB) menampilkan status probe, peta
+service, rate/error/latensi per service, latensi keluar per target, dan trace terbaru.
 
 Query string `/auth/callback` membawa authorization code sekali pakai, sehingga
 route itu tidak pernah di-sampling di Envoy dan auth-bridge hanya mencatat path

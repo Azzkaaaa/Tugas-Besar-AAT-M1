@@ -71,8 +71,11 @@ func run(cfg config.Config) error {
 	}()
 	dial := func(address string) (*grpc.ClientConn, error) {
 		// Connections are lazy: a missing backend yields 503 on its routes only.
+		// No service config is used, so skip its _grpc_config TXT lookup: a resolver that is slow to
+		// answer missing records otherwise holds every call for ~10 s after each (re)connect.
 		conn, err := grpc.NewClient(address,
 			grpc.WithTransportCredentials(insecure.NewCredentials()),
+			grpc.WithDisableServiceConfig(),
 			grpc.WithStatsHandler(otelgrpc.NewClientHandler()))
 		if err == nil {
 			conns = append(conns, conn)

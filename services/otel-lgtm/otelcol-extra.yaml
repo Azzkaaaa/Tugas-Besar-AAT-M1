@@ -22,7 +22,57 @@ receivers:
     username: ${env:RABBITMQ_DEFAULT_USER}
     password: ${env:RABBITMQ_DEFAULT_PASS}
 
+  # Health probes: the collector scrapes blackbox_exporter's /probe once per target
+  # (services/blackbox). probe_success{service="..."} is 1 when the target is healthy.
+  prometheus/blackbox:
+    config:
+      scrape_configs:
+        - job_name: health-grpc
+          scrape_interval: 15s
+          metrics_path: /probe
+          params: { module: [grpc_health] }
+          static_configs:
+            - { targets: ["aggregator-service:9091"], labels: { service: aggregator-service } }
+            - { targets: ["feed-service:9093"], labels: { service: feed-service } }
+            - { targets: ["webhook-provider:9094"], labels: { service: webhook-provider } }
+            - { targets: ["notification-service:9095"], labels: { service: notification-service } }
+          relabel_configs: &probe_relabel
+            - { source_labels: [__address__], target_label: __param_target }
+            - { source_labels: [__param_target], target_label: instance }
+            - { target_label: __address__, replacement: "blackbox:9115" }
+
+        - job_name: health-http
+          scrape_interval: 15s
+          metrics_path: /probe
+          params: { module: [http_2xx] }
+          static_configs:
+            - { targets: ["http://api-gateway:8080/healthz"], labels: { service: api-gateway } }
+            - { targets: ["http://auth-bridge:3001/health"], labels: { service: auth-bridge } }
+            - { targets: ["http://zitadel-claims:3002/health"], labels: { service: zitadel-claims } }
+            - { targets: ["http://zitadel:8080/debug/healthz"], labels: { service: zitadel } }
+            - { targets: ["http://zitadel-login:3000/ui/v2/login/healthy"], labels: { service: zitadel-login } }
+            - { targets: ["http://spa-server:80/health"], labels: { service: spa-server } }
+          relabel_configs: *probe_relabel
+
+        - job_name: health-http-envoy
+          scrape_interval: 15s
+          metrics_path: /probe
+          params: { module: [http_2xx_envoy] }
+          static_configs:
+            - { targets: ["http://envoy:8080/healthz"], labels: { service: envoy } }
+          relabel_configs: *probe_relabel
+
+        - job_name: health-tcp
+          scrape_interval: 15s
+          metrics_path: /probe
+          params: { module: [tcp_connect] }
+          static_configs:
+            - { targets: ["aggregator-db:5432"], labels: { service: aggregator-db } }
+            - { targets: ["auth-db:5432"], labels: { service: auth-db } }
+            - { targets: ["rabbitmq:5672"], labels: { service: rabbitmq } }
+          relabel_configs: *probe_relabel
+
 service:
   pipelines:
     metrics:
-      receivers: [otlp, prometheus/collector, postgresql/aggregator, postgresql/auth, rabbitmq]
+      receivers: [otlp, prometheus/collector, postgresql/aggregator, postgresql/auth, rabbitmq, prometheus/blackbox]

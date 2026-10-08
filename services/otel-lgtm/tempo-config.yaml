@@ -1,0 +1,58 @@
+# Copy of /otel-lgtm/tempo-config.yaml from grafana/otel-lgtm:0.35.0 (Tempo 3.0.3), mounted over
+# it by compose.yaml. Changes are marked "BNPB". Re-sync with the image's file when upgrading.
+server:
+  http_listen_port: 3200
+  grpc_listen_port: 9096
+
+distributor:
+  receivers:
+    otlp:
+      protocols:
+        grpc:
+          endpoint: "127.0.0.1:4417"
+        http:
+          endpoint: "127.0.0.1:4418"
+
+memberlist:
+  bind_addr: [127.0.0.1]
+  bind_port: 7947
+
+querier:
+  frontend_worker:
+    frontend_address: 127.0.0.1:9096
+
+storage:
+  trace:
+    backend: local
+    wal:
+      path: /data/tempo/wal
+    local:
+      path: /data/tempo/blocks
+
+metrics_generator:
+  processor:
+    span_metrics:
+      dimensions:
+        - service_name
+        - operation
+        - status_code
+        # BNPB: splits outgoing calls by target (traces_spanmetrics_*{server_address=...}).
+        - server.address
+    # BNPB: peers without their own spans (mocks, webhook targets, FCM, Postgres) become
+    # service-graph nodes, so their client-side latency appears on the map and in alerts.
+    service_graphs:
+      peer_attributes:
+        - peer.service
+        - db.name
+        - db.system
+        - server.address
+  storage:
+    path: /data/tempo/generator/wal
+    remote_write:
+      - url: http://127.0.0.1:9090/api/v1/write
+        send_exemplars: true
+
+overrides:
+  defaults:
+    metrics_generator:
+      processors: [service-graphs, span-metrics]

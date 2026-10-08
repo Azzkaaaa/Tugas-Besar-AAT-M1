@@ -1,0 +1,33 @@
+# Probe modules for blackbox_exporter. Targets and the per-target `service` label live in
+# services/otel-lgtm/otelcol-extra.yaml, whose collector scrapes /probe and forwards to Prometheus.
+modules:
+  # Plain HTTP health endpoints (/health, /healthz, ...).
+  http_2xx:
+    prober: http
+    timeout: 5s
+    http:
+      preferred_ip_protocol: ip4
+
+  # Envoy only routes the application virtual host, so the probe must send its Host.
+  http_2xx_envoy:
+    prober: http
+    timeout: 5s
+    http:
+      preferred_ip_protocol: ip4
+      headers:
+        Host: localhost
+
+  # grpc.health.v1/Check on the service's gRPC port (overall status, service "").
+  grpc_health:
+    prober: grpc
+    timeout: 5s
+    grpc:
+      tls: false
+      preferred_ip_protocol: ip4
+
+  # Port reachability for dependencies whose internals the collector already scrapes.
+  tcp_connect:
+    prober: tcp
+    timeout: 5s
+    tcp:
+      preferred_ip_protocol: ip4

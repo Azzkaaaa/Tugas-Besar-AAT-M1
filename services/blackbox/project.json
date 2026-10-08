@@ -1,0 +1,16 @@
+{
+  "$schema": "../../node_modules/nx/schemas/project-schema.json",
+  "name": "blackbox",
+  "projectType": "application",
+  "sourceRoot": "services/blackbox",
+  "targets": {
+    "validate": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "docker run --rm -v \"$PWD/services/blackbox/blackbox.yml:/etc/blackbox/blackbox.yml:ro\" prom/blackbox-exporter:v0.27.0 --config.file=/etc/blackbox/blackbox.yml --config.check",
+        "cwd": "{workspaceRoot}"
+      },
+      "cache": false
+    }
+  }
+}

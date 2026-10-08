@@ -73,7 +73,8 @@ func main() {
 	pvmbgPoller := ingest.NewPVMBGPoller(cfg, db)
 	go pvmbgPoller.Start(ctx)
 
-	// 4. Initialize Auth JWT Verifier (JWKS via OIDC discovery)
+	// 4. Initialize Auth JWT Verifier. Discovery and JWKS load in the background (retried until the
+	// issuer behind Envoy answers), so ingestion never waits on auth; only bad config is fatal.
 	verifier, err := auth.NewJWTVerifier(ctx, auth.JWTVerifierConfig{
 		AuthAuthority:      cfg.AuthAuthority,
 		Audience:           cfg.AuthAudience,
@@ -81,7 +82,7 @@ func main() {
 		InsecureSkipVerify: cfg.AuthInsecureSkipVerify,
 	})
 	if err != nil {
-		log.Fatalf("[Aggregator] FATAL: Failed initializing JWT verifier: %v", err)
+		log.Fatalf("[Aggregator] FATAL: Invalid JWT verifier configuration: %v", err)
 	}
 	defer verifier.Close()
 

@@ -12,6 +12,7 @@ import (
 	"github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/aggregator/internal/config"
 	"github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/aggregator/internal/store"
 	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
+	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc/filters"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/health"
@@ -37,9 +38,9 @@ func (s *Server) Start(ctx context.Context) error {
 	}
 	// OTel + JWT interceptor chain & stats handler.
 	grpcSrv := grpc.NewServer(
-		grpc.StatsHandler(otelgrpc.NewServerHandler()),
+		// One span per RPC from the stats handler; probes of grpc.health.v1 are not traced.
+		grpc.StatsHandler(otelgrpc.NewServerHandler(otelgrpc.WithFilter(filters.Not(filters.HealthCheck())))),
 		grpc.ChainUnaryInterceptor(
-			otelgrpc.UnaryServerInterceptor(),
 			s.auth.UnaryServerInterceptor(),
 		),
 	)

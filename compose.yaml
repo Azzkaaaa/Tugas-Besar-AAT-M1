@@ -16,10 +16,32 @@ services:
       - RABBITMQ_DEFAULT_PASS=${RABBITMQ_DEFAULT_PASS}
     volumes:
       - ./services/otel-lgtm/otelcol-extra.yaml:/otel-lgtm/otelcol-extra.yaml:ro
+      # Tempo span metrics and service graph split outgoing calls by target.
+      - ./services/otel-lgtm/tempo-config.yaml:/otel-lgtm/tempo-config.yaml:ro
+      # BNPB alert rules and the "BNPB Health & Traces" dashboard.
+      - ./services/otel-lgtm/grafana/alerting/bnpb-rules.yaml:/otel-lgtm/grafana/conf/provisioning/alerting/bnpb-rules.yaml:ro
+      - ./services/otel-lgtm/grafana/dashboards/provider.yaml:/otel-lgtm/grafana/conf/provisioning/dashboards/bnpb.yaml:ro
+      - ./services/otel-lgtm/grafana/dashboards:/otel-lgtm/bnpb-dashboards:ro
     networks:
       bnpb_net:
         aliases:
           - otel-lgtm.local
+
+  # Health probes (HTTP, gRPC health, TCP), scraped by the otel-lgtm collector.
+  # Targets are in services/otel-lgtm/otelcol-extra.yaml; modules in services/blackbox.
+  blackbox:
+    image: prom/blackbox-exporter:v0.27.0
+    command: ["--config.file=/etc/blackbox/blackbox.yml"]
+    volumes:
+      - ./services/blackbox/blackbox.yml:/etc/blackbox/blackbox.yml:ro
+    # Service names still resolve through Docker's embedded DNS. Unknown names fail at once
+    # instead of going upstream: grpc-go looks up a _grpc_config TXT record before every dial,
+    # and a slow upstream resolver turns each gRPC probe into a 10 s scrape timeout.
+    dns: [127.0.0.1]
+    networks:
+      bnpb_net:
+        aliases:
+          - blackbox.local
 
   envoy:
     extends:
@@ -70,6 +92,8 @@ services:
       OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-lgtm:4318
       OTEL_EXPORTER_OTLP_PROTOCOL: http/protobuf
       OTEL_SERVICE_NAME: auth-bridge
+      # Undici records http.client.request.duration for the calls to Zitadel.
+      OTEL_METRICS_EXPORTER: otlp
     depends_on:
       otel-lgtm:
         condition: service_started

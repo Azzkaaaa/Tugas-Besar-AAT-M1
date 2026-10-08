@@ -57,7 +57,7 @@ kosong. Nilai default ada di [`envoy.env.example`](envoy.env.example) dan anchor
 
 | Kelompok | Variabel |
 | --- | --- |
-| Listener dan host | `ENVOY_LISTEN_PORT`, `APP_HOST`, `APP_ORIGIN`, `AUTH_HOST` |
+| Listener dan host | `ENVOY_LISTEN_PORT`, `ENVOY_HEALTH_PATH`, `APP_HOST`, `APP_ORIGIN`, `AUTH_HOST` |
 | Prefix route | `AUTH_ROUTE_PREFIX`, `API_ROUTE_PREFIX`, `LOGIN_UI_ROUTE_PREFIX` |
 | Upstream | `ZITADEL_*`, `ZITADEL_LOGIN_*`, `AUTH_BRIDGE_*`, `SPA_*`, `API_GATEWAY_*` (`_ADDRESS`, `_PORT`) |
 | Token exchange | `TOKEN_EXCHANGE_URL`, `TOKEN_EXCHANGE_CLIENT_ID`, `TOKEN_EXCHANGE_CLIENT_SECRET` |

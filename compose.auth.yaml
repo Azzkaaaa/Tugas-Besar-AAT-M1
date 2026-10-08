@@ -5,6 +5,7 @@ name: bnpb-auth
 # Template variables for services/envoy/templates (see services/envoy/envoy.env.example).
 x-envoy-env: &envoy-env
   ENVOY_LISTEN_PORT: "8080"
+  ENVOY_HEALTH_PATH: /healthz
   APP_HOST: localhost
   APP_ORIGIN: http://localhost:8080
   AUTH_HOST: auth.localhost

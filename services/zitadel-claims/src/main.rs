@@ -49,8 +49,13 @@ async fn claims(State(config): State<Arc<Config>>, headers: HeaderMap, body: Byt
 
 async fn log(request: Request, next: Next) -> Response {
     let (method, path, start) = (request.method().to_string(), request.uri().path().to_owned(), Instant::now());
-    let span = tracing::info_span!("http_request", otel.name = %format!("{method} {path}"), otel.kind = "server",
-        http.request.method = %method, url.path = %path, http.response.status_code = tracing::field::Empty);
+    // Health probes stay out of traces; the request log below still records them.
+    let span = if path == "/health" {
+        tracing::Span::none()
+    } else {
+        tracing::info_span!("http_request", otel.name = %format!("{method} {path}"), otel.kind = "server",
+            http.request.method = %method, url.path = %path, http.response.status_code = tracing::field::Empty)
+    };
     let _ = span.set_parent(telemetry::http_parent(request.headers()));
     let response = next.run(request).instrument(span.clone()).await;
     span.record("http.response.status_code", response.status().as_u16());

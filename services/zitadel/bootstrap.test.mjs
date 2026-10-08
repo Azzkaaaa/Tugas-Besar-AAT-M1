@@ -218,6 +218,20 @@ test('service user created without a secret gets one on the next run', async t =
   assert.equal(await readFile(join(f.serviceDir, 'svc-media.secret'), 'utf8'), 'svc-media-test-secret');
 });
 
+test('fresh Zitadel replaces a stale service user secret file', async t => {
+  const f = await fixture(t);
+  await f.run();
+  // A new database: the user exists again but has no secret, while the old file is still on disk.
+  const user = f.state.users.find(item => item.userName === 'svc-bnpb');
+  user.machine.hasSecret = false;
+  await writeFile(join(f.serviceDir, 'svc-bnpb.secret'), 'secret-from-another-instance');
+  const changes = f.state.changes;
+  await f.run();
+  assert.equal(f.state.changes, changes + 1);
+  assert.equal(user.machine.hasSecret, true);
+  assert.equal(await readFile(join(f.serviceDir, 'svc-bnpb.secret'), 'utf8'), 'svc-bnpb-test-secret');
+});
+
 test('existing claims target without saved signing key fails without rotation', async t => {
   const f = await fixture(t);
   await f.run();

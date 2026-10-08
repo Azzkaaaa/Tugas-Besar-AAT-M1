@@ -1,0 +1,164 @@
+# Grafana alert rules, mounted into provisioning/alerting by compose.yaml.
+# No contact point is configured: firing alerts show in Grafana > Alerting.
+apiVersion: 1
+groups:
+- orgId: 1
+  name: bnpb-health
+  folder: BNPB
+  interval: 30s
+  rules:
+  - uid: bnpb-service-down
+    title: Service down
+    condition: C
+    for: 1m
+    noDataState: OK
+    execErrState: Error
+    labels:
+      team: bnpb
+    annotations:
+      summary: '{{ $labels.service }} fails its health probe (blackbox_exporter).'
+    data:
+    - refId: A
+      datasourceUid: prometheus
+      relativeTimeRange:
+        from: 600
+        to: 0
+      model:
+        refId: A
+        expr: max by (service) (probe_success)
+        instant: true
+    - refId: C
+      datasourceUid: __expr__
+      model:
+        refId: C
+        type: threshold
+        expression: A
+        conditions:
+        - evaluator:
+            type: lt
+            params:
+            - 1
+  - uid: bnpb-probe-scrape-failing
+    title: Health probes not running
+    condition: C
+    for: 2m
+    noDataState: Alerting
+    execErrState: Error
+    labels:
+      team: bnpb
+    annotations:
+      summary: The collector cannot scrape blackbox_exporter for {{ $labels.job }}; service health is unknown.
+    data:
+    - refId: A
+      datasourceUid: prometheus
+      relativeTimeRange:
+        from: 600
+        to: 0
+      model:
+        refId: A
+        expr: max by (job) (up{job=~"health-.*"})
+        instant: true
+    - refId: C
+      datasourceUid: __expr__
+      model:
+        refId: C
+        type: threshold
+        expression: A
+        conditions:
+        - evaluator:
+            type: lt
+            params:
+            - 1
+  - uid: bnpb-error-rate
+    title: High error rate
+    condition: C
+    for: 5m
+    noDataState: OK
+    execErrState: Error
+    labels:
+      team: bnpb
+    annotations:
+      summary: More than 5% of {{ $labels.service }} requests fail.
+    data:
+    - refId: A
+      datasourceUid: prometheus
+      relativeTimeRange:
+        from: 600
+        to: 0
+      model:
+        refId: A
+        expr: sum by (service) (rate(traces_spanmetrics_calls_total{span_kind="SPAN_KIND_SERVER", status_code="STATUS_CODE_ERROR"}[5m])) / sum by (service) (rate(traces_spanmetrics_calls_total{span_kind="SPAN_KIND_SERVER"}[5m]))
+        instant: true
+    - refId: C
+      datasourceUid: __expr__
+      model:
+        refId: C
+        type: threshold
+        expression: A
+        conditions:
+        - evaluator:
+            type: gt
+            params:
+            - 0.05
+  - uid: bnpb-slow-outgoing
+    title: Slow outgoing calls
+    condition: C
+    for: 5m
+    noDataState: OK
+    execErrState: Error
+    labels:
+      team: bnpb
+    annotations:
+      summary: p95 of {{ $labels.client }} -> {{ $labels.server }} calls is above 2 s (api-gateway request timeout).
+    data:
+    - refId: A
+      datasourceUid: prometheus
+      relativeTimeRange:
+        from: 600
+        to: 0
+      model:
+        refId: A
+        expr: histogram_quantile(0.95, sum by (client, server, le) (rate(traces_service_graph_request_client_seconds_bucket{server!~"bmkg-mock|pvmbg-mock"}[5m])))
+        instant: true
+    - refId: C
+      datasourceUid: __expr__
+      model:
+        refId: C
+        type: threshold
+        expression: A
+        conditions:
+        - evaluator:
+            type: gt
+            params:
+            - 2
+  - uid: bnpb-slow-upstream-source
+    title: Slow upstream source
+    condition: C
+    for: 5m
+    noDataState: OK
+    execErrState: Error
+    labels:
+      team: bnpb
+    annotations:
+      summary: p95 of {{ $labels.client }} polls to {{ $labels.server }} is above 5 s.
+    data:
+    - refId: A
+      datasourceUid: prometheus
+      relativeTimeRange:
+        from: 600
+        to: 0
+      model:
+        refId: A
+        expr: histogram_quantile(0.95, sum by (client, server, le) (rate(traces_service_graph_request_client_seconds_bucket{server=~"bmkg-mock|pvmbg-mock"}[5m])))
+        instant: true
+    - refId: C
+      datasourceUid: __expr__
+      model:
+        refId: C
+        type: threshold
+        expression: A
+        conditions:
+        - evaluator:
+            type: gt
+            params:
+            - 5

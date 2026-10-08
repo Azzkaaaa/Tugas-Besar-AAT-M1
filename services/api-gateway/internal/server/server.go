@@ -16,6 +16,8 @@ import (
 	"github.com/google/uuid"
 	validator "github.com/oapi-codegen/nethttp-middleware"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 	"google.golang.org/grpc/metadata"
 
 	gw "github.com/Azzkaaaa/Tugas-Besar-AAT-M1/packages/bnpb-gateway-go/gatewayapi"
@@ -58,7 +60,7 @@ func New(opts Options) http.Handler {
 	)
 
 	router := chi.NewRouter()
-	router.Use(g.recoverer, g.correlation)
+	router.Use(spanRoute, g.recoverer, g.correlation)
 	router.Get("/healthz", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) })
 	router.NotFound(func(w http.ResponseWriter, r *http.Request) {
 		g.write(w, r, nil, problem.New(http.StatusNotFound, "No API operation matches this path."))
@@ -69,12 +71,25 @@ func New(opts Options) http.Handler {
 	api := router.With(g.validate())
 	gw.HandlerWithOptions(strict, gw.ChiServerOptions{BaseRouter: api, ErrorHandlerFunc: g.requestError})
 
+	// Spans start as "GET"; spanRoute renames them once chi has matched the route.
 	return otelhttp.NewHandler(router, "api-gateway", otelhttp.WithSpanNameFormatter(func(_ string, r *http.Request) string {
-		if route := chi.RouteContext(r.Context()); route != nil && route.RoutePattern() != "" {
-			return r.Method + " " + route.RoutePattern()
-		}
 		return r.Method
-	}))
+	}),
+		// Health probes and the container healthcheck would otherwise add a trace every few seconds.
+		otelhttp.WithFilter(func(r *http.Request) bool { return r.URL.Path != "/healthz" }))
+}
+
+// spanRoute names the server span after the matched route ("GET /api/v1/hazards/{hazard_id}").
+// otelhttp names spans before routing, when chi's route pattern is still empty.
+func spanRoute(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		next.ServeHTTP(w, r)
+		if route := chi.RouteContext(r.Context()); route != nil && route.RoutePattern() != "" {
+			span := trace.SpanFromContext(r.Context())
+			span.SetName(r.Method + " " + route.RoutePattern())
+			span.SetAttributes(attribute.String("http.route", route.RoutePattern()))
+		}
+	})
 }
 
 // validate checks every request against the embedded contract: parameter types, enum labels,

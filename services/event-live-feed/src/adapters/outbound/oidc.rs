@@ -6,10 +6,12 @@ use jsonwebtoken::{Algorithm, DecodingKey, Validation};
 use serde::Deserialize;
 use tokio::sync::OnceCell;
 use tokio::time::Instant;
+use tracing::Instrument;
 
 use crate::config::ClientCredentials;
 use crate::core::models::Actor;
 use crate::core::ports::{ActorVerifier, AuthError, TokenRenewer};
+use crate::telemetry;
 
 const HTTP_TIMEOUT: Duration = Duration::from_secs(5);
 /// Unknown `kid`s trigger a JWKS refetch at most this often, so forged headers cannot flood Zitadel.
@@ -32,6 +34,31 @@ struct Metadata {
     token_endpoint: String,
 }
 
+/// Sends a Zitadel request in a client span that carries `traceparent` upstream.
+/// Only the path is recorded: the query and form body may hold tokens.
+async fn traced(request: reqwest::RequestBuilder) -> reqwest::Result<reqwest::Response> {
+    let (client, request) = request.build_split();
+    let mut request = request?;
+    let (method, url) = (request.method().clone(), request.url().clone());
+    let span = tracing::info_span!("zitadel_request", otel.name = %format!("{method} {}", url.path()), otel.kind = "client",
+        http.request.method = %method, server.address = url.host_str().unwrap_or_default(), url.path = url.path(),
+        http.response.status_code = tracing::field::Empty, otel.status_code = tracing::field::Empty);
+    telemetry::inject(&span, request.headers_mut());
+    let response = client.execute(request).instrument(span.clone()).await;
+    match &response {
+        Ok(response) => {
+            span.record("http.response.status_code", response.status().as_u16());
+            if response.status().is_server_error() {
+                span.record("otel.status_code", "error");
+            }
+        }
+        Err(_) => {
+            span.record("otel.status_code", "error");
+        }
+    }
+    response
+}
+
 /// Zitadel endpoints from OIDC discovery, fetched on first use.
 pub struct Oidc {
     http: reqwest::Client,
@@ -49,7 +76,7 @@ impl Oidc {
         self.metadata
             .get_or_try_init(|| async {
                 let url = format!("{}/.well-known/openid-configuration", self.issuer);
-                let response = self.http.get(url).send().await.and_then(reqwest::Response::error_for_status);
+                let response = traced(self.http.get(url)).await.and_then(reqwest::Response::error_for_status);
                 let response = response.map_err(|error| AuthError::Unavailable(format!("OIDC discovery failed: {error}")))?;
                 response.json().await.map_err(|error| AuthError::Unavailable(format!("OIDC discovery is malformed: {error}")))
             })
@@ -98,7 +125,7 @@ impl JwksVerifier {
         let fetched_at = self.keys.read().unwrap_or_else(|poisoned| poisoned.into_inner()).1;
         if fetched_at.is_none_or(|at| at.elapsed() >= JWKS_MIN_REFRESH) {
             let url = &self.oidc.metadata().await?.jwks_uri;
-            let response = self.oidc.http.get(url).send().await.and_then(reqwest::Response::error_for_status);
+            let response = traced(self.oidc.http.get(url)).await.and_then(reqwest::Response::error_for_status);
             let response = response.map_err(|error| AuthError::Unavailable(format!("JWKS fetch failed: {error}")))?;
             let set: JwkSet = response.json().await.map_err(|error| AuthError::Unavailable(format!("JWKS is malformed: {error}")))?;
             *self.keys.write().unwrap_or_else(|poisoned| poisoned.into_inner()) = (set, Some(Instant::now()));
@@ -169,15 +196,8 @@ impl TokenRenewer for ZitadelTokenExchange {
             ("subject_token_type", "urn:ietf:params:oauth:token-type:access_token"),
             ("requested_token_type", "urn:ietf:params:oauth:token-type:jwt"),
         ];
-        let response = self
-            .oidc
-            .http
-            .post(endpoint)
-            .basic_auth(&self.client.client_id, Some(&self.client.client_secret))
-            .form(&form)
-            .send()
-            .await
-            .map_err(|error| AuthError::Unavailable(format!("token exchange failed: {error}")))?;
+        let request = self.oidc.http.post(endpoint).basic_auth(&self.client.client_id, Some(&self.client.client_secret)).form(&form);
+        let response = traced(request).await.map_err(|error| AuthError::Unavailable(format!("token exchange failed: {error}")))?;
         let status = response.status();
         if status.is_success() {
             let body: TokenResponse =

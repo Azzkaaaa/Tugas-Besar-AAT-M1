@@ -1,0 +1,11 @@
+# Mounted into Grafana's provisioning/dashboards next to the image's own providers.
+apiVersion: 1
+
+providers:
+  - name: BNPB
+    folder: BNPB
+    type: file
+    disableDeletion: true
+    options:
+      path: /otel-lgtm/bnpb-dashboards
+      foldersFromFilesStructure: false

@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { pathToFileURL } from 'node:url';
 import { parseCookie, stringifySetCookie } from 'cookie';
 import { setTimeout as delay } from 'node:timers/promises';
-import { context, propagation, trace, SpanKind, SpanStatusCode } from '@opentelemetry/api';
+import { context, propagation, trace, INVALID_SPAN_CONTEXT, SpanKind, SpanStatusCode } from '@opentelemetry/api';
 import { loadConfig, ProvisioningPending } from './config.mjs';
 import { SessionStore, randomSecret, equal } from './store.mjs';
 import { ZitadelProvider, AuthError, requestContext } from './provider.mjs';
@@ -145,7 +145,8 @@ export function createAuthServer(config, { store = new SessionStore(config.datab
     const start = performance.now();
     // The query is never recorded: /auth/callback carries the single-use authorization code.
     const path = req.url?.split('?')[0];
-    const span = tracer.startSpan(`${req.method} ${path}`, { kind: SpanKind.SERVER,
+    // Health probes stay out of traces; the request log below still records them.
+    const span = path === '/health' ? trace.wrapSpanContext(INVALID_SPAN_CONTEXT) : tracer.startSpan(`${req.method} ${path}`, { kind: SpanKind.SERVER,
       attributes: { 'http.request.method': req.method, 'url.path': path, correlation_id: correlationId } },
     propagation.extract(context.active(), req.headers));
     res.on('finish', () => logger(JSON.stringify({ event: 'http_request', method: req.method,

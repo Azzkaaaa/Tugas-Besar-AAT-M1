@@ -7,8 +7,12 @@
     "validate": {
       "executor": "nx:run-commands",
       "options": {
-        "command": "docker run --rm -v \"$PWD/services/otel-lgtm/otelcol-extra.yaml:/otel-lgtm/otelcol-extra.yaml:ro\" -e AGGREGATOR_DB_PASSWORD=validate -e AUTH_POSTGRES_PASSWORD=validate -e RABBITMQ_DEFAULT_USER=validate -e RABBITMQ_DEFAULT_PASS=validate --entrypoint ./otelcol-contrib/otelcol-contrib grafana/otel-lgtm:0.35.0 validate --feature-gates service.profilesSupport --config=file:./otelcol-config.yaml --config=file:./otelcol-extra.yaml",
-        "cwd": "{workspaceRoot}"
+        "cwd": "{workspaceRoot}",
+        "commands": [
+          "docker run --rm -v \"$PWD/services/otel-lgtm/otelcol-extra.yaml:/otel-lgtm/otelcol-extra.yaml:ro\" -e AGGREGATOR_DB_PASSWORD=validate -e AUTH_POSTGRES_PASSWORD=validate -e RABBITMQ_DEFAULT_USER=validate -e RABBITMQ_DEFAULT_PASS=validate --entrypoint ./otelcol-contrib/otelcol-contrib grafana/otel-lgtm:0.35.0 validate --feature-gates service.profilesSupport --config=file:./otelcol-config.yaml --config=file:./otelcol-extra.yaml",
+          "docker run --rm -v \"$PWD/services/otel-lgtm/tempo-config.yaml:/otel-lgtm/tempo-config.yaml:ro\" --entrypoint ./tempo/tempo grafana/otel-lgtm:0.35.0 --config.file=./tempo-config.yaml -config.verify=true"
+        ],
+        "parallel": false
       },
       "cache": false
     }

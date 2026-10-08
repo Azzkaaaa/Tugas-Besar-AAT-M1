@@ -119,7 +119,9 @@ async function ensureUser(username, firstName, lastName, passwordKey) {
 }
 
 // Machine user for non-browser API clients (client_credentials). The client ID is the username;
-// Zitadel generates the secret and cannot return it again, so it is only created when none exists.
+// Zitadel generates the secret and cannot return it again, so it is only created when Zitadel has
+// none. That decision follows Zitadel, not the file: after a fresh database (or a switch between
+// stacks sharing .cache/auth) a leftover file would otherwise be kept for a user without a secret.
 async function ensureServiceUser(username, name) {
   let user = (await all('/management/v1/users/_search')).find(item => item.userName === username);
   if (!user) {
@@ -130,10 +132,11 @@ async function ensureServiceUser(username, name) {
     user = { id: created.userId, machine: { hasSecret: false } };
   }
   const secretFile = join(serviceAccountsDir, `${username}.secret`);
-  if (await exists(secretFile)) return user.id;
   if (user.machine?.hasSecret) {
+    if (await exists(secretFile)) return user.id;
     throw new Error(`Existing ${username} has no persisted secret. Restore .cache/auth/${username}.secret; secrets are not automatically rotated.`);
   }
+  // Overwrites a stale file left from another Zitadel instance.
   const secret = await api(`/management/v1/users/${user.id}/secret`, {}, 'PUT');
   if (secret.clientId !== username || !secret.clientSecret) {
     throw new Error(`Zitadel did not return client credentials matching ${username}.`);

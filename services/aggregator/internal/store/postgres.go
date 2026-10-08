@@ -6,6 +6,8 @@ import (
 	"time"
 
 	"github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/aggregator/internal/domain"
+	"github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/aggregator/internal/telemetry"
+	"github.com/exaring/otelpgx"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -23,6 +25,9 @@ func Connect(ctx context.Context, dsn string) (*DB, error) {
 	config.MinConns = 5
 	config.MaxConnLifetime = 30 * time.Minute
 	config.MaxConnIdleTime = 5 * time.Minute
+	// One client span per query (named by operation, no parameters), only under a caller's span.
+	config.ConnConfig.Tracer = otelpgx.NewTracer(otelpgx.WithDisableAcquireTracer(),
+		otelpgx.WithTracerProvider(telemetry.ParentOnlyTracerProvider()))
 
 	pool, err := pgxpool.NewWithConfig(ctx, config)
 	if err != nil {

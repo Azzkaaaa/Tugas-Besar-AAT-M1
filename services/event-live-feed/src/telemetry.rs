@@ -1,5 +1,5 @@
 use lapin::types::{AMQPValue, FieldTable};
-use opentelemetry::propagation::{Extractor, TextMapPropagator};
+use opentelemetry::propagation::{Extractor, Injector, TextMapPropagator};
 use opentelemetry::trace::TracerProvider;
 use opentelemetry::{Context, global};
 use opentelemetry_otlp::SpanExporter;
@@ -7,6 +7,7 @@ use opentelemetry_sdk::Resource;
 use opentelemetry_sdk::propagation::TraceContextPropagator;
 use opentelemetry_sdk::trace::SdkTracerProvider;
 use tonic::metadata::{KeyRef, MetadataMap};
+use tracing_opentelemetry::OpenTelemetrySpanExt;
 use tracing_subscriber::EnvFilter;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
@@ -38,6 +39,22 @@ pub fn grpc_parent(metadata: &MetadataMap) -> Context {
 /// Trace context the aggregator injects into AMQP headers when publishing.
 pub fn amqp_parent(headers: &FieldTable) -> Context {
     TraceContextPropagator::new().extract(&AmqpExtractor(headers))
+}
+
+/// Adds `span`'s trace context to an outgoing HTTP request; a no-op while tracing is disabled.
+pub fn inject(span: &tracing::Span, headers: &mut http::HeaderMap) {
+    let context = span.context();
+    global::get_text_map_propagator(|propagator| propagator.inject_context(&context, &mut HeaderInjector(headers)));
+}
+
+struct HeaderInjector<'a>(&'a mut http::HeaderMap);
+
+impl Injector for HeaderInjector<'_> {
+    fn set(&mut self, key: &str, value: String) {
+        if let (Ok(name), Ok(value)) = (http::HeaderName::from_bytes(key.as_bytes()), http::HeaderValue::from_str(&value)) {
+            self.0.insert(name, value);
+        }
+    }
 }
 
 struct MetadataExtractor<'a>(&'a MetadataMap);

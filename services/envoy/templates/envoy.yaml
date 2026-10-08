@@ -59,6 +59,13 @@ static_resources:
                     - name: application
                       domains: ["${APP_HOST}", "${APP_HOST}:*"]
                       routes:
+                        # Liveness of the listener and filter chain for the health probe; never traced.
+                        - match: { path: "${ENVOY_HEALTH_PATH}" }
+                          direct_response: { status: 200 }
+                          typed_per_filter_config: *api_filters_disabled
+                          tracing:
+                            overall_sampling: { numerator: 0 }
+
                         # Same as the prefix route below, but untraced: the query holds the OIDC code.
                         - match: { path: "${AUTH_ROUTE_PREFIX}callback" }
                           route: { cluster: auth_bridge, timeout: 30s }
