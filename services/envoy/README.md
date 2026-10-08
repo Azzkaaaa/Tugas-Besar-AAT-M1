@@ -62,6 +62,13 @@ kosong. Nilai default ada di [`envoy.env.example`](envoy.env.example) dan anchor
 | Upstream | `ZITADEL_*`, `ZITADEL_LOGIN_*`, `AUTH_BRIDGE_*`, `SPA_*`, `API_GATEWAY_*` (`_ADDRESS`, `_PORT`) |
 | Token exchange | `TOKEN_EXCHANGE_URL`, `TOKEN_EXCHANGE_CLIENT_ID`, `TOKEN_EXCHANGE_CLIENT_SECRET` |
 | Lua | `AUTH_ACCESS_COOKIE`, `AUTH_COOKIE_PREFIX` |
+| Telemetri | `OTEL_COLLECTOR_ADDRESS`, `OTEL_COLLECTOR_GRPC_PORT` (OTLP/gRPC) |
+
+Envoy mengirim trace (`envoy.tracers.opentelemetry`) dan metrics (stats sink
+OpenTelemetry) ke cluster `otel_collector`. Span mencatat URL lengkap, sehingga
+route `${AUTH_ROUTE_PREFIX}callback` (query berisi authorization code) memakai
+`overall_sampling` 0. Pada stack Auth mandiri host `otel-lgtm` tidak ada; ekspor
+dibuang tanpa memengaruhi routing.
 
 Client ID/secret token exchange dibuat Zitadel saat provisioning. Entrypoint
 membacanya dari `/bootstrap/oidc.json` (volume `auth_client_config`, read-only),

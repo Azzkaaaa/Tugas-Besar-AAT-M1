@@ -1,0 +1,28 @@
+# Merged over the image's built-in /otel-lgtm/otelcol-config.yaml via OTELCOL_EXTRA_ARGS.
+# Maps merge, lists replace: the metrics receivers below must repeat the built-in ones.
+receivers:
+  postgresql/aggregator:
+    endpoint: aggregator-db:5432
+    username: aggregator
+    password: ${env:AGGREGATOR_DB_PASSWORD}
+    databases: [bnpb_canonical]
+    tls:
+      insecure: true
+
+  postgresql/auth:
+    endpoint: auth-db:5432
+    username: postgres
+    password: ${env:AUTH_POSTGRES_PASSWORD}
+    databases: [zitadel]
+    tls:
+      insecure: true
+
+  rabbitmq:
+    endpoint: http://rabbitmq:15672
+    username: ${env:RABBITMQ_DEFAULT_USER}
+    password: ${env:RABBITMQ_DEFAULT_PASS}
+
+service:
+  pipelines:
+    metrics:
+      receivers: [otlp, prometheus/collector, postgresql/aggregator, postgresql/auth, rabbitmq]

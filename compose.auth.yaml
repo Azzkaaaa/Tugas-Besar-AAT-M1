@@ -23,6 +23,9 @@ x-envoy-env: &envoy-env
   # authenticated API calls get a 503 problem from the gateway.
   API_GATEWAY_ADDRESS: api-gateway
   API_GATEWAY_PORT: "8080"
+  # OTLP/gRPC collector (otel-lgtm in compose.yaml; absent here, so traces are dropped).
+  OTEL_COLLECTOR_ADDRESS: otel-lgtm
+  OTEL_COLLECTOR_GRPC_PORT: "4317"
   TOKEN_EXCHANGE_URL: auth.localhost:8080/oauth/v2/token
   AUTH_ACCESS_COOKIE: bnpb_access
   AUTH_COOKIE_PREFIX: bnpb_

@@ -1,6 +1,6 @@
 services:
   otel-lgtm:
-    image: grafana/otel-lgtm:latest
+    image: grafana/otel-lgtm:0.35.0
     ports:
       - "3000:3000"   # grafana ui
       - "4317:4317"   # otlp grpc
@@ -8,6 +8,14 @@ services:
       - "9090:9090"   # prome or mimir idk
     environment:
       - ENABLE_OBI=false
+      # Adds Postgres and RabbitMQ scraping to the built-in collector (services/otel-lgtm).
+      - OTELCOL_EXTRA_ARGS=--config=file:./otelcol-extra.yaml
+      - AGGREGATOR_DB_PASSWORD=postgres
+      - AUTH_POSTGRES_PASSWORD=${AUTH_POSTGRES_PASSWORD}
+      - RABBITMQ_DEFAULT_USER=${RABBITMQ_DEFAULT_USER}
+      - RABBITMQ_DEFAULT_PASS=${RABBITMQ_DEFAULT_PASS}
+    volumes:
+      - ./services/otel-lgtm/otelcol-extra.yaml:/otel-lgtm/otelcol-extra.yaml:ro
     networks:
       bnpb_net:
         aliases:
@@ -17,6 +25,9 @@ services:
     extends:
       file: compose.auth.yaml
       service: envoy
+    depends_on:
+      otel-lgtm:
+        condition: service_started
 
   api-gateway:
     extends:
@@ -36,6 +47,15 @@ services:
     extends:
       file: compose.auth.yaml
       service: zitadel-login
+    # The image's Next.js instrumentation starts the OTel Node SDK; these point it at otel-lgtm.
+    environment:
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-lgtm:4318
+      OTEL_EXPORTER_OTLP_PROTOCOL: http/protobuf
+      OTEL_METRICS_EXPORTER: otlp
+      OTEL_SERVICE_NAME: zitadel-login
+    depends_on:
+      otel-lgtm:
+        condition: service_started
 
   auth-bootstrap:
     extends:
@@ -46,16 +66,46 @@ services:
     extends:
       file: compose.auth.yaml
       service: auth-bridge
+    environment:
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-lgtm:4318
+      OTEL_EXPORTER_OTLP_PROTOCOL: http/protobuf
+      OTEL_SERVICE_NAME: auth-bridge
+    depends_on:
+      otel-lgtm:
+        condition: service_started
 
   zitadel-claims:
     extends:
       file: compose.auth.yaml
       service: zitadel-claims
+    environment:
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-lgtm:4318
+      OTEL_EXPORTER_OTLP_PROTOCOL: http/protobuf
+      OTEL_SERVICE_NAME: zitadel-claims
+    depends_on:
+      otel-lgtm:
+        condition: service_started
 
   zitadel:
     extends:
       file: compose.auth.yaml
       service: zitadel
+    environment:
+      ZITADEL_INSTRUMENTATION_SERVICENAME: zitadel
+      # "auto" hands exporter selection to the standard OTEL_* variables below.
+      ZITADEL_INSTRUMENTATION_TRACE_EXPORTER_TYPE: auto
+      ZITADEL_INSTRUMENTATION_METRIC_EXPORTER_TYPE: auto
+      ZITADEL_INSTRUMENTATION_LOG_EXPORTER_TYPE: auto
+      # Local stack only: joins Envoy's trace instead of starting a new one. Do not reuse.
+      ZITADEL_INSTRUMENTATION_TRACE_TRUSTREMOTESPANS: "true"
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-lgtm:4318
+      OTEL_EXPORTER_OTLP_PROTOCOL: http/protobuf
+      OTEL_TRACES_EXPORTER: otlp
+      OTEL_METRICS_EXPORTER: otlp
+      OTEL_LOGS_EXPORTER: otlp
+    depends_on:
+      otel-lgtm:
+        condition: service_started
 
   spa-server:
     build:
@@ -65,6 +115,13 @@ services:
         VITE_DATA_MODE: gateway
         VITE_ENABLE_DEMO: "false"
         VITE_API_BASE_URL: "${FRONTEND_API_BASE_URL:-/api/v1}"
+    environment:
+      # ngx_otel_module exports over gRPC only.
+      NGINX_OTEL_TRACE: "on"
+      NGINX_OTEL_ENDPOINT: otel-lgtm:4317
+    depends_on:
+      otel-lgtm:
+        condition: service_started
     networks:
       bnpb_net:
         aliases:

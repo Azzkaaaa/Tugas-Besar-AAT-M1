@@ -73,7 +73,12 @@ Compose tugas. Replikasi memerlukan penyimpanan dan koordinasi bersama.
 | `src/config.mjs` | Validasi konfigurasi privat dan URL |
 | `src/provider.mjs` | Discovery, PKCE, OIDC, introspeksi, refresh/revokasi, validasi klaim role |
 | `src/store.mjs` | SQLite terenkripsi, transaksi, daftar token ditolak |
-| `src/server.mjs` | Endpoint sesi, cookie/CSRF |
+| `src/server.mjs` | Endpoint sesi, cookie/CSRF, span per request |
+| `src/telemetry.mjs` | OTel Node SDK bila `OTEL_EXPORTER_OTLP_ENDPOINT` diisi; instrumentasi undici untuk panggilan ke Zitadel |
+
+Span request dibuat manual dan hanya mencatat path: query `/auth/callback` berisi
+authorization code sekali pakai, sehingga instrumentasi HTTP otomatis tidak dipakai.
+Tes tidak memulai SDK.
 
 ```powershell
 npx nx run auth-bridge:test

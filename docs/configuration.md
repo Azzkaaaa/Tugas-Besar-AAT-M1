@@ -282,13 +282,40 @@ deployment; variabel di atas belum menjalankan broker.
 
 | Variabel | Default contoh | Pemakai |
 | --- | --- | --- |
-| `OTEL_EXPORTER_OTLP_ENDPOINT` | `http://otel-collector:4317` | Semua service aplikasi |
-| `OTEL_EXPORTER_OTLP_PROTOCOL` | `grpc` | Semua service aplikasi |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | `http://otel-lgtm:4318` | Service aplikasi, auth-bridge, zitadel-claims, Zitadel, Login UI |
+| `OTEL_EXPORTER_OTLP_PROTOCOL` | `http/protobuf` | Idem |
 | `OTEL_SERVICE_NAME` | `REPLACE_WITH_SERVICE_NAME` | Override menjadi nama unik tiap service |
+| `OTEL_COLLECTOR_ADDRESS`, `OTEL_COLLECTOR_GRPC_PORT` | `otel-lgtm`, `4317` | Envoy (template; OTLP/gRPC) |
+| `NGINX_OTEL_TRACE`, `NGINX_OTEL_ENDPOINT` | `off`, `localhost:4317` (image); `on`, `otel-lgtm:4317` (`compose.yaml`) | spa-server (`ngx_otel_module`, gRPC saja) |
+| `ZITADEL_INSTRUMENTATION_*` | `auto` (`compose.yaml`) | Zitadel; `auto` membaca variabel `OTEL_*` standar |
+
+`compose.yaml` menjalankan `grafana/otel-lgtm` (Grafana `:3000`, OTLP `:4317`/`:4318`,
+Prometheus `:9090`). Sinyal yang dikirim:
+
+| Service | Trace | Metrics | Log |
+| --- | --- | --- | --- |
+| aggregator, webhook-provider | ya | ya | tidak |
+| danger-notification | ya | ya | ya |
+| api-gateway, event-live-feed | ya | tidak | tidak |
+| envoy | ya | ya (stats sink) | tidak |
+| zitadel | ya | ya | ya |
+| zitadel-login | ya | ya | — |
+| auth-bridge, zitadel-claims | ya | tidak | tidak |
+| spa-server | ya | tidak | tidak |
+| aggregator-db, auth-db, rabbitmq | — | di-scrape collector | — |
+
+Scraping Postgres dan RabbitMQ didefinisikan di `services/otel-lgtm/otelcol-extra.yaml`,
+digabung dengan konfigurasi bawaan image melalui `OTELCOL_EXTRA_ARGS`. Saat merge,
+list diganti (bukan ditambah), sehingga receiver bawaan `otlp` dan
+`prometheus/collector` harus tetap ditulis. Validasi dengan `nx run otel-lgtm:validate`.
+
+Query string `/auth/callback` membawa authorization code sekali pakai, sehingga
+route itu tidak pernah di-sampling di Envoy dan auth-bridge hanya mencatat path
+tanpa query. Stack mandiri (`compose.auth.yaml`, `compose.frontend.yaml`) tidak
+memiliki otel-lgtm; Envoy membuang ekspor dan tracing nginx tetap `off`.
 
 Mock sudah menulis log JSON per request dengan correlation ID, durasi, status,
 dan trace context masuk yang valid. Tidak ada panggilan service keluar dari mock.
-Variabel OTEL di atas belum mengaktifkan exporter pada kedua mock; integrasi
-Collector, Prometheus, Jaeger, dan Grafana tetap pekerjaan berikutnya. Port
-exporter/scrape metrics dan instrumentasi SDK belum ditetapkan; jangan menganggap
-endpoint HTTP `/metrics` tersedia.
+Variabel OTEL di atas tidak mengaktifkan exporter pada kedua mock, dan mock berada
+di jaringan terisolasi yang tidak menjangkau otel-lgtm; jangan menganggap endpoint
+HTTP `/metrics` tersedia.

@@ -1,0 +1,8 @@
+# http context. Rendered into conf.d by the nginx image's envsubst entrypoint.
+# Tracing is off unless NGINX_OTEL_TRACE=on (compose.yaml); the exporter speaks OTLP/gRPC only.
+otel_exporter {
+    endpoint ${NGINX_OTEL_ENDPOINT};
+}
+otel_service_name spa-server;
+otel_trace ${NGINX_OTEL_TRACE};
+otel_trace_context propagate;

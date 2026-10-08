@@ -15,7 +15,12 @@ ENV VITE_APP_MODE=${VITE_APP_MODE} \
     VITE_API_BASE_URL=${VITE_API_BASE_URL}
 RUN npm run build
 
-FROM nginx:alpine AS runtime
+# The -otel variant ships ngx_otel_module; load_module must sit in the main nginx.conf.
+FROM nginx:1.31.6-alpine-otel AS runtime
+RUN sed -i '1i load_module modules/ngx_otel_module.so;' /etc/nginx/nginx.conf
+ENV NGINX_OTEL_TRACE=off \
+    NGINX_OTEL_ENDPOINT=localhost:4317
+COPY otel.conf.template /etc/nginx/templates/otel.conf.template
 COPY nginx.conf /etc/nginx/conf.d/default.conf
 COPY --from=build /app/dist /usr/share/nginx/html
 

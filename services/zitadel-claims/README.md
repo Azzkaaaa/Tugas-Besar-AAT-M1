@@ -42,6 +42,9 @@ target saat target dibuat) dan menunggu file tersebut hingga sepuluh menit.
 | --- | --- | --- |
 | `ACTIONS_CONFIG_FILE` | `/actions/actions.json` | File hasil provisioning, mount read-only |
 | `PORT` | `3002` | Listener HTTP internal; tidak dipublikasikan ke host |
+| `OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_SERVICE_NAME` | kosong (trace nonaktif), `zitadel-claims` | Trace OTLP/HTTP per request, parent dari `traceparent` Zitadel |
+
+Log JSON request tetap ditulis ke stdout; telemetri hanya menambah span.
 
 ## Pengujian
 

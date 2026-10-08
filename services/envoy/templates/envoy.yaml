@@ -1,6 +1,15 @@
 # Edge proxy: SPA, Auth bridge, Zitadel hosted login, and authenticated /api/ traffic, which
 # is forwarded to the api-gateway service (REST contract → gRPC backends).
 # Rendered by docker-entrypoint.sh with envsubst; every substituted variable is listed there.
+
+# Envoy metrics, pushed over OTLP/gRPC.
+stats_sinks:
+  - name: envoy.stat_sinks.open_telemetry
+    typed_config:
+      "@type": type.googleapis.com/envoy.extensions.stat_sinks.open_telemetry.v3.SinkConfig
+      grpc_service:
+        envoy_grpc: { cluster_name: otel_collector }
+
 static_resources:
   listeners:
     - name: http
@@ -15,6 +24,17 @@ static_resources:
                 codec_type: AUTO
                 use_remote_address: true
                 # Access logs are omitted: OIDC callbacks contain single-use codes.
+                # Spans record the full URL too, so the callback route below is never sampled.
+                tracing:
+                  spawn_upstream_span: true
+                  provider:
+                    name: envoy.tracers.opentelemetry
+                    typed_config:
+                      "@type": type.googleapis.com/envoy.config.trace.v3.OpenTelemetryConfig
+                      grpc_service:
+                        envoy_grpc: { cluster_name: otel_collector }
+                        timeout: 1s
+                      service_name: envoy
                 route_config:
                   name: gateway_routes
                   virtual_hosts:
@@ -39,6 +59,13 @@ static_resources:
                     - name: application
                       domains: ["${APP_HOST}", "${APP_HOST}:*"]
                       routes:
+                        # Same as the prefix route below, but untraced: the query holds the OIDC code.
+                        - match: { path: "${AUTH_ROUTE_PREFIX}callback" }
+                          route: { cluster: auth_bridge, timeout: 30s }
+                          typed_per_filter_config: *api_filters_disabled
+                          tracing:
+                            overall_sampling: { numerator: 0 }
+
                         - match: { prefix: "${AUTH_ROUTE_PREFIX}" }
                           route: { cluster: auth_bridge, timeout: 30s }
                           typed_per_filter_config: *api_filters_disabled
@@ -153,3 +180,14 @@ static_resources:
         endpoints:
           - lb_endpoints:
               - endpoint: { address: { socket_address: { address: ${API_GATEWAY_ADDRESS}, port_value: ${API_GATEWAY_PORT} } } }
+
+    # --- Observability (OTLP/gRPC; unresolvable in the standalone Auth stack → exports dropped) ---
+    - name: otel_collector
+      type: STRICT_DNS
+      connect_timeout: 5s
+      typed_extension_protocol_options: *http2
+      load_assignment:
+        cluster_name: otel_collector
+        endpoints:
+          - lb_endpoints:
+              - endpoint: { address: { socket_address: { address: ${OTEL_COLLECTOR_ADDRESS}, port_value: ${OTEL_COLLECTOR_GRPC_PORT} } } }

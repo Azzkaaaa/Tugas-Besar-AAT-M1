@@ -3,9 +3,13 @@ import { randomUUID } from 'node:crypto';
 import { pathToFileURL } from 'node:url';
 import { parseCookie, stringifySetCookie } from 'cookie';
 import { setTimeout as delay } from 'node:timers/promises';
+import { context, propagation, trace, SpanKind, SpanStatusCode } from '@opentelemetry/api';
 import { loadConfig, ProvisioningPending } from './config.mjs';
 import { SessionStore, randomSecret, equal } from './store.mjs';
 import { ZitadelProvider, AuthError, requestContext } from './provider.mjs';
+
+// No-op until telemetry.mjs starts the SDK (only when run as the service, never in tests).
+const tracer = trace.getTracer('auth-bridge');
 
 const payload = session => ({ user: session.user, csrf_token: session.csrf,
   expires_at: new Date(session.expiresAt).toISOString() });
@@ -139,13 +143,23 @@ export function createAuthServer(config, { store = new SessionStore(config.datab
     const correlationId = typeof supplied === 'string' && /^[\w.-]{1,100}$/.test(supplied) ? supplied : randomUUID();
     res.setHeader('X-Correlation-ID', correlationId);
     const start = performance.now();
+    // The query is never recorded: /auth/callback carries the single-use authorization code.
+    const path = req.url?.split('?')[0];
+    const span = tracer.startSpan(`${req.method} ${path}`, { kind: SpanKind.SERVER,
+      attributes: { 'http.request.method': req.method, 'url.path': path, correlation_id: correlationId } },
+    propagation.extract(context.active(), req.headers));
     res.on('finish', () => logger(JSON.stringify({ event: 'http_request', method: req.method,
-      path: req.url?.split('?')[0], status: res.statusCode, duration_ms: Math.round(performance.now() - start), correlation_id: correlationId })));
-    requestContext.run({ correlationId }, () => handle(req, res).catch(error => {
+      path, status: res.statusCode, duration_ms: Math.round(performance.now() - start), correlation_id: correlationId })));
+    res.on('close', () => {
+      span.setAttribute('http.response.status_code', res.statusCode);
+      if (res.statusCode >= 500 || !res.writableFinished) span.setStatus({ code: SpanStatusCode.ERROR });
+      span.end();
+    });
+    context.with(trace.setSpan(context.active(), span), () => requestContext.run({ correlationId }, () => handle(req, res).catch(error => {
       if (res.headersSent) return res.destroy();
       if (error instanceof AuthError) problem(res, error.status, error.code);
       else problem(res, 503, 'dependency_unavailable');
-    }));
+    })));
   });
   server.requestTimeout = 15000;
   server.headersTimeout = 10000;
@@ -168,11 +182,16 @@ async function provisionedConfig() {
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  const { startTelemetry } = await import('./telemetry.mjs');
+  const telemetry = startTelemetry();
   try {
     const config = await provisionedConfig();
     const { server, store } = createAuthServer(config);
     server.listen(config.port, '0.0.0.0', () => console.log(JSON.stringify({ event: 'started', port: config.port })));
-    for (const signal of ['SIGINT', 'SIGTERM']) process.on(signal, () => { server.close(() => { store.close(); process.exit(0); }); server.closeAllConnections(); });
+    for (const signal of ['SIGINT', 'SIGTERM']) process.on(signal, () => {
+      server.close(async () => { store.close(); await telemetry?.shutdown().catch(() => {}); process.exit(0); });
+      server.closeAllConnections();
+    });
   } catch {
     console.error('Auth bridge could not start. Check private configuration and database access.');
     process.exitCode = 1;

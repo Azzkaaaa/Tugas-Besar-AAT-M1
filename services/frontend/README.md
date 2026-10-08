@@ -48,6 +48,11 @@ gateway. Identitas demo tidak boleh memakai API Gateway. Semua VITE_* masuk bund
 publik; jangan mengisi password, client secret, atau token. Nilai ditanam saat
 build sehingga perubahan memerlukan build ulang.
 
+Image runtime `nginx:*-alpine-otel` memuat `ngx_otel_module`. Tracing dikendalikan
+saat runtime (bukan build): `NGINX_OTEL_TRACE` (`off` default, `on` di
+`compose.yaml`) dan `NGINX_OTEL_ENDPOINT` (OTLP/gRPC, mis. `otel-lgtm:4317`),
+dirender dari `otel.conf.template`. `/health` tidak di-trace.
+
 ## Implementasi
 
 | File dalam src/ | Tanggung jawab |
