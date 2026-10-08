@@ -102,7 +102,7 @@ static_resources:
         cluster_name: notification_cluster
         endpoints:
           - lb_endpoints:
-              - endpoint: { address: { socket_address: { address: notification-service.local, port_value: 9090 } } }
+              - endpoint: { address: { socket_address: { address: notification-service.local, port_value: 9095 } } }
 
     - name: feed_cluster
       type: LOGICAL_DNS

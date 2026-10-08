@@ -1,0 +1,8 @@
+.git
+.nx
+.workspace
+node_modules
+docs
+**/bin
+**/obj
+**/.env

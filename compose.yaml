@@ -53,7 +53,36 @@ services:
           - webhook-provider.local
 
   notification-service:
-    # Set your image/build context here
+    build:
+      context: .
+      dockerfile: services/danger-notification/Dockerfile
+    environment:
+      Aggregator__Address: http://aggregator-service:9091
+      RabbitMq__HostName: rabbitmq
+      RabbitMq__UserName: ${RABBITMQ_DEFAULT_USER}
+      RabbitMq__Password: ${RABBITMQ_DEFAULT_PASS}
+      RabbitMq__VirtualHost: ${RABBITMQ_DEFAULT_VHOST}
+      RabbitMq__QueueName: ${CONSUMER_3_QUEUE}
+      RabbitMq__DeadLetterQueue: ${CONSUMER_3_DLQ}
+      Auth__Authority: ${NOTIFICATION_AUTH_AUTHORITY:-}
+      GOOGLE_APPLICATION_CREDENTIALS: /run/secrets/firebase-credentials.json
+    ports:
+      - "9095:9095"
+    volumes:
+      # Long syntax so a missing file fails instead of Docker creating a directory.
+      - type: bind
+        source: ${FIREBASE_CREDENTIALS_PATH:-./.secrets/firebase-credentials.json}
+        target: /run/secrets/firebase-credentials.json
+        read_only: true
+        bind:
+          create_host_path: false
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      aggregator-service:
+        condition: service_started
+    # The RabbitMQ consumer connects once at startup.
+    restart: unless-stopped
     networks:
       bnpb_net:
         aliases:
