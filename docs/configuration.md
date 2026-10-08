@@ -247,7 +247,8 @@ Komponen lain meminta data kanonik melalui API Aggregator.
 | Variabel | Default | Arti |
 | --- | --- | --- |
 | `EVENT_FEED_AMQP_URL` | wajib | Koneksi consumer; Compose menyusunnya dari `RABBITMQ_DEFAULT_*` |
-| `CONSUMER_1_QUEUE` / `CONSUMER_1_DLQ` | `bnpb.event-live-feed.v1` / kosong | Queue dan DLQ; argumen harus sama dengan deklarasi Aggregator |
+| `RABBITMQ_EXCHANGE` | `bnpb.hazards.v1` | Exchange fanout tempat queue diikat |
+| `CONSUMER_1_QUEUE` / `CONSUMER_1_DLQ` | `bnpb.event-live-feed.v1` / kosong | Queue dan DLQ; dideklarasikan dan diikat oleh service ini sendiri |
 | `FEED_REPLAY_MAX_ENTRIES` | `10000` | Batas jumlah entri replay selain `FEED_REPLAY_RETENTION_SECONDS` |
 | `FEED_AUTH_AUTHORITY` | `http://auth.localhost:8080` | Issuer JWT; discovery, JWKS, dan endpoint token exchange |
 | `OIDC_CONFIG_FILE` | kosong | `oidc.json` dari auth-bootstrap; dibaca `feed_client_id`/`feed_client_secret` |

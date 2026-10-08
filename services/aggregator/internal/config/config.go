@@ -8,13 +8,6 @@ import (
 	"time"
 )
 
-// ConsumerQueueConfig defines a single downstream consumer's queue and its DLQ.
-type ConsumerQueueConfig struct {
-	Name            string
-	Queue           string
-	DeadLetterQueue string
-}
-
 type Config struct {
 	AppEnv               string
 	LogLevel             string
@@ -35,10 +28,6 @@ type Config struct {
 	CanonicalStoreDSN    string
 	AMQPURL              string
 	RabbitMQExchange     string
-	// ConsumerQueues is the list of downstream consumer queues the aggregator
-	// pre-declares on startup so messages are never silently dropped.
-	// Each entry has its own dead-letter queue.
-	ConsumerQueues []ConsumerQueueConfig
 	// OutboxMaxRetries is the max publish attempts before a record is dead-lettered.
 	OutboxMaxRetries int
 }
@@ -104,57 +93,11 @@ func Load() (*Config, error) {
 		errs = append(errs, "AUTH_AUTHORITY is required (or set AUTH_INSECURE_SKIP_VERIFY=true for development)")
 	}
 
-	consumerQueues, err := loadConsumerQueues()
-	if err != nil {
-		errs = append(errs, err.Error())
-	} else {
-		cfg.ConsumerQueues = consumerQueues
-	}
-
 	if len(errs) > 0 {
 		return nil, fmt.Errorf("failed to load configuration:\n  - %s", strings.Join(errs, "\n  - "))
 	}
 
 	return cfg, nil
-}
-
-// loadConsumerQueues reads consumer queue config from environment.
-// Each consumer is described by three env vars (1-indexed):
-//
-//	CONSUMER_n_NAME, CONSUMER_n_QUEUE, CONSUMER_n_DLQ
-//
-// Defaults to the three standard BNPB consumer queues if none are configured.
-func loadConsumerQueues() ([]ConsumerQueueConfig, error) {
-	var queues []ConsumerQueueConfig
-
-	// Try reading numbered env vars (1-indexed)
-	for i := 1; ; i++ {
-		prefix := "CONSUMER_" + strconv.Itoa(i) + "_"
-		name := os.Getenv(prefix + "NAME")
-		queue := os.Getenv(prefix + "QUEUE")
-		dlq := os.Getenv(prefix + "DLQ")
-
-		if name == "" && queue == "" && dlq == "" {
-			break
-		}
-
-		if name == "" || queue == "" || dlq == "" {
-			return nil, fmt.Errorf("incomplete consumer queue config at index %d (NAME, QUEUE, and DLQ must all be set)", i)
-		}
-
-		queues = append(queues, ConsumerQueueConfig{
-			Name:            name,
-			Queue:           queue,
-			DeadLetterQueue: dlq,
-		})
-	}
-
-	if len(queues) > 0 {
-		fmt.Printf("%d Consumer queues loaded successfully", len(queues))
-		return queues, nil
-	} else {
-		return nil, fmt.Errorf("failed to load consumer queues: no consumer queues configured")
-	}
 }
 
 func loadDotEnv() {

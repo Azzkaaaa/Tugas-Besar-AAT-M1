@@ -30,7 +30,8 @@ komposisi hanya di `main.rs`.
 - **Consumer.** Envelope `HazardEventPublished` divalidasi (`schema_version=1`,
   publisher `aggregator`, ID tidak kosong, `source` sama dengan `payload.source`).
   Envelope tidak valid di-nack tanpa requeue sehingga masuk DLQ. Ack dikirim sesudah
-  entri tersimpan di buffer. Argumen queue sama dengan deklarasi Aggregator.
+  entri tersimpan di buffer. Service mendeklarasikan exchange, DLQ, dan queue-nya
+  sendiri lalu mengikat queue ke exchange; Aggregator hanya mendeklarasikan exchange.
 - **Replay.** Event ID yang sama selama jendela retensi tidak ditambahkan dua kali.
   Sequence naik mulai 1 per epoch. Buffer dibatasi `FEED_REPLAY_RETENTION_SECONDS`
   dan `FEED_REPLAY_MAX_ENTRIES`. Buffer berada di memori: restart membuat epoch acak
@@ -87,6 +88,7 @@ token baru dari sesinya.
 | --- | --- |
 | `EVENT_FEED_GRPC_PORT` | `9093` |
 | `EVENT_FEED_AMQP_URL` | wajib |
+| `RABBITMQ_EXCHANGE` | `bnpb.hazards.v1` |
 | `CONSUMER_1_QUEUE` / `CONSUMER_1_DLQ` | `bnpb.event-live-feed.v1` / kosong (pesan ditolak dibuang) |
 | `FEED_REPLAY_RETENTION_SECONDS` / `FEED_REPLAY_MAX_ENTRIES` | `600` / `10000` |
 | `FEED_AUTH_AUTHORITY` | `http://auth.localhost:8080` |

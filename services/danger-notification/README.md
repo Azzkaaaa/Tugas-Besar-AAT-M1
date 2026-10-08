@@ -4,7 +4,9 @@ Rencana consumer dan service baca notifikasi gRPC pada port **9095**, melalui
 [DangerNotificationService](../../contracts/proto/bnpb/notification/v1/notification.proto).
 Implementasi dan bahasa belum dipilih.
 
-- **Input:** envelope dari queue durable `bnpb.danger-notification.v1`;
+- **Input:** envelope dari queue durable `bnpb.danger-notification.v1`. Service
+  mendeklarasikan exchange `RabbitMq:Exchange`, DLQ, dan queue-nya sendiri lalu
+  mengikat queue ke exchange;
   RPC `ListNotifications` dan `GetNotification` dari Gateway.
 - **Output:** notifikasi turunan hazard **SIAGA/AWAS**, lengkap dengan proyeksi
   yang diizinkan bagi aktor. Teks pesan hanya dibangun dari field ringkasan.

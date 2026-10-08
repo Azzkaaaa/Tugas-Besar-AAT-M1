@@ -62,7 +62,7 @@ func (p *OutboxPublisher) connect() error {
 		return fmt.Errorf("failed opening RabbitMQ channel: %w", err)
 	}
 
-	// 1. Declare fanout exchange
+	// 1. Declare fanout exchange. Consumers declare and bind their own queues.
 	err = ch.ExchangeDeclare(
 		p.cfg.RabbitMQExchange, // name
 		"fanout",               // type
@@ -78,65 +78,7 @@ func (p *OutboxPublisher) connect() error {
 		return fmt.Errorf("failed declaring RabbitMQ exchange %q: %w", p.cfg.RabbitMQExchange, err)
 	}
 
-	// 2. Pre-declare consumer queues + dead letter queues and bind to fanout exchange
-	for _, c := range p.cfg.ConsumerQueues {
-		var queueArgs amqp.Table
-
-		// If a DeadLetterQueue is configured for this consumer, declare it
-		if c.DeadLetterQueue != "" {
-			_, err = ch.QueueDeclare(
-				c.DeadLetterQueue, // name
-				true,              // durable
-				false,             // auto-delete
-				false,             // exclusive
-				false,             // no-wait
-				nil,               // arguments
-			)
-			if err != nil {
-				ch.Close()
-				conn.Close()
-				return fmt.Errorf("failed declaring DLQ %q for consumer %q: %w", c.DeadLetterQueue, c.Name, err)
-			}
-
-			// Point the consumer queue's dead letter routing to the default exchange with routing key = DLQ name
-			queueArgs = amqp.Table{
-				"x-dead-letter-exchange":    "",
-				"x-dead-letter-routing-key": c.DeadLetterQueue,
-			}
-		}
-
-		if c.Queue != "" {
-			_, err = ch.QueueDeclare(
-				c.Queue,   // name
-				true,      // durable
-				false,     // auto-delete
-				false,     // exclusive
-				false,     // no-wait
-				queueArgs, // arguments
-			)
-			if err != nil {
-				ch.Close()
-				conn.Close()
-				return fmt.Errorf("failed declaring consumer queue %q: %w", c.Queue, err)
-			}
-
-			// Bind queue to the fanout exchange
-			err = ch.QueueBind(
-				c.Queue,                // queue name
-				"",                     // routing key (ignored for fanout)
-				p.cfg.RabbitMQExchange, // exchange
-				false,                  // no-wait
-				nil,                    // arguments
-			)
-			if err != nil {
-				ch.Close()
-				conn.Close()
-				return fmt.Errorf("failed binding queue %q to exchange %q: %w", c.Queue, p.cfg.RabbitMQExchange, err)
-			}
-		}
-	}
-
-	// 3. Enable publisher confirms
+	// 2. Enable publisher confirms
 	if err := ch.Confirm(false); err != nil {
 		ch.Close()
 		conn.Close()
@@ -145,7 +87,7 @@ func (p *OutboxPublisher) connect() error {
 
 	p.conn = conn
 	p.ch = ch
-	log.Printf("[OutboxPublisher] Connected to RabbitMQ at %s. Exchange %q configured with %d consumer queues.", p.cfg.AMQPURL, p.cfg.RabbitMQExchange, len(p.cfg.ConsumerQueues))
+	log.Printf("[OutboxPublisher] Connected to RabbitMQ at %s. Exchange %q declared.", p.cfg.AMQPURL, p.cfg.RabbitMQExchange)
 	return nil
 }
 

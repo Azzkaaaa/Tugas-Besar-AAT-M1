@@ -67,8 +67,15 @@ async fn run(config: Config) -> Result<(), tonic::transport::Error> {
     health.set_service_status("", ServingStatus::NotServing).await;
     health.set_service_status(FEED_SERVICE_NAME, ServingStatus::NotServing).await;
     let consumer = tokio::spawn(
-        Consumer { feed: feed.clone(), url: config.amqp_url, queue: config.queue, dead_letter_queue: config.dead_letter_queue, health }
-            .run(),
+        Consumer {
+            feed: feed.clone(),
+            url: config.amqp_url,
+            exchange: config.exchange,
+            queue: config.queue,
+            dead_letter_queue: config.dead_letter_queue,
+            health,
+        }
+        .run(),
     );
 
     let grpc = FeedGrpc {

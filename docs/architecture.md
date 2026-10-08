@@ -185,7 +185,9 @@ notifikasi, dan error. Refresh/logout berlaku juga pada stream aktif.
 
 Aggregator menulis record dan outbox secara durable sebelum mempublikasikan
 binary Protobuf `bnpb.event.v1.HazardEventPublished` ke exchange fanout durable
-`bnpb.hazards.v1`. Tiga queue durable terpisah terikat ke exchange yang sama:
+`bnpb.hazards.v1`. Aggregator hanya mendeklarasikan exchange; setiap consumer
+mendeklarasikan exchange yang sama, queue dan DLQ miliknya, lalu mengikat queue
+tersebut sendiri. Tiga queue durable terpisah terikat ke exchange yang sama:
 `bnpb.event-live-feed.v1`, `bnpb.webhook-provider.v1`, dan
 `bnpb.danger-notification.v1`. Semuanya mendapat stream yang sama. Feed menyaring
 sesuai filter yang diminta client; notifier membuat notifikasi untuk SIAGA/AWAS;
@@ -197,7 +199,10 @@ dan ack setelah side effect tersimpan. Semantik **at-least-once** membutuhkan
 deduplikasi `event_id`. Jangan menggunakan satu queue bersama untuk tiga jenis
 consumer karena mereka akan berkompetisi menerima event. Queue yang sudah
 dibuat menampung pesan saat consumer mati. Consumer baru menerima event sejak
-queue diikat, bukan otomatis seluruh sejarah.
+queue diikat, bukan otomatis seluruh sejarah. Pada broker baru, event yang
+dipublikasikan sebelum consumer pertama kali mengikat queue-nya hilang karena
+exchange fanout tanpa binding membuang pesan; jalankan consumer sebelum
+Aggregator mulai mempublikasikan.
 
 `event_id` mengidentifikasi publikasi/revisi; `hazard_id` mengidentifikasi kejadian
 kanonik. Pembaruan warning menghasilkan event baru dengan hazard ID tetap.

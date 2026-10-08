@@ -188,6 +188,7 @@ services:
       RabbitMq__UserName: ${RABBITMQ_DEFAULT_USER}
       RabbitMq__Password: ${RABBITMQ_DEFAULT_PASS}
       RabbitMq__VirtualHost: ${RABBITMQ_DEFAULT_VHOST}
+      RabbitMq__Exchange: ${RABBITMQ_EXCHANGE}
       RabbitMq__QueueName: ${CONSUMER_3_QUEUE}
       RabbitMq__DeadLetterQueue: ${CONSUMER_3_DLQ}
       Auth__Authority: ${NOTIFICATION_AUTH_AUTHORITY:-http://auth.localhost:8080}
@@ -228,6 +229,7 @@ services:
     environment:
       EVENT_FEED_GRPC_PORT: ${EVENT_FEED_GRPC_PORT:-9093}
       EVENT_FEED_AMQP_URL: amqp://${RABBITMQ_DEFAULT_USER}:${RABBITMQ_DEFAULT_PASS}@rabbitmq:5672/${RABBITMQ_DEFAULT_VHOST}
+      RABBITMQ_EXCHANGE: ${RABBITMQ_EXCHANGE}
       CONSUMER_1_QUEUE: ${CONSUMER_1_QUEUE}
       CONSUMER_1_DLQ: ${CONSUMER_1_DLQ}
       FEED_REPLAY_RETENTION_SECONDS: ${FEED_REPLAY_RETENTION_SECONDS:-600}

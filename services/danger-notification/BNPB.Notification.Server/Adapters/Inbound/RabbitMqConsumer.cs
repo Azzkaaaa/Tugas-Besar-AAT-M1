@@ -20,6 +20,7 @@ public class RabbitMqConsumer : BackgroundService
   private readonly ILogger<RabbitMqConsumer> _logger;
   private readonly IBroadcastProvider _broadcastProvider;
   private readonly IConfiguration _configuration;
+  private readonly string _exchangeName;
   private readonly string _queueName;
   private readonly string? _deadLetterQueue;
 
@@ -35,6 +36,7 @@ public class RabbitMqConsumer : BackgroundService
     _logger = logger;
     _broadcastProvider = broadcastProvider;
     _configuration = configuration;
+    _exchangeName = _configuration["RabbitMq:Exchange"]!;
     _queueName = _configuration["RabbitMq:QueueName"]!;
     _deadLetterQueue = _configuration["RabbitMq:DeadLetterQueue"];
   }
@@ -58,12 +60,24 @@ public class RabbitMqConsumer : BackgroundService
     _connection = await factory.CreateConnectionAsync();
     _channel = await _connection.CreateChannelAsync();
 
-    // Must match the arguments the aggregator declares this queue with,
-    // otherwise whichever side declares second fails with PRECONDITION_FAILED.
+    // This service owns its queue and binding; the producer only declares the exchange.
+    // The exchange declaration must match every other declarer, or PRECONDITION_FAILED.
+    await _channel.ExchangeDeclareAsync(
+        exchange: _exchangeName,
+        type: ExchangeType.Fanout,
+        durable: true,
+        autoDelete: false);
+
     Dictionary<string, object?>? arguments = null;
 
     if (!string.IsNullOrEmpty(_deadLetterQueue))
     {
+      await _channel.QueueDeclareAsync(
+          queue: _deadLetterQueue,
+          durable: true,
+          exclusive: false,
+          autoDelete: false);
+
       arguments = new()
       {
         ["x-dead-letter-exchange"] = "",
@@ -81,6 +95,8 @@ public class RabbitMqConsumer : BackgroundService
         exclusive: false,
         autoDelete: false,
         arguments: arguments);
+
+    await _channel.QueueBindAsync(queue: _queueName, exchange: _exchangeName, routingKey: "");
 
     await _channel.BasicQosAsync(prefetchSize: 0, prefetchCount: 1, global: false);
   }

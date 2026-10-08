@@ -11,6 +11,7 @@ pub struct ClientCredentials {
 pub struct Config {
     pub port: u16,
     pub amqp_url: String,
+    pub exchange: String,
     pub queue: String,
     pub dead_letter_queue: Option<String>,
     pub replay_retention: Duration,
@@ -26,6 +27,7 @@ impl Config {
         Ok(Self {
             port: number("EVENT_FEED_GRPC_PORT", 9093)?,
             amqp_url: required("EVENT_FEED_AMQP_URL")?,
+            exchange: optional("RABBITMQ_EXCHANGE")?.unwrap_or_else(|| "bnpb.hazards.v1".into()),
             queue: optional("CONSUMER_1_QUEUE")?.unwrap_or_else(|| "bnpb.event-live-feed.v1".into()),
             dead_letter_queue: optional("CONSUMER_1_DLQ")?,
             replay_retention: Duration::from_secs(number("FEED_REPLAY_RETENTION_SECONDS", 600)?),

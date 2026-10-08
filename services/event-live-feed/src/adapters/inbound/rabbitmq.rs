@@ -5,9 +5,11 @@ use bnpb_common::bnpb::common::v1::Source;
 use bnpb_event::bnpb::event::v1::HazardEventPublished;
 use futures_util::StreamExt;
 use lapin::message::Delivery;
-use lapin::options::{BasicAckOptions, BasicConsumeOptions, BasicNackOptions, BasicQosOptions, QueueDeclareOptions};
+use lapin::options::{
+    BasicAckOptions, BasicConsumeOptions, BasicNackOptions, BasicQosOptions, ExchangeDeclareOptions, QueueBindOptions, QueueDeclareOptions,
+};
 use lapin::types::{AMQPValue, FieldTable, LongString};
-use lapin::{Connection, ConnectionProperties};
+use lapin::{Connection, ConnectionProperties, ExchangeKind};
 use prost::Message;
 use tonic_health::ServingStatus;
 use tonic_health::server::HealthReporter;
@@ -27,6 +29,7 @@ const RECONNECT_MAX: Duration = Duration::from_secs(30);
 pub struct Consumer<S> {
     pub feed: Arc<FeedService<S>>,
     pub url: String,
+    pub exchange: String,
     pub queue: String,
     pub dead_letter_queue: Option<String>,
     pub health: HealthReporter,
@@ -53,14 +56,19 @@ impl<S: ReplayStore> Consumer<S> {
     async fn consume(&self, backoff: &mut Duration) -> Result<(), lapin::Error> {
         let connection = Connection::connect(&self.url, ConnectionProperties::default()).await?;
         let channel = connection.create_channel().await?;
-        // Must match the aggregator's declaration, or the second declarer fails with PRECONDITION_FAILED.
+        // This service owns its queue and binding; the producer only declares the exchange.
+        // The exchange declaration must match every other declarer, or PRECONDITION_FAILED.
+        let exchange = ExchangeDeclareOptions { durable: true, ..Default::default() };
+        channel.exchange_declare(&self.exchange, ExchangeKind::Fanout, exchange, FieldTable::default()).await?;
+        let durable = QueueDeclareOptions { durable: true, ..Default::default() };
         let mut arguments = FieldTable::default();
         if let Some(dead_letter_queue) = &self.dead_letter_queue {
+            channel.queue_declare(dead_letter_queue, durable, FieldTable::default()).await?;
             arguments.insert("x-dead-letter-exchange".into(), AMQPValue::LongString(LongString::from("")));
             arguments.insert("x-dead-letter-routing-key".into(), AMQPValue::LongString(dead_letter_queue.as_str().into()));
         }
-        let durable = QueueDeclareOptions { durable: true, ..Default::default() };
         channel.queue_declare(&self.queue, durable, arguments).await?;
+        channel.queue_bind(&self.queue, &self.exchange, "", QueueBindOptions::default(), FieldTable::default()).await?;
         channel.basic_qos(1, BasicQosOptions::default()).await?;
         let mut deliveries =
             channel.basic_consume(&self.queue, CONSUMER_TAG, BasicConsumeOptions::default(), FieldTable::default()).await?;
