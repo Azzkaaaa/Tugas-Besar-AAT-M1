@@ -140,6 +140,8 @@ services:
       - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-lgtm:4318
       - OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf
       - OTEL_SERVICE_NAME=aggregator-service
+      - AUTH_AUTHORITY=${AGGREGATOR_AUTH_AUTHORITY:-http://auth.localhost:8080}
+      - AUTH_INSECURE_SKIP_VERIFY=${AUTH_INSECURE_SKIP_VERIFY:-false}
     ports:
       - "9091:9091"
     depends_on:

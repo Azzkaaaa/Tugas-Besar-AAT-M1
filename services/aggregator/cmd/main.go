@@ -73,11 +73,17 @@ func main() {
 	pvmbgPoller := ingest.NewPVMBGPoller(cfg, db)
 	go pvmbgPoller.Start(ctx)
 
-	// 4. Initialize Auth JWT Verifier
-	verifier, err := auth.NewJWTVerifier(cfg.AuthPublicKeyPEM, cfg.AuthPublicKeyPath, cfg.ServiceToken)
+	// 4. Initialize Auth JWT Verifier (JWKS via OIDC discovery)
+	verifier, err := auth.NewJWTVerifier(ctx, auth.JWTVerifierConfig{
+		AuthAuthority:      cfg.AuthAuthority,
+		Audience:           cfg.AuthAudience,
+		ServiceToken:       cfg.ServiceToken,
+		InsecureSkipVerify: cfg.AuthInsecureSkipVerify,
+	})
 	if err != nil {
 		log.Fatalf("[Aggregator] FATAL: Failed initializing JWT verifier: %v", err)
 	}
+	defer verifier.Close()
 
 	// 5. Initialize & Start gRPC Server
 	srv := grpc.NewServer(cfg, db, verifier)

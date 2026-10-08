@@ -24,8 +24,9 @@ type Config struct {
 	BMKGAPIKey           string
 	PVMBGBearerToken     string
 	ServiceToken         string
-	AuthPublicKeyPEM     string
-	AuthPublicKeyPath    string
+	AuthAuthority        string
+	AuthAudience         string
+	AuthInsecureSkipVerify bool
 	BMKGPollInterval     time.Duration
 	PVMBGPollInterval    time.Duration
 	BMKGRequestTimeout   time.Duration
@@ -73,6 +74,8 @@ func Load() (*Config, error) {
 		return time.Duration(ms) * time.Millisecond
 	}
 
+	insecureSkip := strings.EqualFold(os.Getenv("AUTH_INSECURE_SKIP_VERIFY"), "true")
+
 	cfg := &Config{
 		AppEnv:               requireEnv("APP_ENV"),
 		LogLevel:             requireEnv("LOG_LEVEL"),
@@ -82,8 +85,9 @@ func Load() (*Config, error) {
 		BMKGAPIKey:           requireEnv("BMKG_API_KEY"),
 		PVMBGBearerToken:     requireEnv("PVMBG_BEARER_TOKEN"),
 		ServiceToken:         requireEnv("AGGREGATOR_SERVICE_TOKEN"),
-		AuthPublicKeyPEM:     os.Getenv("AUTH_PUBLIC_KEY"),
-		AuthPublicKeyPath:    os.Getenv("AUTH_PUBLIC_KEY_PATH"),
+		AuthAuthority:        os.Getenv("AUTH_AUTHORITY"),
+		AuthAudience:         os.Getenv("AUTH_AUDIENCE"),
+		AuthInsecureSkipVerify: insecureSkip,
 		BMKGPollInterval:     requireDurationMS("BMKG_POLL_INTERVAL_MS"),
 		PVMBGPollInterval:    requireDurationMS("PVMBG_POLL_INTERVAL_MS"),
 		BMKGRequestTimeout:   requireDurationMS("BMKG_REQUEST_TIMEOUT_MS"),
@@ -95,10 +99,9 @@ func Load() (*Config, error) {
 		OutboxMaxRetries:     requireInt("OUTBOX_MAX_RETRIES"),
 	}
 
-	// Validate auth public key input (must provide either PEM string or path)
-	if cfg.AuthPublicKeyPEM == "" && cfg.AuthPublicKeyPath == "" {
-		// errs = append(errs, "must set either AUTH_PUBLIC_KEY or AUTH_PUBLIC_KEY_PATH")
-		fmt.Printf("[Aggregator] NO AUTH PUBLIC KEY LOADED, USING SERVICE TOKEN ONLY")
+	// AUTH_AUTHORITY is required unless insecure mode is explicitly enabled.
+	if cfg.AuthAuthority == "" && !insecureSkip {
+		errs = append(errs, "AUTH_AUTHORITY is required (or set AUTH_INSECURE_SKIP_VERIFY=true for development)")
 	}
 
 	consumerQueues, err := loadConsumerQueues()

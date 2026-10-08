@@ -131,6 +131,24 @@ pengguna disimpan oleh Zitadel di PostgreSQL. Detail implementasi dan testing
 ada di [Auth bridge](../services/auth-bridge/README.md) dan
 [frontend](../services/frontend/README.md).
 
+### Autentikasi JWT Aggregator
+
+Aggregator memverifikasi JWT access token dari Zitadel menggunakan JWKS yang
+dipublikasikan di endpoint OIDC discovery (`<authority>/.well-known/openid-configuration`
+→ `jwks_uri`). Key set di-cache dan di-refresh otomatis saat `kid` tidak dikenal
+(rotasi kunci). Variabel lama `AUTH_PUBLIC_KEY` dan `AUTH_PUBLIC_KEY_PATH` sudah
+dihapus; gunakan `AUTH_AUTHORITY` sebagai gantinya.
+
+| Variabel | Default contoh | Pemakai |
+| --- | --- | --- |
+| `AGGREGATOR_AUTH_AUTHORITY` | `http://auth.localhost:8080` | Aggregator; URL issuer OIDC untuk JWKS discovery |
+| `AUTH_AUDIENCE` | *(kosong)* | Aggregator; aud claim yang diharapkan. Kosong = tidak divalidasi |
+| `AUTH_INSECURE_SKIP_VERIFY` | `false` | Aggregator; `true` melewatkan verifikasi signature JWT (**hanya development**) |
+
+> ⚠️ `AUTH_INSECURE_SKIP_VERIFY=true` menampilkan peringatan saat startup dan
+> tidak boleh digunakan di production. Token tetap harus memiliki `exp` yang
+> valid.
+
 ### Kredensial sumber dan antar-service
 
 | Variabel | Penerima yang memerlukan nilai |
@@ -145,9 +163,10 @@ ada di [Auth bridge](../services/auth-bridge/README.md) dan
 Domain kredensial BMKG, PVMBG, dan pengguna BNPB tetap independen. Access token
 Zitadel tidak menggantikan API key BMKG ataupun bearer PVMBG. Gateway meneruskan
 access token aktor asli dan identitas service pemanggil; tidak ada internal JWT
-exchange atau Auth RPC. Implementasi validasi identitas service/aktor pada
-downstream masih harus diselesaikan pemilik masing-masing service. Jangan
-menganggap header role/scope kiriman client sebagai izin yang valid.
+exchange atau Auth RPC. Aggregator memvalidasi signature JWT menggunakan JWKS
+dari Zitadel, bukan dengan kunci PEM statis. Service token dibandingkan
+menggunakan constant-time comparison (`crypto/subtle`). Jangan menganggap header
+role/scope kiriman client sebagai izin yang valid.
 
 Secret tidak boleh masuk URL HTTP, log, trace, respons error, payload broker,
 atau Git. URL AMQP mengandung secret sehingga juga harus disamarkan pada log.

@@ -15,8 +15,9 @@ Implementasi dan bahasa belum dipilih.
   Aggregator mengakses Canonical Store langsung.
 - **Tanggung jawab:** korelasi tsunami, normalisasi, attributes dinamis,
   deduplikasi/upsert, isolasi polling, cache saat outage, serta publikasi durable
-  setelah commit. Memverifikasi caller dan hak aktor; panggilan ke Auth memakai
-  token service Aggregator sendiri plus bearer aktor asli.
+  setelah commit. Memverifikasi JWT access token melalui JWKS endpoint Zitadel
+  (`AUTH_AUTHORITY`); key set di-cache dan di-refresh otomatis saat rotasi kunci.
+  Service token antar-service dibandingkan dengan constant-time comparison.
 
 Health memakai `grpc.health.v1.Health` standar. TODO: runtime/Dockerfile,
 storage fleksibel, worker polling, referensi gunung api, retry/deadline,
