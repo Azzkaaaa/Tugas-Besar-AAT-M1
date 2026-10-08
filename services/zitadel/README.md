@@ -50,6 +50,11 @@ provisioning selesai. Script membuat:
   dan access token JWT, dipakai filter token exchange Envoy. Aplikasi ini berada di
   project yang sama karena Zitadel hanya menukar token yang audiensnya memuat
   project tersebut;
+- application OIDC `BNPB event feed token exchange` dengan grant yang sama. Event Live
+  Feed memakainya untuk menukar ulang JWT aktor sebelum habis sehingga stream tetap
+  terbuka (lihat [Event Live Feed](../event-live-feed/README.md)). Client ID/secret
+  disimpan sebagai `feed_client_id`/`feed_client_secret` di `oidc.json` dan client ini
+  ikut difilter `zitadel-claims` agar JWT hasil exchange tetap membawa `role`/`scopes`;
 - feature instance `oidcTokenExchange` (masih beta di Zitadel v4);
 - target Actions v2 `BNPB scope claims` ke `http://zitadel-claims:3002/claims`
   beserta execution untuk function `preuserinfo` dan `preaccesstoken`. Target ini

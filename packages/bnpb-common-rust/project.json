@@ -1,0 +1,43 @@
+{
+  "name": "bnpb-common-rust",
+  "$schema": "../../node_modules/nx/schemas/project-schema.json",
+  "projectType": "library",
+  "sourceRoot": "packages/bnpb-common-rust",
+  "targets": {
+    "clean-proto": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "git clean -fdX {projectRoot}",
+        "cwd": "{workspaceRoot}"
+      },
+      "cache": false
+    },
+    "generate-proto": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "buf generate",
+        "cwd": "{projectRoot}"
+      },
+      "cache": true,
+      "inputs": [
+        "{projectRoot}/buf.gen.yaml",
+        "{projectRoot}/**/Cargo.toml",
+        "{workspaceRoot}/contracts/proto/bnpb/common/**/*.proto"
+      ],
+      "outputs": [
+        "{projectRoot}/bnpb-common/codegen/**/*",
+        "!{projectRoot}/bnpb-common/codegen/.gitignore"
+      ]
+    },
+    "clean": {
+      "dependsOn": [
+        "clean-proto"
+      ]
+    },
+    "build": {
+      "dependsOn": [
+        "generate-proto"
+      ]
+    }
+  }
+}

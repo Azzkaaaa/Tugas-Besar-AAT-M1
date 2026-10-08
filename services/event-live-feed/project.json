@@ -1,0 +1,40 @@
+{
+  "$schema": "../../node_modules/nx/schemas/project-schema.json",
+  "name": "event-live-feed",
+  "projectType": "application",
+  "sourceRoot": "services/event-live-feed/src",
+  "implicitDependencies": ["bnpb-common-rust", "bnpb-event-rust", "bnpb-feed-rust"],
+  "targets": {
+    "build": {
+      "dependsOn": ["^build"],
+      "executor": "nx:run-commands",
+      "options": { "command": "cargo build --release --locked", "cwd": "services/event-live-feed" },
+      "cache": true,
+      "inputs": ["{projectRoot}/src/**/*", "{projectRoot}/Cargo.toml", "{projectRoot}/Cargo.lock"],
+      "outputs": ["{projectRoot}/target/release/event-live-feed"]
+    },
+    "test": {
+      "dependsOn": ["^build"],
+      "executor": "nx:run-commands",
+      "options": { "command": "cargo test --locked", "cwd": "services/event-live-feed" },
+      "cache": true,
+      "inputs": ["{projectRoot}/src/**/*", "{projectRoot}/Cargo.toml", "{projectRoot}/Cargo.lock"]
+    },
+    "lint": {
+      "dependsOn": ["^build"],
+      "executor": "nx:run-commands",
+      "options": {
+        "commands": ["cargo fmt --check", "cargo clippy --all-targets --locked -- -D warnings"],
+        "parallel": false,
+        "cwd": "services/event-live-feed"
+      },
+      "cache": true,
+      "inputs": ["{projectRoot}/src/**/*", "{projectRoot}/Cargo.toml", "{projectRoot}/Cargo.lock", "{projectRoot}/rustfmt.toml"]
+    },
+    "docker": {
+      "executor": "nx:run-commands",
+      "options": { "command": "docker build -f services/event-live-feed/Dockerfile -t bnpb/event-live-feed .", "cwd": "{workspaceRoot}" },
+      "cache": false
+    }
+  }
+}

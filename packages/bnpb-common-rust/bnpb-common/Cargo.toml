@@ -1,0 +1,9 @@
+[package]
+name = "bnpb-common"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+prost = "0.14"
+prost-types = "0.14"

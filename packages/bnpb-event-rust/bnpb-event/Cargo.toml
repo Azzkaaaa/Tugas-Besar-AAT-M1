@@ -1,0 +1,10 @@
+[package]
+name = "bnpb-event"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+bnpb-common = { path = "../../bnpb-common-rust/bnpb-common" }
+prost = "0.14"
+prost-types = "0.14"

@@ -121,12 +121,15 @@ test('seed is idempotent, preserves credentials, and configures 60-second tokens
   const saved = await readFile(f.configFile, 'utf8');
   const savedActions = await readFile(f.actionsFile, 'utf8');
   const changes = f.state.changes;
-  assert.equal(f.state.apps.length, 3);
+  assert.equal(f.state.apps.length, 4);
   assert.deepEqual([...f.state.hosts], ['auth.localhost:8080']);
   assert.deepEqual(f.state.features, { oidcTokenExchange: true });
   const gateway = f.state.apps.find(app => app.name === 'BNPB gateway token exchange').oidcConfig;
   assert.deepEqual(gateway.grantTypes, ['OIDC_GRANT_TYPE_AUTHORIZATION_CODE', 'OIDC_GRANT_TYPE_TOKEN_EXCHANGE']);
   assert.equal(gateway.accessTokenType, 'OIDC_TOKEN_TYPE_JWT');
+  const feed = f.state.apps.find(app => app.name === 'BNPB event feed token exchange').oidcConfig;
+  assert.deepEqual(feed.grantTypes, ['OIDC_GRANT_TYPE_AUTHORIZATION_CODE', 'OIDC_GRANT_TYPE_TOKEN_EXCHANGE']);
+  assert.equal(feed.accessTokenType, 'OIDC_TOKEN_TYPE_JWT');
   assert.equal(f.state.targets.length, 1);
   assert.equal(f.state.targets[0].endpoint, 'http://zitadel-claims:3002/claims');
   assert.deepEqual(f.state.targets[0].restCall, { interruptOnError: true });
@@ -134,11 +137,13 @@ test('seed is idempotent, preserves credentials, and configures 60-second tokens
   const config = JSON.parse(await readFile(f.configFile, 'utf8'));
   assert.equal(config.gateway_client_id, 'app2-client');
   assert.equal(config.gateway_client_secret, 'app2-test-secret');
+  assert.equal(config.feed_client_id, 'app3-client');
+  assert.equal(config.feed_client_secret, 'app3-test-secret');
   assert.equal(config.actions_target_id, undefined);
   assert.equal(config.actions_signing_key, undefined);
   // The claims service gets only the signing key and the IDs it filters on.
   assert.deepEqual(JSON.parse(savedActions), { actions_target_id: 'target0', actions_signing_key: 'target0-test-signing-key',
-    client_ids: [config.client_id, config.introspection_client_id, config.gateway_client_id],
+    client_ids: [config.client_id, config.introspection_client_id, config.gateway_client_id, config.feed_client_id],
     project_id: config.project_id, organization_id: config.organization_id });
   assert.equal(f.state.users.length, 4);
   assert.deepEqual(f.state.grants.map(grant => grant.roleKeys), [['MEDIA'], ['FIELD_TEAM'], ['BNPB_INTERNAL']]);

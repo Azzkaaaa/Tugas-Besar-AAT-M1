@@ -209,7 +209,7 @@ DSN mock harus berawalan `sqlite:///` dan menunjuk file persisten. Nilai kosong,
 | `AUTH_DATABASE_PATH` | `/data/sessions.sqlite` | Auth bridge; volume `auth_sessions` |
 | PostgreSQL Zitadel | database `zitadel` | Zitadel; volume `auth_postgres`, tidak dibaca langsung oleh bridge |
 | `NOTIFICATION_STORE_DSN` | kosong | Danger Notification |
-| `EVENT_FEED_CACHE_DSN` | kosong | Event Live Feed |
+| `EVENT_FEED_CACHE_DSN` | kosong | Event Live Feed; belum dipakai, buffer replay saat ini in-memory per epoch |
 | `WEBHOOK_STORE_DSN` | kosong | Webhook Provider |
 
 Record SQLite bertahan setelah restart proses/container selama file/volume
@@ -220,6 +220,21 @@ Aggregator. Saat lokal, tetap gunakan dua path file yang berbeda.
 Jika satu server database/cache fisik menampung beberapa store, gunakan
 database/namespace, akun, dan izin terpisah. Gateway tidak menerima DSN.
 Komponen lain meminta data kanonik melalui API Aggregator.
+
+## Event Live Feed
+
+| Variabel | Default | Arti |
+| --- | --- | --- |
+| `EVENT_FEED_AMQP_URL` | wajib | Koneksi consumer; Compose menyusunnya dari `RABBITMQ_DEFAULT_*` |
+| `CONSUMER_1_QUEUE` / `CONSUMER_1_DLQ` | `bnpb.event-live-feed.v1` / kosong | Queue dan DLQ; argumen harus sama dengan deklarasi Aggregator |
+| `FEED_REPLAY_MAX_ENTRIES` | `10000` | Batas jumlah entri replay selain `FEED_REPLAY_RETENTION_SECONDS` |
+| `FEED_AUTH_AUTHORITY` | `http://auth.localhost:8080` | Issuer JWT; discovery, JWKS, dan endpoint token exchange |
+| `OIDC_CONFIG_FILE` | kosong | `oidc.json` dari auth-bootstrap; dibaca `feed_client_id`/`feed_client_secret` |
+| `FEED_TOKEN_EXCHANGE_CLIENT_ID` / `_SECRET` | kosong | Override client token exchange feed; tanpa client, stream berakhir saat token habis |
+| `FEED_TOKEN_RENEW_BEFORE_SECONDS` | `15` | Token aktor ditukar ulang sekian detik sebelum habis |
+| `FEED_MAX_STREAM_SECONDS` | `3600` | Batas umur satu stream walaupun token terus diperbarui |
+
+Rincian rotasi token dan batasannya ada di [README Event Live Feed](../services/event-live-feed/README.md).
 
 ## RabbitMQ
 

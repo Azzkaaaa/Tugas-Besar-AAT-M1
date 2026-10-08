@@ -168,7 +168,8 @@ async function ensureClaimsAction() {
     actions.actions_signing_key = created.signingKey;
   }
   // Rewritten every run so the filter IDs follow the provisioned applications.
-  actions = { ...actions, client_ids: [saved.client_id, saved.introspection_client_id, saved.gateway_client_id],
+  actions = { ...actions, client_ids: [saved.client_id, saved.introspection_client_id, saved.gateway_client_id,
+    saved.feed_client_id],
     project_id: saved.project_id, organization_id: saved.organization_id };
   await persistActions();
   for (const name of ['preuserinfo', 'preaccesstoken']) {
@@ -264,6 +265,13 @@ async function main() {
     accessTokenType: 'OIDC_TOKEN_TYPE_JWT',
     accessTokenRoleAssertion: true,
   }));
+  // event-live-feed re-exchanges the gateway JWT before it expires so open streams survive
+  // token rotation; its own client keeps the gateway secret out of that service.
+  await ensureApp(projectId, 'BNPB event feed token exchange', 'oidc', 'feed', oidcApp({
+    grantTypes: ['OIDC_GRANT_TYPE_AUTHORIZATION_CODE', 'OIDC_GRANT_TYPE_TOKEN_EXCHANGE'],
+    accessTokenType: 'OIDC_TOKEN_TYPE_JWT',
+    accessTokenRoleAssertion: true,
+  }));
   await ensureClaimsAction();
   for (const [role, , username, firstName, lastName, passwordKey] of accounts) {
     const userId = await ensureUser(username, firstName, lastName, passwordKey);
@@ -279,7 +287,7 @@ async function main() {
   if (!admins.some(member => member.userId === adminId)) {
     await api('/admin/v1/members', { userId: adminId, roles: ['IAM_OWNER'] });
   }
-  console.log('Auth provisioning complete. Project, roles, three applications, claims action, and local users are ready.');
+  console.log('Auth provisioning complete. Project, roles, four applications, claims action, and local users are ready.');
   console.log('Existing passwords, client secrets, and signing keys were preserved. No credentials are printed.');
   console.log(`Access token lifetime: ${accessLifetime}s; maximum refresh/session lifetime: ${sessionLifetime}s.`);
 }

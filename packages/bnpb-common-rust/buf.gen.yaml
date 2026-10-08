@@ -1,0 +1,10 @@
+version: v2
+
+inputs:
+  - directory: ../..
+    paths:
+      - ../../contracts/proto/bnpb/common
+
+plugins:
+  - remote: buf.build/community/neoeinstein-prost:v0.5.0
+    out: bnpb-common/codegen

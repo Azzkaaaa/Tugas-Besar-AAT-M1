@@ -123,12 +123,45 @@ services:
         aliases:
           - notification-service.local
 
-  #feed-service:
-  #  # Set your image/build context here
-  #  networks:
-  #    bnpb_net:
-  #      aliases:
-  #        - feed-service.local
+  feed-service:
+    build:
+      context: .
+      dockerfile: services/event-live-feed/Dockerfile
+    environment:
+      EVENT_FEED_GRPC_PORT: ${EVENT_FEED_GRPC_PORT:-9093}
+      EVENT_FEED_AMQP_URL: amqp://${RABBITMQ_DEFAULT_USER}:${RABBITMQ_DEFAULT_PASS}@rabbitmq:5672/${RABBITMQ_DEFAULT_VHOST}
+      CONSUMER_1_QUEUE: ${CONSUMER_1_QUEUE}
+      CONSUMER_1_DLQ: ${CONSUMER_1_DLQ}
+      FEED_REPLAY_RETENTION_SECONDS: ${FEED_REPLAY_RETENTION_SECONDS:-600}
+      FEED_REPLAY_MAX_ENTRIES: ${FEED_REPLAY_MAX_ENTRIES:-10000}
+      FEED_AUTH_AUTHORITY: ${FEED_AUTH_AUTHORITY:-http://auth.localhost:8080}
+      FEED_TOKEN_RENEW_BEFORE_SECONDS: ${FEED_TOKEN_RENEW_BEFORE_SECONDS:-15}
+      FEED_MAX_STREAM_SECONDS: ${FEED_MAX_STREAM_SECONDS:-3600}
+      # Token-exchange client provisioned by auth-bootstrap (feed_client_id/secret).
+      OIDC_CONFIG_FILE: /bootstrap/oidc.json
+      FEED_TOKEN_EXCHANGE_CLIENT_ID: ${FEED_TOKEN_EXCHANGE_CLIENT_ID:-}
+      FEED_TOKEN_EXCHANGE_CLIENT_SECRET: ${FEED_TOKEN_EXCHANGE_CLIENT_SECRET:-}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-lgtm:4318
+      OTEL_EXPORTER_OTLP_PROTOCOL: http/protobuf
+      OTEL_SERVICE_NAME: event-live-feed
+    ports:
+      - "9093:9093"
+    volumes:
+      - auth_client_config:/bootstrap:ro
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      # The token-exchange client is read once at startup.
+      auth-bootstrap:
+        condition: service_completed_successfully
+      otel-lgtm:
+        condition: service_started
+    restart: unless-stopped
+    networks:
+      bnpb_net:
+        aliases:
+          - feed-service.local
 
   aggregator-service:
     build:
