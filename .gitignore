@@ -2,6 +2,7 @@
 .env
 .env.*
 !.env.example
+!.env.auth.example
 *.pem
 *.key
 .secrets/
@@ -13,6 +14,9 @@ dist/
 generated/
 coverage/
 *.log
+test-results/
+playwright-report/
+*.tsbuildinfo
 
 # Python and private SQLite state
 __pycache__/
@@ -22,6 +26,9 @@ data/
 *.sqlite3
 *.sqlite3-wal
 *.sqlite3-shm
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
 
 # Editors / OS
 .idea/

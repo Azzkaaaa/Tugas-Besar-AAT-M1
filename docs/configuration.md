@@ -3,9 +3,11 @@
 [`.env.example`](../.env.example) adalah inventaris konfigurasi. BMKG dan PVMBG
 sudah menggunakan Python 3.12 dan SQLite. Jalankan kedua mock melalui
 [`compose.mocks.yaml`](../compose.mocks.yaml); Compose utama juga memuat service
-lain yang belum selesai. Variabel untuk Aggregator, Auth, Gateway, broker, dan
-observability di bawah tetap merupakan target integrasi, bukan jaminan bahwa
-semua service tersebut sudah menggunakannya.
+lain yang belum selesai. Konfigurasi Auth yang sudah dipisahkan berada di
+[`.env.auth.example`](../.env.auth.example) dan
+[`compose.auth.yaml`](../compose.auth.yaml). Variabel Aggregator, API bisnis,
+broker, dan observability tetap target integrasi, bukan jaminan semua service
+sudah menggunakannya.
 
 Jalankan `python tools/setup_mock_env.py` dari root repo untuk membuat `.env`
 lokal dan mengisi placeholder kredensial kedua mock dengan nilai acak independen.
@@ -30,14 +32,12 @@ ada di [panduan mock](mock-services.md).
 | `BMKG_HTTP_PORT` | `8081` | Listener BMKG lokal; port host saat memakai Compose |
 | `PVMBG_HTTP_PORT` | `8082` | Listener PVMBG lokal; port host saat memakai Compose |
 | `AGGREGATOR_GRPC_PORT` | `9091` | Aggregator |
-| `AUTH_GRPC_PORT` | `9092` | Auth |
 | `EVENT_FEED_GRPC_PORT` | `9093` | Event Live Feed |
 | `WEBHOOK_GRPC_PORT` | `9094` | Webhook Provider |
 | `NOTIFICATION_GRPC_PORT` | `9095` | Danger Notification |
 | `BMKG_BASE_URL` | `http://bmkg-mock:8080` | Aggregator pada jaringan Compose |
 | `PVMBG_BASE_URL` | `http://pvmbg-mock:8080` | Aggregator pada jaringan Compose |
 | `AGGREGATOR_GRPC_ADDRESS` | `aggregator:9091` | Gateway, Danger Notification untuk freshness |
-| `AUTH_GRPC_ADDRESS` | `auth:9092` | Gateway, Aggregator, Event Live Feed, Webhook Provider, Danger Notification |
 | `EVENT_FEED_GRPC_ADDRESS` | `event-live-feed:9093` | Gateway |
 | `WEBHOOK_GRPC_ADDRESS` | `webhook-provider:9094` | Gateway |
 | `NOTIFICATION_GRPC_ADDRESS` | `danger-notification:9095` | Gateway |
@@ -54,43 +54,96 @@ tambahan yang diasumsikan tersedia.
 
 ## Domain kredensial dan identitas client
 
-| Variabel | Default contoh | Penerima yang memerlukan nilai |
+### Auth, Zitadel, dan SPA
+
+Jalankan dari root repo:
+
+```powershell
+python tools/setup_auth_env.py
+docker compose --env-file .env.auth -f compose.auth.yaml up -d --build
+```
+
+Script membuat `.env.auth` lokal dengan nilai acak terpisah dan mempertahankan
+nilai yang sudah terisi. Jangan commit file ini, token bootstrap, file SQLite,
+atau isi volume. Teman satu tim menjalankan setup yang sama untuk memperoleh
+konfigurasi lokalnya sendiri. Setup ini terpisah dari `setup_mock_env.py`.
+
+SPA di `http://localhost:8080` mengarahkan login ke Zitadel pada
+`http://auth.localhost:8080`. Client OIDC bersifat confidential dan berada di
+Auth bridge, bukan di JavaScript SPA. Callback adalah
+`http://localhost:8080/auth/callback`. Login menggunakan Authorization Code +
+PKCE; cookie mengirim access token kepada bridge. Konfigurasi tidak memakai
+`AUTH_SIGNING_KEY`, `AUTH_GRPC_*`, atau secret OAuth per role dari rancangan lama.
+
+| Variabel | Nilai/default lokal | Pemakai |
 | --- | --- | --- |
-| `BMKG_API_KEY` | `REPLACE_BMKG_ONLY` | BMKG Mock sebagai validator, Aggregator sebagai pemanggil |
-| `PVMBG_BEARER_TOKEN` | `REPLACE_PVMBG_ONLY` | PVMBG Mock sebagai validator, Aggregator sebagai pemanggil |
-| `AUTH_SIGNING_KEY` | `REPLACE_BNPB_SIGNING_KEY` | Auth saja |
-| `MEDIA_CLIENT_ID` | `media-demo` | Auth untuk registrasi; client Media saat login |
-| `MEDIA_CLIENT_SECRET` | `REPLACE_MEDIA_SECRET` | Auth untuk registrasi; client Media saat login |
-| `FIELD_TEAM_CLIENT_ID` | `field-team-demo` | Auth untuk registrasi; client Tim Lapangan saat login |
-| `FIELD_TEAM_CLIENT_SECRET` | `REPLACE_FIELD_TEAM_SECRET` | Auth untuk registrasi; client Tim Lapangan saat login |
-| `BNPB_INTERNAL_CLIENT_ID` | `bnpb-internal-demo` | Auth untuk registrasi; client BNPB Pusat saat login |
-| `BNPB_INTERNAL_CLIENT_SECRET` | `REPLACE_INTERNAL_CLIENT_SECRET` | Auth untuk registrasi; client BNPB Pusat saat login |
-| `ACCESS_TOKEN_TTL_SECONDS` | `60` | Auth |
-| `REFRESH_TOKEN_TTL_SECONDS` | `86400` | Auth |
-| `GATEWAY_SERVICE_TOKEN` | `REPLACE_GATEWAY_SERVICE_TOKEN` | Gateway sebagai pemanggil; Auth untuk allowlist |
-| `AGGREGATOR_SERVICE_TOKEN` | `REPLACE_AGGREGATOR_SERVICE_TOKEN` | Aggregator sebagai pemanggil; Auth untuk allowlist |
-| `EVENT_FEED_SERVICE_TOKEN` | `REPLACE_EVENT_FEED_SERVICE_TOKEN` | Event Live Feed sebagai pemanggil; Auth untuk allowlist |
-| `WEBHOOK_SERVICE_TOKEN` | `REPLACE_WEBHOOK_SERVICE_TOKEN` | Webhook Provider sebagai pemanggil; Auth untuk allowlist |
-| `NOTIFICATION_SERVICE_TOKEN` | `REPLACE_NOTIFICATION_SERVICE_TOKEN` | Danger Notification sebagai pemanggil; Auth untuk allowlist |
+| `APP_PUBLIC_URL` | `http://localhost:8080` | Bootstrap dan bridge; callback, Origin, redirect |
+| `OIDC_ISSUER` | `http://auth.localhost:8080` | Bootstrap dan bridge; harus cocok dengan issuer publik Zitadel |
+| `OIDC_CONFIG_FILE` | `/bootstrap/oidc.json` | Bootstrap menulis; bridge membaca volume read-only |
+| `PORT` | `3001` | Listener HTTP bridge internal; tidak dipublikasikan ke host |
+| `AUTH_ALLOW_HTTP` | `true` di Compose lokal | Bridge; pengecualian development untuk issuer HTTP |
+| `AUTH_COOKIE_SECURE` | `false` di Compose lokal | Bridge; wajib `true` ketika aplikasi menggunakan HTTPS |
+| `AUTH_SESSION_KEY` | 64 karakter hex dari setup | Bridge saja; kunci enkripsi refresh token sesi |
+| `AUTH_DATABASE_PATH` | `/data/sessions.sqlite` | Bridge; volume `auth_sessions` |
+| `AUTH_SESSION_TTL_SECONDS` | `86400` | Batas sesi lokal dan konfigurasi refresh di provisioning |
+| `ZITADEL_ACCESS_TOKEN_TTL_SECONDS` | `60` | Bootstrap; mengatur TTL access token di Zitadel sesuai M1 |
+| `GATEWAY_UPSTREAM_URL` | kosong pada standalone Auth | Bridge; 503 bila API bisnis belum dikonfigurasi |
+| `GATEWAY_SERVICE_TOKEN` | nilai acak dari setup | Bridge; identitas pemanggil pada `x-service-token` ke Gateway internal |
+| `ZITADEL_MASTERKEY` | 32 karakter dari setup | Zitadel; pertahankan selama memakai database yang sama |
+| `AUTH_POSTGRES_PASSWORD` | nilai acak dari setup | PostgreSQL dan Zitadel |
+| `LOGIN_SESSION_COOKIE_SECRET` | nilai acak dari setup | Hosted Login UI Zitadel |
+| `AUTH_ADMIN_PASSWORD` | nilai acak dari setup | Provisioning administrator lokal; bukan akun dashboard |
+| `AUTH_MEDIA_PASSWORD` | nilai acak dari setup | Provisioning `media-demo`, role `MEDIA` |
+| `AUTH_FIELD_TEAM_PASSWORD` | nilai acak dari setup | Provisioning `lapangan-demo`, role `FIELD_TEAM` |
+| `AUTH_BNPB_PASSWORD` | nilai acak dari setup | Provisioning `bnpb-demo`, role `BNPB_INTERNAL` |
+| `FRONTEND_DATA_MODE` | `mock` pada standalone Auth | Build Compose: `mock` memakai fixture, `gateway` memakai API |
 
-Ketiga domain BMKG, PVMBG, dan token pengguna BNPB harus independen. Ketiga
-identitas client juga berbeda. Auth memetakan identitas ke role/scope dan
-menyimpan verifier secret client; role bukan input login. Kredensial client
-demo dimasukkan saat login, tidak dibundel sebagai secret tetap dalam SPA.
+Bootstrap menyimpan `issuer`, `client_id`, `client_secret`, `project_id`,
+`organization_id`, `introspection_client_id`, dan `introspection_client_secret`
+di volume `auth_client_config`. Nilai secret ini hanya untuk server. SPA tidak
+menerima file tersebut dan tidak boleh memakai variabel `VITE_*` untuk secret.
+Grant harus berasal dari proyek dan organisasi yang tercantum di konfigurasi;
+bridge memetakannya ke scope aplikasi sesuai [kontrak gRPC](../contracts/proto/README.md).
 
-Setiap pemanggil internal mendapat **hanya secret service miliknya sendiri**.
-Auth mengetahui allowlist seluruh identitas service yang boleh memanggilnya.
-Penerima gRPC lain harus mendapat verifier/hash allowlist untuk identitas
-pemanggil yang diizinkan, bukan secret outbound milik service lain. Provisioning
-dan rotasi verifier ini masih pekerjaan implementasi/deployment.
+Jalankan ulang provisioning setelah perubahan kebijakan TTL dengan
+`docker compose --env-file .env.auth -f compose.auth.yaml run --rm auth-bootstrap`.
+Untuk perubahan password dan pemulihan volume, ikuti
+[panduan Zitadel](../services/zitadel/README.md); jangan mengganti master key
+pada database yang sudah berisi data.
 
-Contoh alur: Gateway memanggil Aggregator dengan `GATEWAY_SERVICE_TOKEN` pada
-`x-service-token`, plus access token pengguna asli pada `authorization`.
-Aggregator memverifikasi identitas pemanggil, lalu memanggil Auth dengan
-`AGGREGATOR_SERVICE_TOKEN` miliknya sendiri dan access token pengguna yang sama.
-Pola serupa berlaku untuk Event Live Feed, Webhook Provider, dan Danger Notification. Actor token tidak
-diganti menjadi identitas service. Login/refresh/logout memakai kredensial
-request sesuai proto dan tetap memiliki identitas service pada metadata.
+Build Auth memakai `VITE_APP_MODE=oidc` dan `VITE_ENABLE_DEMO=false`. Mode data
+terpisah: `VITE_DATA_MODE=mock` berarti autentikasi nyata, tetapi event masih
+fixture frontend. Untuk data nyata, gunakan `VITE_DATA_MODE=gateway` dan
+`VITE_API_BASE_URL=/api/v1`, lalu hubungkan bridge ke Gateway yang siap.
+Compose utama menetapkan upstream internal `http://gateway-transcoder:8080`.
+Perubahan variabel `VITE_*` memerlukan build ulang karena dibaca saat build.
+
+Cookie `bnpb_access` dan `bnpb_session` adalah host-only, `HttpOnly`, `Path=/`,
+dan `SameSite=Lax`. POST refresh/logout dan mutasi API berbasis cookie juga
+memerlukan Origin aplikasi dan `X-CSRF-Token` dari `/auth/session`. CSRF token
+bukan access token. Refresh token disimpan terenkripsi di SQLite; akun/password
+pengguna disimpan oleh Zitadel di PostgreSQL. Detail implementasi dan testing
+ada di [Auth bridge](../services/auth-bridge/README.md) dan
+[frontend](../services/frontend/README.md).
+
+### Kredensial sumber dan antar-service
+
+| Variabel | Penerima yang memerlukan nilai |
+| --- | --- |
+| `BMKG_API_KEY` | BMKG Mock sebagai validator, Aggregator sebagai pemanggil |
+| `PVMBG_BEARER_TOKEN` | PVMBG Mock sebagai validator, Aggregator sebagai pemanggil |
+| `GATEWAY_SERVICE_TOKEN` | Auth bridge sebagai pemanggil; downstream perlu validator identitas ini |
+| `AGGREGATOR_SERVICE_TOKEN` | Identitas outbound Aggregator pada integrasi antar-service berikutnya |
+| `EVENT_FEED_SERVICE_TOKEN` | Identitas outbound Event Live Feed pada integrasi berikutnya |
+| `WEBHOOK_SERVICE_TOKEN` | Identitas outbound Webhook Provider pada integrasi berikutnya |
+| `NOTIFICATION_SERVICE_TOKEN` | Identitas outbound Danger Notification pada integrasi berikutnya |
+
+Domain kredensial BMKG, PVMBG, dan pengguna BNPB tetap independen. Access token
+Zitadel tidak menggantikan API key BMKG ataupun bearer PVMBG. Gateway meneruskan
+access token aktor asli dan identitas service pemanggil; tidak ada internal JWT
+exchange atau Auth RPC. Implementasi validasi identitas service/aktor pada
+downstream masih harus diselesaikan pemilik masing-masing service. Jangan
+menganggap header role/scope kiriman client sebagai izin yang valid.
 
 Secret tidak boleh masuk URL HTTP, log, trace, respons error, payload broker,
 atau Git. URL AMQP mengandung secret sehingga juga harus disamarkan pada log.
@@ -149,8 +202,8 @@ DSN mock harus berawalan `sqlite:///` dan menunjuk file persisten. Nilai kosong,
 | `BMKG_STORE_DSN` | `sqlite:///data/bmkg.sqlite3` | BMKG Mock; volume Compose `bmkg_data` |
 | `PVMBG_STORE_DSN` | `sqlite:///data/pvmbg.sqlite3` | PVMBG Mock; volume Compose `pvmbg_data` |
 | `CANONICAL_STORE_DSN` | kosong | Aggregator, termasuk state ingest/outbox |
-| `AUTH_STORE_DSN` | kosong | Auth |
-| `AUTH_CACHE_DSN` | kosong | Auth |
+| `AUTH_DATABASE_PATH` | `/data/sessions.sqlite` | Auth bridge; volume `auth_sessions` |
+| PostgreSQL Zitadel | database `zitadel` | Zitadel; volume `auth_postgres`, tidak dibaca langsung oleh bridge |
 | `NOTIFICATION_STORE_DSN` | kosong | Danger Notification |
 | `EVENT_FEED_CACHE_DSN` | kosong | Event Live Feed |
 | `WEBHOOK_STORE_DSN` | kosong | Webhook Provider |
