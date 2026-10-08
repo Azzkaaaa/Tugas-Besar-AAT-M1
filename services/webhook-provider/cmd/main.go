@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/webhook-provider/internal/auth"
 	"github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/webhook-provider/internal/config"
@@ -13,6 +14,7 @@ import (
 	"github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/webhook-provider/internal/dispatcher"
 	grpcserver "github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/webhook-provider/internal/grpc"
 	"github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/webhook-provider/internal/store"
+	"github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/webhook-provider/internal/telemetry"
 )
 
 func main() {
@@ -26,6 +28,19 @@ func main() {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+
+	shutdownTele, err := telemetry.Init(ctx, "webhook-provider")
+	if err != nil {
+		log.Printf("[WebhookProvider] Warning: telemetry init failed: %v", err)
+	} else {
+		defer func() {
+			shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer shutdownCancel()
+			if err := shutdownTele(shutdownCtx); err != nil {
+				log.Printf("[WebhookProvider] Error shutting down telemetry: %v", err)
+			}
+		}()
+	}
 
 	// Graceful shutdown on SIGINT / SIGTERM.
 	sigChan := make(chan os.Signal, 1)

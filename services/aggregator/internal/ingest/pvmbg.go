@@ -11,7 +11,12 @@ import (
 
 	"github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/aggregator/internal/config"
 	"github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/aggregator/internal/store"
+	"github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/aggregator/internal/telemetry"
 	"github.com/google/uuid"
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/metric"
+	"go.opentelemetry.io/otel/trace"
 )
 
 type PVMBGPoller struct {
@@ -25,7 +30,8 @@ func NewPVMBGPoller(cfg *config.Config, db *store.DB) *PVMBGPoller {
 		cfg: cfg,
 		db:  db,
 		client: &http.Client{
-			Timeout: cfg.PVMBGRequestTimeout,
+			Transport: otelhttp.NewTransport(http.DefaultTransport),
+			Timeout:   cfg.PVMBGRequestTimeout,
 		},
 	}
 }
@@ -49,39 +55,68 @@ func (p *PVMBGPoller) Start(ctx context.Context) {
 
 func (p *PVMBGPoller) poll(ctx context.Context) {
 	corrID := "poll-pvmbg-" + uuid.New().String()
+	pollStart := time.Now()
 
-	_, watermark, err := p.db.GetWatermark(ctx, "pvmbg_volcanic")
+	var ctxPoll context.Context
+	var span trace.Span
+	if telemetry.Tracer != nil {
+		ctxPoll, span = telemetry.Tracer.Start(ctx, "pvmbg.poll")
+		defer span.End()
+	} else {
+		ctxPoll = ctx
+	}
+
+	recordPollMetrics := func(err error, count int) {
+		durationSec := time.Since(pollStart).Seconds()
+		if telemetry.IngestDurationHistogram != nil {
+			telemetry.IngestDurationHistogram.Record(ctxPoll, durationSec, metric.WithAttributes(attribute.String("source", "PVMBG")))
+		}
+		if err != nil {
+			if telemetry.IngestErrorsCounter != nil {
+				telemetry.IngestErrorsCounter.Add(ctxPoll, 1, metric.WithAttributes(attribute.String("source", "PVMBG")))
+			}
+		} else if count > 0 && telemetry.HazardsIngestedCounter != nil {
+			telemetry.HazardsIngestedCounter.Add(ctxPoll, int64(count), metric.WithAttributes(attribute.String("source", "PVMBG")))
+		}
+	}
+
+	_, watermark, err := p.db.GetWatermark(ctxPoll, "pvmbg_volcanic")
 	if err != nil {
 		watermark = time.Time{}
 	}
 
-	reports, err := p.fetchVolcanicReports(ctx, watermark, corrID)
+	reports, err := p.fetchVolcanicReports(ctxPoll, watermark, corrID)
 	if err != nil {
-		_ = p.db.UpdateWatermark(ctx, "pvmbg_volcanic", "PVMBG", watermark, false, err.Error())
+		recordPollMetrics(err, 0)
+		_ = p.db.UpdateWatermark(ctxPoll, "pvmbg_volcanic", "PVMBG", watermark, false, err.Error())
 		return
 	}
 
-	tx, err := p.db.Pool.Begin(ctx)
+	tx, err := p.db.Pool.Begin(ctxPoll)
 	if err != nil {
-		_ = p.db.UpdateWatermark(ctx, "pvmbg_volcanic", "PVMBG", watermark, false, err.Error())
+		recordPollMetrics(err, 0)
+		_ = p.db.UpdateWatermark(ctxPoll, "pvmbg_volcanic", "PVMBG", watermark, false, err.Error())
 		return
 	}
-	defer tx.Rollback(ctx)
+	defer tx.Rollback(ctxPoll)
 
 	newWatermark := watermark
+	newCount := 0
 	for _, r := range reports {
 		h := MapPVMBGToHazard(r)
 
-		savedHazard, isNewOrUpdated, err := p.db.UpsertHazard(ctx, tx, h)
+		savedHazard, isNewOrUpdated, err := p.db.UpsertHazard(ctxPoll, tx, h)
 		if err != nil {
-			_ = p.db.UpdateWatermark(ctx, "pvmbg_volcanic", "PVMBG", watermark, false, err.Error())
+			recordPollMetrics(err, 0)
+			_ = p.db.UpdateWatermark(ctxPoll, "pvmbg_volcanic", "PVMBG", watermark, false, err.Error())
 			return
 		}
 
 		if isNewOrUpdated {
+			newCount++
 			pubID, payload, err := BuildPublishedEnvelope(savedHazard, corrID)
 			if err == nil {
-				_ = p.db.EnqueueOutbox(ctx, tx, pubID, savedHazard.HazardID, "PVMBG", payload)
+				_ = p.db.EnqueueOutbox(ctxPoll, tx, pubID, savedHazard.HazardID, "PVMBG", payload)
 			}
 		}
 
@@ -90,12 +125,14 @@ func (p *PVMBGPoller) poll(ctx context.Context) {
 		}
 	}
 
-	if err := tx.Commit(ctx); err != nil {
-		_ = p.db.UpdateWatermark(ctx, "pvmbg_volcanic", "PVMBG", watermark, false, err.Error())
+	if err := tx.Commit(ctxPoll); err != nil {
+		recordPollMetrics(err, 0)
+		_ = p.db.UpdateWatermark(ctxPoll, "pvmbg_volcanic", "PVMBG", watermark, false, err.Error())
 		return
 	}
 
-	_ = p.db.UpdateWatermark(ctx, "pvmbg_volcanic", "PVMBG", newWatermark, true, "")
+	_ = p.db.UpdateWatermark(ctxPoll, "pvmbg_volcanic", "PVMBG", newWatermark, true, "")
+	recordPollMetrics(nil, newCount)
 }
 
 func (p *PVMBGPoller) fetchVolcanicReports(ctx context.Context, since time.Time, corrID string) ([]*PVMBGVolcanicRaw, error) {

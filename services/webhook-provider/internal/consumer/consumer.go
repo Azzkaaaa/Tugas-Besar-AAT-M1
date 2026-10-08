@@ -10,8 +10,13 @@ import (
 	"github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/webhook-provider/internal/config"
 	"github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/webhook-provider/internal/dispatcher"
 	"github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/webhook-provider/internal/store"
+	"github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/webhook-provider/internal/telemetry"
 	"github.com/google/uuid"
 	amqp "github.com/rabbitmq/amqp091-go"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/metric"
+	"go.opentelemetry.io/otel/trace"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -143,22 +148,67 @@ func (c *Consumer) consumeLoop(ctx context.Context, conn *amqp.Connection, ch *a
 
 // handleMessage processes a single RabbitMQ delivery.
 func (c *Consumer) handleMessage(ctx context.Context, msg amqp.Delivery) {
+	ctxMsg := telemetry.ExtractAMQPHeaders(ctx, msg.Headers)
+
+	var span trace.Span
+	if telemetry.Tracer != nil {
+		ctxMsg, span = telemetry.Tracer.Start(ctxMsg, "rabbitmq.consume")
+		defer span.End()
+		span.SetAttributes(
+			attribute.String("messaging.system", "rabbitmq"),
+			attribute.String("messaging.source", c.cfg.ConsumerQueue),
+			attribute.String("messaging.message_id", msg.MessageId),
+		)
+	}
+
 	var ev eventv1.HazardEventPublished
 	if err := proto.Unmarshal(msg.Body, &ev); err != nil {
 		log.Printf("[Consumer] Failed to unmarshal message: %v — dead-lettering", err)
+		if span != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, "unmarshal failure")
+		}
+		if telemetry.ConsumerErrorsCounter != nil {
+			telemetry.ConsumerErrorsCounter.Add(ctxMsg, 1)
+		}
 		_ = msg.Nack(false, false)
 		return
+	}
+
+	if span != nil {
+		span.SetAttributes(
+			attribute.String("hazard.id", ev.GetPayload().GetHazardId()),
+			attribute.String("hazard.source", ev.GetPayload().GetSource().String()),
+			attribute.Int64("schema.version", int64(ev.SchemaVersion)),
+		)
 	}
 
 	if ev.SchemaVersion != 1 {
 		log.Printf("[Consumer] Unknown schema_version=%d for event %s — dead-lettering", ev.SchemaVersion, ev.EventId)
+		if telemetry.ConsumerErrorsCounter != nil {
+			telemetry.ConsumerErrorsCounter.Add(ctxMsg, 1)
+		}
 		_ = msg.Nack(false, false)
 		return
 	}
 
-	subs, err := c.db.ListActiveSubscriptions(ctx)
+	if telemetry.EventsConsumedCounter != nil {
+		telemetry.EventsConsumedCounter.Add(ctxMsg, 1, metric.WithAttributes(
+			attribute.String("source", ev.GetPayload().GetSource().String()),
+			attribute.String("hazard_type", ev.GetPayload().GetHazardType().String()),
+		))
+	}
+
+	subs, err := c.db.ListActiveSubscriptions(ctxMsg)
 	if err != nil {
 		log.Printf("[Consumer] Failed to list subscriptions for event %s: %v — requeuing", ev.EventId, err)
+		if span != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, err.Error())
+		}
+		if telemetry.ConsumerErrorsCounter != nil {
+			telemetry.ConsumerErrorsCounter.Add(ctxMsg, 1)
+		}
 		_ = msg.Nack(false, true)
 		return
 	}
@@ -170,7 +220,7 @@ func (c *Consumer) handleMessage(ctx context.Context, msg amqp.Delivery) {
 		}
 
 		// Idempotency: skip if already successfully delivered.
-		delivered, err := c.db.IsDelivered(ctx, ev.EventId, sub.WebhookID)
+		delivered, err := c.db.IsDelivered(ctxMsg, ev.EventId, sub.WebhookID)
 		if err != nil {
 			log.Printf("[Consumer] Dedup check failed for event %s / webhook %s: %v", ev.EventId, sub.WebhookID, err)
 			allOK = false
@@ -189,7 +239,7 @@ func (c *Consumer) handleMessage(ctx context.Context, msg amqp.Delivery) {
 			continue
 		}
 
-		result := c.disp.Dispatch(ctx, sub.URL, sub.Secret, payload)
+		result := c.disp.Dispatch(ctxMsg, sub.URL, sub.Secret, payload)
 
 		deliveryID := uuid.NewString()
 		status := "FAILED"
@@ -214,14 +264,14 @@ func (c *Consumer) handleMessage(ctx context.Context, msg amqp.Delivery) {
 			DeliveredAt:  time.Now().UTC(),
 		}
 
-		if err := c.db.InsertDelivery(ctx, d); err != nil {
+		if err := c.db.InsertDelivery(ctxMsg, d); err != nil {
 			log.Printf("[Consumer] Failed inserting delivery log for event %s / webhook %s: %v", ev.EventId, sub.WebhookID, err)
 			allOK = false
 			continue
 		}
 
 		if status == "SUCCESS" {
-			if err := c.db.MarkDelivered(ctx, ev.EventId, sub.WebhookID); err != nil {
+			if err := c.db.MarkDelivered(ctxMsg, ev.EventId, sub.WebhookID); err != nil {
 				log.Printf("[Consumer] Failed marking delivered for event %s / webhook %s: %v", ev.EventId, sub.WebhookID, err)
 			}
 		} else {

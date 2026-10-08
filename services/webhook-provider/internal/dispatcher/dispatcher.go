@@ -11,6 +11,13 @@ import (
 	"log"
 	"net/http"
 	"time"
+
+	"github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/webhook-provider/internal/telemetry"
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/metric"
+	"go.opentelemetry.io/otel/trace"
 )
 
 // Result holds the outcome of a single dispatch attempt.
@@ -30,7 +37,10 @@ type Dispatcher struct {
 // New creates a Dispatcher with the given HTTP timeout and max retry count.
 func New(timeout time.Duration, maxRetries int) *Dispatcher {
 	return &Dispatcher{
-		client:     &http.Client{Timeout: timeout},
+		client: &http.Client{
+			Transport: otelhttp.NewTransport(http.DefaultTransport),
+			Timeout:   timeout,
+		},
 		maxRetries: maxRetries,
 	}
 }
@@ -67,10 +77,33 @@ func (d *Dispatcher) DispatchOnce(ctx context.Context, url, secret string, paylo
 }
 
 func (d *Dispatcher) doPost(ctx context.Context, url, secret string, body []byte) Result {
+	var ctxPost context.Context
+	var span trace.Span
+	if telemetry.Tracer != nil {
+		ctxPost, span = telemetry.Tracer.Start(ctx, "webhook.http_post")
+		defer span.End()
+		span.SetAttributes(
+			attribute.String("http.url", url),
+			attribute.String("http.method", http.MethodPost),
+		)
+	} else {
+		ctxPost = ctx
+	}
+
 	sig := computeSignature(secret, body)
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctxPost, http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
+		if span != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, err.Error())
+		}
+		if telemetry.DeliveriesCounter != nil {
+			telemetry.DeliveriesCounter.Add(ctxPost, 1, metric.WithAttributes(
+				attribute.String("status", "FAILED"),
+				attribute.String("url", url),
+			))
+		}
 		return Result{Err: fmt.Errorf("building request: %w", err)}
 	}
 	req.Header.Set("Content-Type", "application/json")
@@ -79,14 +112,53 @@ func (d *Dispatcher) doPost(ctx context.Context, url, secret string, body []byte
 
 	start := time.Now()
 	resp, err := d.client.Do(req)
-	durationMS := time.Since(start).Milliseconds()
+	durationSec := time.Since(start).Seconds()
+	durationMS := int64(durationSec * 1000)
+
+	if telemetry.DeliveryDurationHistogram != nil {
+		telemetry.DeliveryDurationHistogram.Record(ctxPost, durationSec, metric.WithAttributes(
+			attribute.String("url", url),
+		))
+	}
 
 	if err != nil {
+		if span != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, err.Error())
+		}
+		if telemetry.DeliveriesCounter != nil {
+			telemetry.DeliveriesCounter.Add(ctxPost, 1, metric.WithAttributes(
+				attribute.String("status", "FAILED"),
+				attribute.String("url", url),
+			))
+		}
 		return Result{DurationMS: durationMS, Err: fmt.Errorf("http post: %w", err)}
 	}
 	defer resp.Body.Close()
 	// Drain body so the connection can be reused.
 	_, _ = io.Copy(io.Discard, resp.Body)
+
+	statusStr := "FAILED"
+	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+		statusStr = "SUCCESS"
+		if span != nil {
+			span.SetStatus(codes.Ok, "success")
+		}
+	} else if span != nil {
+		span.SetStatus(codes.Error, fmt.Sprintf("HTTP status %d", resp.StatusCode))
+	}
+
+	if span != nil {
+		span.SetAttributes(attribute.Int("http.status_code", resp.StatusCode))
+	}
+
+	if telemetry.DeliveriesCounter != nil {
+		telemetry.DeliveriesCounter.Add(ctxPost, 1, metric.WithAttributes(
+			attribute.String("status", statusStr),
+			attribute.String("url", url),
+			attribute.Int("http.status_code", resp.StatusCode),
+		))
+	}
 
 	return Result{StatusCode: resp.StatusCode, DurationMS: durationMS}
 }

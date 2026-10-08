@@ -11,6 +11,7 @@ import (
 	"github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/aggregator/internal/auth"
 	"github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/aggregator/internal/config"
 	"github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/aggregator/internal/store"
+	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/health"
@@ -34,9 +35,14 @@ func (s *Server) Start(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("listen on %s failed: %w", s.cfg.GRPCPort, err)
 	}
-	// JWT interceptor.
-	unaryInt := s.auth.UnaryServerInterceptor()
-	grpcSrv := grpc.NewServer(grpc.UnaryInterceptor(unaryInt))
+	// OTel + JWT interceptor chain & stats handler.
+	grpcSrv := grpc.NewServer(
+		grpc.StatsHandler(otelgrpc.NewServerHandler()),
+		grpc.ChainUnaryInterceptor(
+			otelgrpc.UnaryServerInterceptor(),
+			s.auth.UnaryServerInterceptor(),
+		),
+	)
 	// register service implementation.
 	aggregatorv1.RegisterAggregatorServiceServer(grpcSrv, s)
 	healthSrv := health.NewServer()

@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/aggregator/internal/auth"
 	"github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/aggregator/internal/broker"
@@ -13,6 +14,7 @@ import (
 	"github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/aggregator/internal/grpc"
 	"github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/aggregator/internal/ingest"
 	"github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/aggregator/internal/store"
+	"github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/aggregator/internal/telemetry"
 )
 
 func main() {
@@ -26,6 +28,19 @@ func main() {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+
+	shutdownTele, err := telemetry.Init(ctx, "aggregator-service")
+	if err != nil {
+		log.Printf("[Aggregator] Warning: telemetry init failed: %v", err)
+	} else {
+		defer func() {
+			shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer shutdownCancel()
+			if err := shutdownTele(shutdownCtx); err != nil {
+				log.Printf("[Aggregator] Error shutting down telemetry: %v", err)
+			}
+		}()
+	}
 
 	// Handle graceful shutdown signals
 	sigChan := make(chan os.Signal, 1)
