@@ -1,0 +1,25 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "FCM Silent Notification Data Payload",
+  "description": "Schema for the 'data' object in an FCM message, used to wake up the app and trigger a secure data fetch.",
+  "type": "object",
+  "properties": {
+    "messageId": {
+      "type": "string",
+      "description": "The unique identifier required by the client to securely fetch the actual payload from your backend."
+    },
+    "type": {
+      "type": "string",
+      "const": "HAZARD",
+      "description": "Notification type for the client to identify"
+    },
+    "timestamp": {
+      "type": "string",
+      "description": "When the notification was triggered."
+    }
+  },
+  "required": [
+    "messageId"
+  ],
+  "additionalProperties": true
+}
