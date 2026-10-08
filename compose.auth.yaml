@@ -19,15 +19,10 @@ x-envoy-env: &envoy-env
   AUTH_BRIDGE_PORT: "3001"
   SPA_ADDRESS: spa-server
   SPA_PORT: "80"
-  # Business services are absent in this standalone stack: authenticated API calls get 503.
-  AGGREGATOR_ADDRESS: aggregator-service
-  AGGREGATOR_PORT: "9091"
-  WEBHOOK_ADDRESS: webhook-provider
-  WEBHOOK_PORT: "9094"
-  NOTIFICATION_ADDRESS: notification-service
-  NOTIFICATION_PORT: "9095"
-  FEED_ADDRESS: feed-service
-  FEED_PORT: "9090"
+  # REST contract → gRPC. Business services are absent in this standalone stack, so
+  # authenticated API calls get a 503 problem from the gateway.
+  API_GATEWAY_ADDRESS: api-gateway
+  API_GATEWAY_PORT: "8080"
   TOKEN_EXCHANGE_URL: auth.localhost:8080/oauth/v2/token
   AUTH_ACCESS_COOKIE: bnpb_access
   AUTH_COOKIE_PREFIX: bnpb_
@@ -126,6 +121,7 @@ services:
       ZITADEL_ADMIN_PAT_FILE: /admin/admin.pat
       OIDC_CONFIG_FILE: /bootstrap/oidc.json
       ACTIONS_CONFIG_FILE: /actions/actions.json
+      SERVICE_ACCOUNTS_DIR: /service-accounts
       AUTH_ADMIN_PASSWORD: "${AUTH_ADMIN_PASSWORD:?Run python tools/setup_auth_env.py}"
       AUTH_MEDIA_PASSWORD: "${AUTH_MEDIA_PASSWORD:?Run python tools/setup_auth_env.py}"
       AUTH_FIELD_TEAM_PASSWORD: "${AUTH_FIELD_TEAM_PASSWORD:?Run python tools/setup_auth_env.py}"
@@ -137,6 +133,8 @@ services:
       - zitadel_admin_bootstrap:/admin:ro
       - auth_client_config:/bootstrap
       - auth_actions_config:/actions
+      # Service-user secrets and project ID for local scripts; .cache/ is gitignored.
+      - ./.cache/auth:/service-accounts
     depends_on:
       zitadel: {condition: service_healthy}
       # Zitadel resolves the Actions target host when the target is created.
@@ -199,7 +197,29 @@ services:
       bnpb_net:
         aliases: [spa-server.local]
 
-  # Single gateway: SPA, Auth bridge, hosted login, and cookie → token exchange → REST/gRPC.
+  # Implements contracts/openapi/gateway.yaml over the gRPC backends (see services/api-gateway).
+  api-gateway:
+    build:
+      context: .
+      dockerfile: services/api-gateway/Dockerfile
+    environment:
+      GATEWAY_HTTP_PORT: "8080"
+      AGGREGATOR_GRPC_ADDRESS: aggregator-service:9091
+      NOTIFICATION_GRPC_ADDRESS: notification-service:9095
+      WEBHOOK_GRPC_ADDRESS: webhook-provider:9094
+      EVENT_FEED_GRPC_ADDRESS: feed-service:9093
+      GATEWAY_REQUEST_TIMEOUT_MS: "${GATEWAY_REQUEST_TIMEOUT_MS:-2000}"
+      GATEWAY_MAX_IN_FLIGHT: "${GATEWAY_MAX_IN_FLIGHT:-100}"
+    healthcheck:
+      test: [CMD, /api-gateway, --healthcheck]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    networks:
+      bnpb_net:
+        aliases: [api-gateway.local]
+
+  # Edge proxy: SPA, Auth bridge, hosted login, and cookie → token exchange → api-gateway.
   envoy:
     build:
       context: .
@@ -213,6 +233,7 @@ services:
       auth-bootstrap: {condition: service_completed_successfully}
       auth-bridge: {condition: service_healthy}
       zitadel-login: {condition: service_healthy}
+      api-gateway: {condition: service_healthy}
     networks:
       bnpb_net:
         aliases: [auth.localhost, envoy.local]

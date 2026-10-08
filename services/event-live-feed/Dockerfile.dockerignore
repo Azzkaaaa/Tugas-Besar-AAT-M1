@@ -1,0 +1,9 @@
+.git
+.nx
+.workspace
+node_modules
+docs
+**/target
+**/codegen/*.rs
+**/codegen/bnpb
+**/.env

@@ -4,22 +4,6 @@
   "projectType": "application",
   "sourceRoot": "services/envoy",
   "targets": {
-    "generate-descriptor": {
-      "executor": "nx:run-commands",
-      "options": {
-        "command": "buf build -o services/envoy/bnpb_descriptor.pb --exclude-imports=false",
-        "cwd": "{workspaceRoot}"
-      },
-      "cache": true,
-      "inputs": [
-        "{workspaceRoot}/buf.yaml",
-        "{workspaceRoot}/buf.lock",
-        "{workspaceRoot}/contracts/proto/**/*.proto"
-      ],
-      "outputs": [
-        "{projectRoot}/bnpb_descriptor.pb"
-      ]
-    },
     "build": {
       "executor": "nx:run-commands",
       "options": {

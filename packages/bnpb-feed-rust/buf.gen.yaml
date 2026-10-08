@@ -1,0 +1,17 @@
+version: v2
+
+inputs:
+  - directory: ../..
+    paths:
+      - ../../contracts/proto/bnpb/feed
+
+plugins:
+  - remote: buf.build/community/neoeinstein-prost:v0.5.0
+    out: bnpb-feed/codegen
+    opt:
+      - extern_path=.bnpb.common.v1=::bnpb_common::bnpb::common::v1
+
+  - remote: buf.build/community/neoeinstein-tonic:v0.5.0
+    out: bnpb-feed/codegen
+    opt:
+      - extern_path=.bnpb.common.v1=::bnpb_common::bnpb::common::v1

@@ -29,7 +29,8 @@ downstream; tersedianya login tidak membuktikan service gRPC sudah terlindungi.
 
 Bridge Node.js menyimpan sesi browser di SQLite; pengguna dan grant dikelola
 Zitadel dalam PostgreSQL. Komunikasi bridge dengan IdP memakai HTTP OIDC/OAuth.
-Transcoder gRPC berada pada jaringan privat di belakang bridge. Cookie tidak
+Gateway REST→gRPC ([api-gateway](../../services/api-gateway/README.md)) berada pada
+jaringan privat di belakang Envoy. Cookie tidak
 dipakai sebagai metadata RPC dan tidak menggantikan pemeriksaan aktor di
 service bisnis. Pengujian fixture frontend dengan login OIDC tidak menguji
 proyeksi, expiry, atau revocation pada RPC downstream.

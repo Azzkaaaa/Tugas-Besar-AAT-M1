@@ -144,6 +144,10 @@ python -m unittest discover -s tests -v
 python -m unittest discover -s services/bmkg-mock -p test_storage.py -v
 ```
 
+Tes end-to-end sistem lengkap (`tests/test_e2e_*.py`) dilewati kecuali
+`BNPB_E2E=1` dan stack `compose.yaml` sudah berjalan; lihat
+[panduan e2e](docs/e2e-testing.md).
+
 Pengujian menjalankan proses Python terpisah lewat jaringan HTTP dengan port
 sementara, SQLite sementara, dan secret acak. Skenario mencakup kontrak data,
 autentikasi silang, filter waktu, generator, perubahan skema/outage saat berjalan,
@@ -153,11 +157,12 @@ Docker, library tambahan, atau database yang sedang Anda gunakan.
 ## Pengembangan kontrak BNPB
 
 Bagian berikut dipakai ketika mengembangkan service BNPB; tidak diperlukan
-untuk menjalankan mock. Prasyarat: buf.
+untuk menjalankan mock. Prasyarat: Go 1.26 dan buf.
 
 ```bash
-npx nx run envoy:generate-descriptor   # image Envoy membangun salinannya sendiri
-buf generate
+npx nx run bnpb-aggregator-go:check-proto     # stub gRPC Go sesuai contracts/proto
+npx nx run bnpb-gateway-go:generate-openapi   # server REST dari contracts/openapi/gateway.yaml
+npx nx run api-gateway:test                   # respons gateway divalidasi terhadap OpenAPI
 ```
 
 Lihat [arsitektur](docs/architecture.md), [pemetaan data](docs/data-mapping.md),

@@ -1,0 +1,9 @@
+.git
+.nx
+.workspace
+node_modules
+docs
+**/bin
+**/target
+**/*.gen.go
+**/.env

@@ -1,0 +1,36 @@
+{
+  "name": "bnpb-aggregator-go",
+  "$schema": "../../node_modules/nx/schemas/project-schema.json",
+  "projectType": "library",
+  "sourceRoot": "packages/bnpb-aggregator-go",
+  "targets": {
+    "generate-proto": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "buf generate",
+        "cwd": "{workspaceRoot}"
+      },
+      "cache": true,
+      "inputs": [
+        "{workspaceRoot}/buf.gen.yaml",
+        "{workspaceRoot}/buf.yaml",
+        "{workspaceRoot}/buf.lock",
+        "{workspaceRoot}/contracts/proto/**/*.proto"
+      ],
+      "outputs": ["{projectRoot}/bnpb/**/*"]
+    },
+    "check-proto": {
+      "dependsOn": ["generate-proto"],
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "git diff --exit-code -- packages/bnpb-aggregator-go",
+        "cwd": "{workspaceRoot}"
+      },
+      "cache": false
+    },
+    "build": {
+      "executor": "nx:run-commands",
+      "options": { "command": "go build ./...", "cwd": "{projectRoot}" }
+    }
+  }
+}

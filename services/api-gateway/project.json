@@ -1,0 +1,40 @@
+{
+  "$schema": "../../node_modules/nx/schemas/project-schema.json",
+  "name": "api-gateway",
+  "projectType": "application",
+  "sourceRoot": "services/api-gateway",
+  "implicitDependencies": ["bnpb-gateway-go", "bnpb-aggregator-go"],
+  "targets": {
+    "build": {
+      "dependsOn": ["^build"],
+      "executor": "nx:run-commands",
+      "options": { "command": "go build -o bin/api-gateway ./cmd", "cwd": "{projectRoot}" },
+      "cache": true,
+      "inputs": ["{projectRoot}/**/*.go", "{projectRoot}/go.mod", "{projectRoot}/go.sum"],
+      "outputs": ["{projectRoot}/bin/api-gateway"]
+    },
+    "test": {
+      "dependsOn": ["^build"],
+      "executor": "nx:run-commands",
+      "options": { "command": "go test ./...", "cwd": "{projectRoot}" },
+      "cache": true,
+      "inputs": ["{projectRoot}/**/*.go", "{projectRoot}/go.mod", "{projectRoot}/go.sum", "{workspaceRoot}/contracts/openapi/gateway.yaml"]
+    },
+    "lint": {
+      "dependsOn": ["^build"],
+      "executor": "nx:run-commands",
+      "options": {
+        "commands": ["test -z \"$(gofmt -l .)\" || (gofmt -l . && exit 1)", "go vet ./..."],
+        "parallel": false,
+        "cwd": "{projectRoot}"
+      },
+      "cache": true,
+      "inputs": ["{projectRoot}/**/*.go", "{projectRoot}/go.mod", "{projectRoot}/go.sum"]
+    },
+    "docker": {
+      "executor": "nx:run-commands",
+      "options": { "command": "docker build -f services/api-gateway/Dockerfile -t bnpb/api-gateway .", "cwd": "{workspaceRoot}" },
+      "cache": false
+    }
+  }
+}

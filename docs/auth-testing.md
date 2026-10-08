@@ -153,6 +153,26 @@ Jangan memakai `-v` jika ingin mempertahankan data. Jangan menghapus hanya volum
 konfigurasi client: secret client yang sudah dibuat tidak dapat diambil ulang;
 bootstrap sengaja tidak merotasinya otomatis.
 
+## Service user (klien non-browser)
+
+Bootstrap membuat `svc-media` (MEDIA), `svc-lapangan` (FIELD_TEAM), dan `svc-bnpb`
+(BNPB_INTERNAL). Secret dan ID project ada di `.cache/auth/` sebagai nilai mentah;
+client ID sama dengan username. Minta token dengan client credentials beserta scope
+audiens project (wajib agar gateway dapat menukar token), lalu panggil API dengan
+header bearer **tanpa cookie** (cookie `bnpb_*` + header → 400 `ambiguous_credentials`):
+
+```sh
+S=.cache/auth; P=$(cat $S/project-id)
+T=$(curl -s -u svc-bnpb:$(cat $S/svc-bnpb.secret) http://auth.localhost:8080/oauth/v2/token \
+    -d grant_type=client_credentials -d "scope=openid urn:zitadel:iam:org:project:id:$P:aud" | jq -r .access_token)
+curl -s -o /dev/null -w '%{http_code}\n' -H "Authorization: Bearer $T" 'http://localhost:8080/api/v1/hazards?view=full'
+```
+
+Token berlaku 60 detik dan tidak ada refresh token; minta token baru sebelum habis.
+Hasil yang diharapkan: `svc-media` dengan `view=full` → 403, `svc-lapangan`/`svc-bnpb`
+→ 200 (503 pada stack Auth standalone). Alur ini belum diuji pada Zitadel nyata.
+File dibuat container sebagai root; di Linux, menghapusnya memerlukan `sudo`.
+
 ## Tes browser terhadap Zitadel Docker
 
 Setelah stack healthy, jalankan tes penerimaan tanpa respons HTTP tiruan:

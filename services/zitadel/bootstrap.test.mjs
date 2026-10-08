@@ -18,6 +18,7 @@ async function fixture(t) {
   const configFile = join(directory, 'oidc.json');
   const actionsFile = join(directory, 'actions', 'actions.json');
   const patFile = join(directory, 'admin.pat');
+  const serviceDir = join(directory, 'service-accounts');
   await writeFile(patFile, 'test-admin-pat');
   const state = { projects: [], apps: [], roles: [], users: [], grants: [], members: [], policies: null, oidc: {},
     features: {}, targets: [], executions: {}, hosts: new Set(), changes: 0 };
@@ -65,6 +66,16 @@ async function fixture(t) {
       state.users.push({ ...body, id }); state.changes++;
       return done({ userId: id });
     }
+    if (path === '/management/v1/users/machine') {
+      const id = `user${state.users.length}`;
+      state.users.push({ ...body, id, machine: { hasSecret: false } }); state.changes++;
+      return done({ userId: id });
+    }
+    if (/^\/management\/v1\/users\/user\d+\/secret$/.test(path) && request.method === 'PUT') {
+      const user = state.users.find(item => item.id === path.split('/')[4]);
+      user.machine.hasSecret = true; state.changes++;
+      return done({ clientId: user.userName, clientSecret: `${user.userName}-test-secret` });
+    }
     if (path === '/management/v1/users/grants/_search') return done({ result: state.grants });
     if (/^\/management\/v1\/users\/user\d+\/grants$/.test(path)) {
       state.grants.push({ ...body, id: `grant${state.grants.length}`, userId: path.split('/')[4] }); state.changes++;
@@ -105,6 +116,7 @@ async function fixture(t) {
     OIDC_CONFIG_FILE: configFile,
     ACTIONS_CONFIG_FILE: actionsFile,
     ZITADEL_ADMIN_PAT_FILE: patFile,
+    SERVICE_ACCOUNTS_DIR: serviceDir,
     AUTH_MEDIA_PASSWORD: 'TestMedia1!',
     AUTH_FIELD_TEAM_PASSWORD: 'TestField1!',
     AUTH_BNPB_PASSWORD: 'TestBNPB1!',
@@ -112,7 +124,7 @@ async function fixture(t) {
     ZITADEL_ACCESS_TOKEN_TTL_SECONDS: '60',
     AUTH_SESSION_TTL_SECONDS: '86400',
   };
-  return { state, configFile, actionsFile, run: overrides => runFile(process.execPath, [script], { env: { ...env, ...overrides }, timeout: 15000 }) };
+  return { state, configFile, actionsFile, serviceDir, run: overrides => runFile(process.execPath, [script], { env: { ...env, ...overrides }, timeout: 15000 }) };
 }
 
 test('seed is idempotent, preserves credentials, and configures 60-second tokens', async t => {
@@ -121,12 +133,15 @@ test('seed is idempotent, preserves credentials, and configures 60-second tokens
   const saved = await readFile(f.configFile, 'utf8');
   const savedActions = await readFile(f.actionsFile, 'utf8');
   const changes = f.state.changes;
-  assert.equal(f.state.apps.length, 3);
+  assert.equal(f.state.apps.length, 4);
   assert.deepEqual([...f.state.hosts], ['auth.localhost:8080']);
   assert.deepEqual(f.state.features, { oidcTokenExchange: true });
   const gateway = f.state.apps.find(app => app.name === 'BNPB gateway token exchange').oidcConfig;
   assert.deepEqual(gateway.grantTypes, ['OIDC_GRANT_TYPE_AUTHORIZATION_CODE', 'OIDC_GRANT_TYPE_TOKEN_EXCHANGE']);
   assert.equal(gateway.accessTokenType, 'OIDC_TOKEN_TYPE_JWT');
+  const feed = f.state.apps.find(app => app.name === 'BNPB event feed token exchange').oidcConfig;
+  assert.deepEqual(feed.grantTypes, ['OIDC_GRANT_TYPE_AUTHORIZATION_CODE', 'OIDC_GRANT_TYPE_TOKEN_EXCHANGE']);
+  assert.equal(feed.accessTokenType, 'OIDC_TOKEN_TYPE_JWT');
   assert.equal(f.state.targets.length, 1);
   assert.equal(f.state.targets[0].endpoint, 'http://zitadel-claims:3002/claims');
   assert.deepEqual(f.state.targets[0].restCall, { interruptOnError: true });
@@ -134,14 +149,27 @@ test('seed is idempotent, preserves credentials, and configures 60-second tokens
   const config = JSON.parse(await readFile(f.configFile, 'utf8'));
   assert.equal(config.gateway_client_id, 'app2-client');
   assert.equal(config.gateway_client_secret, 'app2-test-secret');
+  assert.equal(config.feed_client_id, 'app3-client');
+  assert.equal(config.feed_client_secret, 'app3-test-secret');
   assert.equal(config.actions_target_id, undefined);
   assert.equal(config.actions_signing_key, undefined);
   // The claims service gets only the signing key and the IDs it filters on.
   assert.deepEqual(JSON.parse(savedActions), { actions_target_id: 'target0', actions_signing_key: 'target0-test-signing-key',
-    client_ids: [config.client_id, config.introspection_client_id, config.gateway_client_id],
+    client_ids: [config.client_id, config.introspection_client_id, config.gateway_client_id, config.feed_client_id],
     project_id: config.project_id, organization_id: config.organization_id });
-  assert.equal(f.state.users.length, 4);
-  assert.deepEqual(f.state.grants.map(grant => grant.roleKeys), [['MEDIA'], ['FIELD_TEAM'], ['BNPB_INTERNAL']]);
+  assert.equal(f.state.users.length, 7);
+  assert.deepEqual(f.state.grants.map(grant => grant.roleKeys),
+    [['MEDIA'], ['FIELD_TEAM'], ['BNPB_INTERNAL'], ['MEDIA'], ['FIELD_TEAM'], ['BNPB_INTERNAL']]);
+  const serviceUsers = f.state.users.filter(user => user.machine);
+  assert.deepEqual(serviceUsers.map(user => [user.userName, user.accessTokenType]), [
+    ['svc-media', 'ACCESS_TOKEN_TYPE_BEARER'], ['svc-lapangan', 'ACCESS_TOKEN_TYPE_BEARER'], ['svc-bnpb', 'ACCESS_TOKEN_TYPE_BEARER']]);
+  // Raw values, one per file, so scripts can use $(cat file) directly.
+  const serviceFiles = {};
+  for (const name of ['project-id', 'svc-media.secret', 'svc-lapangan.secret', 'svc-bnpb.secret']) {
+    serviceFiles[name] = await readFile(join(f.serviceDir, name), 'utf8');
+  }
+  assert.deepEqual(serviceFiles, { 'project-id': 'project1', 'svc-media.secret': 'svc-media-test-secret',
+    'svc-lapangan.secret': 'svc-lapangan-test-secret', 'svc-bnpb.secret': 'svc-bnpb-test-secret' });
   assert.deepEqual(f.state.oidc, { accessTokenLifetime: '60s', idTokenLifetime: '60s', refreshTokenIdleExpiration: '86400s', refreshTokenExpiration: '86400s' });
   assert.equal(f.state.apps[0].oidcConfig.authMethodType, 'OIDC_AUTH_METHOD_TYPE_BASIC');
   assert.equal(f.state.apps[0].oidcConfig.accessTokenType, 'OIDC_TOKEN_TYPE_BEARER');
@@ -152,6 +180,7 @@ test('seed is idempotent, preserves credentials, and configures 60-second tokens
   assert.equal(f.state.changes, changes);
   assert.equal(await readFile(f.configFile, 'utf8'), saved);
   assert.equal(await readFile(f.actionsFile, 'utf8'), savedActions);
+  for (const [name, value] of Object.entries(serviceFiles)) assert.equal(await readFile(join(f.serviceDir, name), 'utf8'), value);
   assert.equal(f.state.users[0].password, 'TestMedia1!');
   await f.run({ ZITADEL_ACCESS_TOKEN_TTL_SECONDS: '90' });
   assert.equal(f.state.oidc.accessTokenLifetime, '90s');
@@ -166,6 +195,27 @@ test('existing application without matching saved secret fails without rotation'
   const changes = f.state.changes;
   await assert.rejects(f.run(), error => /no matching persisted secret/.test(error.stderr));
   assert.equal(f.state.changes, changes);
+});
+
+test('existing service user without saved secret fails without rotation', async t => {
+  const f = await fixture(t);
+  await f.run();
+  await rm(join(f.serviceDir, 'svc-bnpb.secret'));
+  const changes = f.state.changes;
+  await assert.rejects(f.run(), error => /svc-bnpb has no persisted secret/.test(error.stderr));
+  assert.equal(f.state.changes, changes);
+});
+
+test('service user created without a secret gets one on the next run', async t => {
+  const f = await fixture(t);
+  await f.run();
+  const user = f.state.users.find(item => item.userName === 'svc-media');
+  user.machine.hasSecret = false;
+  await rm(join(f.serviceDir, 'svc-media.secret'));
+  const changes = f.state.changes;
+  await f.run();
+  assert.equal(f.state.changes, changes + 1);
+  assert.equal(await readFile(join(f.serviceDir, 'svc-media.secret'), 'utf8'), 'svc-media-test-secret');
 });
 
 test('existing claims target without saved signing key fails without rotation', async t => {

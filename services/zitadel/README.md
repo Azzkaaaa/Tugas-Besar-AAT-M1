@@ -23,6 +23,9 @@ memetakan `*.localhost` ke loopback, sedangkan jaringan Docker memakai alias Env
 | `lapangan-demo` | `FIELD_TEAM` | `AUTH_FIELD_TEAM_PASSWORD` |
 | `bnpb-demo` | `BNPB_INTERNAL` | `AUTH_BNPB_PASSWORD` |
 | `admin@bnpb.local` | Administrator instance, bukan pengguna dashboard | `AUTH_ADMIN_PASSWORD` |
+| `svc-media` | `MEDIA` | Service user, secret di `.cache/auth/svc-media.secret` |
+| `svc-lapangan` | `FIELD_TEAM` | Service user, secret di `.cache/auth/svc-lapangan.secret` |
+| `svc-bnpb` | `BNPB_INTERNAL` | Service user, secret di `.cache/auth/svc-bnpb.secret` |
 
 Keempat akun adalah pengguna sungguhan di database Zitadel. Nama `demo` hanya
 menandai akun untuk tugas lokal. Password dihasilkan acak sekali per komputer.
@@ -42,6 +45,11 @@ dengan header `Host: auth.localhost:8080`) karena gateway Envoy baru mulai setel
 provisioning selesai. Script membuat:
 
 - project `BNPB M1`, tiga role, dan grant pengguna;
+- tiga service user (machine user) `svc-media`, `svc-lapangan`, `svc-bnpb` untuk
+  klien non-browser (client credentials), masing-masing dengan grant satu role.
+  Client ID sama dengan username. Secret yang dihasilkan Zitadel dan ID project
+  ditulis sebagai nilai mentah, satu per file, ke `.cache/auth/` (bind mount,
+  di-gitignore), bukan ke `oidc.json` yang dibaca bridge, gateway, dan feed;
 - application OIDC confidential untuk Auth bridge: authorization code, PKCE oleh
   bridge, client-secret Basic, access token opaque, dan refresh token. Callback yang
   terdaftar adalah `http://localhost:8080/auth/callback`;
@@ -50,6 +58,11 @@ provisioning selesai. Script membuat:
   dan access token JWT, dipakai filter token exchange Envoy. Aplikasi ini berada di
   project yang sama karena Zitadel hanya menukar token yang audiensnya memuat
   project tersebut;
+- application OIDC `BNPB event feed token exchange` dengan grant yang sama. Event Live
+  Feed memakainya untuk menukar ulang JWT aktor sebelum habis sehingga stream tetap
+  terbuka (lihat [Event Live Feed](../event-live-feed/README.md)). Client ID/secret
+  disimpan sebagai `feed_client_id`/`feed_client_secret` di `oidc.json` dan client ini
+  ikut difilter `zitadel-claims` agar JWT hasil exchange tetap membawa `role`/`scopes`;
 - feature instance `oidcTokenExchange` (masih beta di Zitadel v4);
 - target Actions v2 `BNPB scope claims` ke `http://zitadel-claims:3002/claims`
   beserta execution untuk function `preuserinfo` dan `preaccesstoken`. Target ini
@@ -80,7 +93,9 @@ docker compose --env-file .env.auth -f compose.auth.yaml up -d auth-bridge
 Provisioning yang diulang tidak menggandakan project, application, user, atau
 grant. Password dan client secret tidak diputar otomatis. Jika application sudah
 ada tetapi file client secret hilang, provisioning berhenti dengan pesan untuk
-memulihkan volume konfigurasi. Jika grant akun seed sudah diubah, script meminta
+memulihkan volume konfigurasi. Hal yang sama berlaku untuk service user: jika
+Zitadel sudah memiliki secret tetapi file `.cache/auth/<user>.secret` hilang,
+provisioning berhenti; pulihkan file atau buat secret baru lewat Console. Jika grant akun seed sudah diubah, script meminta
 pemeriksaan manual; script tidak mengembalikan izin pengguna secara diam-diam.
 
 ## Penyimpanan
