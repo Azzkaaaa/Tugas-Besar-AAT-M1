@@ -177,6 +177,8 @@ services:
       dockerfile: services/webhook-provider/Dockerfile
     env_file:
       - .env
+    profiles:
+      - manual
     environment:
       - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-lgtm:4318
       - OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf
