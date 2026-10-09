@@ -1,15 +1,21 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Activity, ArrowDown, ArrowRight, ArrowUpRight, Bell, Check, ChevronLeft, ChevronRight, Clock3, Database, Info, LayoutDashboard, LoaderCircle, LogOut, MapPin, Mountain, Radio, RefreshCw, Search, ShieldCheck, SlidersHorizontal, TriangleAlert, Waves, X } from 'lucide-react';
+import { Activity, ArrowDown, ArrowRight, ArrowUpRight, Bell, BellOff, BellRing, Check, ChevronLeft, ChevronRight, Clock3, Database, Info, LayoutDashboard, LoaderCircle, LogOut, MapPin, Mountain, Radio, RefreshCw, Search, ShieldCheck, SlidersHorizontal, TriangleAlert, Waves, X } from 'lucide-react';
 import { createGatewayClient } from '../api';
 import { isMockDataMode } from '../config';
 import { canReadFull, roleLabels } from '../auth/demo';
-import type { AuthSession, DemoScenario, FeedStatus, Freshness, GatewayClient, Hazard, HazardFilters, HazardPage, HazardResult, Notification, NotificationPage, Severity, Source } from '../types';
+import { isNotificationWorthy, matchesFilters, upsertHazard } from '../live/merge';
+import type { PushState } from '../push/client';
+import { loadPush } from '../push/lazy';
+import type { AuthSession, DemoScenario, FeedStatus, Freshness, GatewayClient, Hazard, HazardFeedEvent, HazardFilters, HazardPage, HazardResult, Notification, NotificationPage, Severity, Source } from '../types';
 
 const severityLabels: Record<Severity, string> = { NORMAL: 'Normal', WASPADA: 'Waspada', SIAGA: 'Siaga', AWAS: 'Awas' };
 const timeFormatter = new Intl.DateTimeFormat('id-ID', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Jakarta' });
 const dateFormatter = new Intl.DateTimeFormat('id-ID', { day: 'numeric', month: 'short', timeZone: 'Asia/Jakarta' });
 const fullDateFormatter = new Intl.DateTimeFormat('id-ID', { day: 'numeric', month: 'long', year: 'numeric', hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Jakarta' });
 const formatFull = (value: string) => `${fullDateFormatter.format(new Date(value))} WIB`;
+const highlightMs = 4000;
+const followUpDelayMs = 500;
+const statusRefreshMs = 60_000;
 
 function SeverityBadge({ severity }: { severity: Severity }) {
   return <span className={`severity severity-${severity.toLowerCase()}`}><span />{severityLabels[severity]}</span>;
@@ -74,7 +80,38 @@ function NotificationList({ items, onOpen, expanded = false }: { items: Notifica
   </button>)}</div>;
 }
 
-export function DashboardPage({ session, onLogout, activePage, loggingOut = false }: { session: AuthSession; onLogout: () => void; activePage: 'dashboard' | 'notifications'; loggingOut?: boolean }) {
+function PushToggle({ client }: { client: GatewayClient }) {
+  const [state, setState] = useState<PushState>();
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  useEffect(() => {
+    let active = true;
+    void loadPush?.().then(push => push.getPushState()).then(next => { if (active) setState(next); }).catch(() => { if (active) setState('unavailable'); });
+    return () => { active = false; };
+  }, []);
+  if (!loadPush || !state || state === 'unavailable') return null;
+  if (state === 'denied') return <span className="push-status" title="Izinkan notifikasi untuk situs ini di pengaturan browser."><BellOff size={15} />Push diblokir browser</span>;
+  const enabled = state === 'enabled';
+  async function toggle() {
+    setBusy(true); setError('');
+    try {
+      const push = await loadPush!();
+      if (enabled) { await push.disablePush(client); setState('disabled'); }
+      else setState(await push.enablePush(client));
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : 'Notifikasi push belum dapat diubah.');
+      setState(await loadPush!().then(push => push.getPushState()).catch(() => state));
+    } finally { setBusy(false); }
+  }
+  return <>
+    <button className="button push-button" onClick={() => { void toggle(); }} disabled={busy} aria-pressed={enabled} aria-label="Notifikasi push" title={enabled ? 'Matikan notifikasi push di browser ini' : 'Terima peringatan Siaga dan Awas walau dashboard tertutup'}>
+      {enabled ? <BellRing size={16} /> : <Bell size={16} />}<span>{busy ? 'Memproses...' : enabled ? 'Push aktif' : 'Aktifkan push'}</span>
+    </button>
+    {error && <span className="push-error" role="alert">{error}</span>}
+  </>;
+}
+
+export function DashboardPage({ session, onLogout, activePage, focusHazardId, loggingOut = false }: { session: AuthSession; onLogout: () => void; activePage: 'dashboard' | 'notifications'; focusHazardId?: string; loggingOut?: boolean }) {
   const client = useMemo(() => createGatewayClient(session), [session]);
   const full = canReadFull(session);
   const [source, setSource] = useState<Source | ''>('');
@@ -94,6 +131,7 @@ export function DashboardPage({ session, onLogout, activePage, loggingOut = fals
   const [error, setError] = useState('');
   const [updatedAt, setUpdatedAt] = useState<string>();
   const [detailId, setDetailId] = useState<string>();
+  const [recent, setRecent] = useState<ReadonlySet<string>>(() => new Set());
   // Keep a fixed time boundary while navigating a snapshot; changing filters starts a new one.
   const [filterAnchor, setFilterAnchor] = useState(Date.now);
   const filters: HazardFilters = useMemo(() => ({
@@ -106,9 +144,83 @@ export function DashboardPage({ session, onLogout, activePage, loggingOut = fals
     setCursors([undefined]); setPageIndex(0); setHasUpdates(false); setFilterAnchor(Date.now()); setRevision(value => value + 1);
   }, []);
 
-  useEffect(() => client.subscribe(() => setHasUpdates(true), setFeedStatus, refresh), [client, refresh]);
+  // Feed handlers outlive renders; they read the current page and filters through refs.
+  const pageIndexRef = useRef(pageIndex);
+  pageIndexRef.current = pageIndex;
+  const filtersRef = useRef(filters);
+  filtersRef.current = filters;
+  const fetchingRef = useRef(false);
+  const bufferedRef = useRef<Hazard[]>([]);
+  const timersRef = useRef(new Set<ReturnType<typeof setTimeout>>());
+
+  const later = useCallback((callback: () => void, ms: number) => {
+    const timer = setTimeout(() => { timersRef.current.delete(timer); callback(); }, ms);
+    timersRef.current.add(timer);
+    return timer;
+  }, []);
+  useEffect(() => () => { timersRef.current.forEach(clearTimeout); timersRef.current.clear(); }, []);
+
+  const applyHazard = useCallback((hazard: Hazard) => {
+    setData(previous => previous && { ...previous, items: upsertHazard(previous.items, hazard, filtersRef.current) });
+    if (!matchesFilters(hazard, filtersRef.current)) return;
+    setRecent(previous => new Set(previous).add(hazard.hazard_id));
+    later(() => setRecent(previous => { const next = new Set(previous); next.delete(hazard.hazard_id); return next; }), highlightMs);
+  }, [later]);
+
+  // The feed carries hazards only: notification text and source freshness come from REST.
+  const followUps = useRef<{ notifications?: ReturnType<typeof setTimeout>; statuses?: ReturnType<typeof setTimeout> }>({});
+  const reloadNotifications = useCallback(() => {
+    if (followUps.current.notifications) return;
+    followUps.current.notifications = later(() => {
+      followUps.current.notifications = undefined;
+      client.listNotifications({ view: full ? 'full' : 'summary', page_size: 100 }).then(setNotifications).catch(() => { /* The next refresh retries. */ });
+    }, followUpDelayMs);
+  }, [client, full, later]);
+  const reloadStatuses = useCallback(() => {
+    if (followUps.current.statuses) return;
+    followUps.current.statuses = later(() => {
+      followUps.current.statuses = undefined;
+      client.getSourceStatuses().then(statuses => setFreshness(statuses.freshness)).catch(() => { /* Keep the last known status. */ });
+    }, followUpDelayMs);
+  }, [client, later]);
+
+  useEffect(() => client.subscribe((event: HazardFeedEvent) => {
+    reloadStatuses();
+    if (isNotificationWorthy(event.hazard)) reloadNotifications();
+    // Later pages read a frozen cursor snapshot; merging there would skip or repeat rows.
+    if (pageIndexRef.current > 0) { setHasUpdates(true); return; }
+    if (fetchingRef.current) bufferedRef.current.push(event.hazard);
+    else applyHazard(event.hazard);
+  }, setFeedStatus, refresh), [client, refresh, applyHazard, reloadNotifications, reloadStatuses]);
+
+  useEffect(() => {
+    const tick = () => { if (document.visibilityState === 'visible') reloadStatuses(); };
+    const interval = setInterval(tick, statusRefreshMs);
+    return () => clearInterval(interval);
+  }, [reloadStatuses]);
+
+  useEffect(() => {
+    if (!loadPush || session.mode !== 'oidc') return;
+    let stop: (() => void) | undefined;
+    let active = true;
+    void loadPush().then(push => {
+      if (!active) return;
+      stop = push.onForegroundPush(reloadNotifications);
+      return push.resumePush(client);
+    }).catch(() => { /* Push stays off; the toggle shows the current state. */ });
+    return () => { active = false; stop?.(); };
+  }, [client, session.mode, reloadNotifications]);
+
+  useEffect(() => { if (focusHazardId) setDetailId(focusHazardId); }, [focusHazardId]);
+  function closeDetail() {
+    setDetailId(undefined);
+    // Drop the deep link so the same notification can be opened again.
+    if (focusHazardId) window.location.replace('#/notifications');
+  }
+
   useEffect(() => {
     const controller = new AbortController();
+    fetchingRef.current = true;
     setLoading(true); setError('');
     // Notifications have their own feed; dashboard table filters do not hide alerts.
     Promise.all([
@@ -117,15 +229,25 @@ export function DashboardPage({ session, onLogout, activePage, loggingOut = fals
     ]).then(([hazards, alerts]) => {
       if (controller.signal.aborted) return;
       setData(hazards); setNotifications(alerts);
+      if (!filters.page_token) setHasUpdates(false);
       setUpdatedAt(new Date().toISOString());
     }).catch((reason: unknown) => {
       if (!controller.signal.aborted) setError(reason instanceof Error ? reason.message : 'Data tidak dapat dimuat.');
-    }).finally(() => { if (!controller.signal.aborted) setLoading(false); });
+    }).finally(() => {
+      if (controller.signal.aborted) return;
+      setLoading(false);
+      fetchingRef.current = false;
+      // Events seen during the fetch may postdate the snapshot; the ingested_at guard drops older ones.
+      const buffered = bufferedRef.current;
+      bufferedRef.current = [];
+      if (filters.page_token) { if (buffered.length) setHasUpdates(true); }
+      else buffered.forEach(applyHazard);
+    });
     client.getSourceStatuses({ signal: controller.signal }).then(statuses => {
       if (!controller.signal.aborted) setFreshness(statuses.freshness);
     }).catch(() => { if (!controller.signal.aborted) setFreshness([]); });
     return () => controller.abort();
-  }, [client, filters, full, revision]);
+  }, [client, filters, full, revision, applyHazard]);
 
   function changeScenario(value: DemoScenario) {
     client.setScenario(value); setScenario(value); setDetailId(undefined); setData(undefined); setNotifications(undefined); refresh();
@@ -150,6 +272,7 @@ export function DashboardPage({ session, onLogout, activePage, loggingOut = fals
         </nav>
         <div className="user-area">
           {session.mode === 'demo' && <span className="demo-chip">Akun simulasi</span>}
+          {session.mode === 'oidc' && <PushToggle client={client} />}
           <div className="user-identity"><strong>{session.name}</strong><span>{roleLabels[session.role]}</span></div>
           <button className="button logout-button" onClick={onLogout} disabled={loggingOut} aria-label="Keluar"><LogOut size={16} /><span>{loggingOut ? 'Memproses...' : 'Keluar'}</span></button>
         </div>
@@ -174,7 +297,7 @@ export function DashboardPage({ session, onLogout, activePage, loggingOut = fals
 
           <div className="dashboard-columns"><section className="events-panel panel" aria-labelledby="events-heading"><div className="panel-heading"><div><h2 id="events-heading">Daftar kejadian<span className="count-pill">{visibleItems.length}</span></h2><p>Urutan waktu kejadian terbaru</p></div><span className="view-label"><ShieldCheck size={13} />{full ? 'Akses lengkap' : 'Ringkasan publik'}</span></div>
             <div className="filters"><label className="search-field"><Search size={16} /><input aria-label="Cari di halaman ini" placeholder="Cari di halaman ini…" value={search} onChange={event => setSearch(event.target.value)} /></label><div className="filter-selects"><SlidersHorizontal size={15} /><label><span className="sr-only">Sumber</span><select aria-label="Sumber" value={source} onChange={event => changeFilter(() => setSource(event.target.value as Source | ''))}><option value="">Semua sumber</option><option>BMKG</option><option>PVMBG</option></select></label><label><span className="sr-only">Tingkat bahaya</span><select aria-label="Tingkat bahaya" value={severity} onChange={event => changeFilter(() => setSeverity(event.target.value as Severity | ''))}><option value="">Semua tingkat</option>{Object.entries(severityLabels).map(([key, label]) => <option key={key} value={key}>{label}</option>)}</select></label><label><span className="sr-only">Rentang waktu</span><select aria-label="Rentang waktu" value={period} onChange={event => changeFilter(() => setPeriod(event.target.value))}><option value="24">24 jam terakhir</option><option value="6">6 jam terakhir</option><option value="1">1 jam terakhir</option><option value="all">Semua waktu</option></select></label></div></div>
-            <div className="event-table-container" aria-busy={loading}>{initialLoading ? <div className="state-panel" role="status"><LoaderCircle className="spinning" size={26} /><h3>Memuat kejadian</h3><p>Mengambil daftar kejadian.</p></div> : visibleItems.length ? <table className={`event-table ${loading ? 'is-loading' : ''}`}><thead><tr><th scope="col">KEJADIAN / LOKASI</th><th scope="col">SUMBER</th><th scope="col">TINGKAT</th><th scope="col">WAKTU <ArrowDown size={11} /></th><th scope="col"><span className="sr-only">Detail</span></th></tr></thead><tbody>{visibleItems.map((item: Hazard) => <tr key={item.hazard_id}><td><div className="event-location"><span className={`event-symbol source-${item.source.toLowerCase()}`}>{item.hazard_type === 'SEISMIC' ? <Activity size={18} /> : <Mountain size={18} />}</span><div><strong>{item.area_name}</strong><small>{item.hazard_type === 'SEISMIC' ? 'Gempa bumi' : 'Aktivitas vulkanik'}</small></div></div></td><td><span className="source-tag">{item.source}</span></td><td><SeverityBadge severity={item.severity} /></td><td><time dateTime={item.occurred_at} title={formatFull(item.occurred_at)}>{timeFormatter.format(new Date(item.occurred_at))}<small>{dateFormatter.format(new Date(item.occurred_at))} · WIB</small></time></td><td><button className="icon-button detail-button" aria-label={`Lihat detail ${item.area_name}`} onClick={() => setDetailId(item.hazard_id)}><ArrowUpRight size={17} /></button></td></tr>)}</tbody></table> : <div className="state-panel"><MapPin size={29} /><h3>{search ? 'Lokasi tidak ditemukan' : error ? 'Data belum tersedia' : 'Belum ada kejadian'}</h3><p>{search ? 'Coba kata lain. Pencarian berlaku pada halaman yang sedang dimuat.' : error ? 'Coba perbarui untuk memuat daftar kejadian.' : 'Tidak ada kejadian yang sesuai dengan filter saat ini.'}</p>{(source || severity || period !== '24' || search) && <button className="button" onClick={() => changeFilter(() => { setSource(''); setSeverity(''); setPeriod('24'); })}>Reset filter</button>}</div>}</div>
+            <div className="event-table-container" aria-busy={loading}>{initialLoading ? <div className="state-panel" role="status"><LoaderCircle className="spinning" size={26} /><h3>Memuat kejadian</h3><p>Mengambil daftar kejadian.</p></div> : visibleItems.length ? <table className={`event-table ${loading ? 'is-loading' : ''}`}><thead><tr><th scope="col">KEJADIAN / LOKASI</th><th scope="col">SUMBER</th><th scope="col">TINGKAT</th><th scope="col">WAKTU <ArrowDown size={11} /></th><th scope="col"><span className="sr-only">Detail</span></th></tr></thead><tbody>{visibleItems.map((item: Hazard) => <tr key={item.hazard_id} className={recent.has(item.hazard_id) ? 'row-updated' : undefined}><td><div className="event-location"><span className={`event-symbol source-${item.source.toLowerCase()}`}>{item.hazard_type === 'SEISMIC' ? <Activity size={18} /> : <Mountain size={18} />}</span><div><strong>{item.area_name}</strong><small>{item.hazard_type === 'SEISMIC' ? 'Gempa bumi' : 'Aktivitas vulkanik'}</small></div></div></td><td><span className="source-tag">{item.source}</span></td><td><SeverityBadge severity={item.severity} /></td><td><time dateTime={item.occurred_at} title={formatFull(item.occurred_at)}>{timeFormatter.format(new Date(item.occurred_at))}<small>{dateFormatter.format(new Date(item.occurred_at))} · WIB</small></time></td><td><button className="icon-button detail-button" aria-label={`Lihat detail ${item.area_name}`} onClick={() => setDetailId(item.hazard_id)}><ArrowUpRight size={17} /></button></td></tr>)}</tbody></table> : <div className="state-panel"><MapPin size={29} /><h3>{search ? 'Lokasi tidak ditemukan' : error ? 'Data belum tersedia' : 'Belum ada kejadian'}</h3><p>{search ? 'Coba kata lain. Pencarian berlaku pada halaman yang sedang dimuat.' : error ? 'Coba perbarui untuk memuat daftar kejadian.' : 'Tidak ada kejadian yang sesuai dengan filter saat ini.'}</p>{(source || severity || period !== '24' || search) && <button className="button" onClick={() => changeFilter(() => { setSource(''); setSeverity(''); setPeriod('24'); })}>Reset filter</button>}</div>}</div>
             <div className="table-footer"><span>{visibleItems.length} kejadian di halaman {pageIndex + 1}{search && ' · hasil pencarian lokal'}</span><div className="pagination"><button className="icon-button" aria-label="Halaman sebelumnya" disabled={pageIndex === 0 || loading} onClick={() => { setSearch(''); setPageIndex(value => value - 1); }}><ChevronLeft size={17} /></button><span>{pageIndex + 1}</span><button className="icon-button" aria-label="Halaman berikutnya" disabled={!data?.next_page_token || loading} onClick={() => { setSearch(''); setCursors(previous => [...previous.slice(0, pageIndex + 1), data?.next_page_token]); setPageIndex(value => value + 1); }}><ChevronRight size={17} /></button></div></div>
           </section>
 
@@ -185,6 +308,6 @@ export function DashboardPage({ session, onLogout, activePage, loggingOut = fals
         <footer className="dashboard-footer"><span>{updatedAt ? `Terakhir dimuat ${timeFormatter.format(new Date(updatedAt))} WIB` : 'Menunggu data'}</span>{isMockDataMode && <span>Data contoh untuk pengembangan</span>}</footer>
       </main>
     </div>
-    {detailId && <HazardDetail key={detailId} client={client} id={detailId} full={full} onClose={() => setDetailId(undefined)} />}
+    {detailId && <HazardDetail key={detailId} client={client} id={detailId} full={full} onClose={closeDetail} />}
   </div>;
 }

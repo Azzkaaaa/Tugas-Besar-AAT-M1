@@ -1,7 +1,7 @@
 import { apiBaseUrl } from '../config';
 import type { GatewayClient, HazardFeedEvent, HazardFilters, Problem, RequestOptions } from '../types';
 import { ApiError } from './errors';
-import { refreshSession } from '../auth/session';
+import { getCsrfToken, refreshSession } from '../auth/session';
 
 function queryString(filters: HazardFilters): string {
   const params = new URLSearchParams();
@@ -37,10 +37,11 @@ export function createHttpGatewayClient(baseUrl = apiBaseUrl): GatewayClient {
     throw new ApiError(400, 'Alamat Gateway harus berada pada origin yang sama dengan frontend.');
   }
   const basePath = resolved.pathname.replace(/\/+$/, '');
-  async function authorizedFetch(path: string, options: RequestOptions = {}, extraHeaders: Record<string, string> = {}): Promise<Response> {
+  async function authorizedFetch(path: string, options: RequestOptions = {}, extraHeaders: Record<string, string> = {}, body?: unknown): Promise<Response> {
     try {
       const init: RequestInit = {
-        headers: { Accept: 'application/json', ...extraHeaders },
+        ...(body !== undefined && { method: 'POST', body: JSON.stringify(body) }),
+        headers: { Accept: 'application/json', ...(body !== undefined && { 'Content-Type': 'application/json' }), ...extraHeaders },
         signal: options.signal,
         cache: 'no-store',
         credentials: 'same-origin',
@@ -66,11 +67,20 @@ export function createHttpGatewayClient(baseUrl = apiBaseUrl): GatewayClient {
     catch { throw new ApiError(502, 'Format respons Gateway belum sesuai kontrak.'); }
   }
 
+  /** The CSRF nonce survives a refresh, so the single retry may reuse it. */
+  async function mutate(path: string, body: unknown, options?: RequestOptions): Promise<void> {
+    const response = await authorizedFetch(path, options, { 'X-CSRF-Token': await getCsrfToken() }, body);
+    if (!response.ok) throw await readProblem(response);
+    await response.body?.cancel();
+  }
+
   return {
     listHazards: (filters = {}, options) => request(`/hazards${queryString(filters)}`, options),
     getHazard: (id, view = 'summary', options) => request(`/hazards/${encodeURIComponent(id)}${queryString({ view })}`, options),
     listNotifications: (filters = {}, options) => request(`/notifications${queryString(filters)}`, options),
     getSourceStatuses: (options) => request('/hazards/sources/statuses', options),
+    registerPushToken: (token, options) => mutate('/notifications/push/register', { fcm_token: token }, options),
+    unregisterPushToken: (token, options) => mutate('/notifications/push/unregister', { fcm_token: token }, options),
     subscribe(onEvent, onStatus, onReset) {
       let stopped = false;
       let cursor = '';

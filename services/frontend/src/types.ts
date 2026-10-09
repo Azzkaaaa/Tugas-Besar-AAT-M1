@@ -96,8 +96,14 @@ export interface GatewayClient {
   getHazard(id: string, view?: HazardView, options?: RequestOptions): Promise<HazardResult>;
   listNotifications(filters?: HazardFilters, options?: RequestOptions): Promise<NotificationPage>;
   getSourceStatuses(options?: RequestOptions): Promise<{ freshness: Freshness[] }>;
-  /** Events invalidate displayed snapshots; do not overwrite them with older payloads. */
+  /**
+   * Events are merged into the first page (see live/merge.ts); an event older than the row shown,
+   * by ingested_at, never overwrites it. Later pages are only invalidated.
+   */
   subscribe(onEvent: (event: HazardFeedEvent) => void, onStatus?: (status: FeedStatus) => void, onReset?: () => void): () => void;
+  /** Subscribes this browser's FCM token to danger-notification pushes. */
+  registerPushToken(token: string, options?: RequestOptions): Promise<void>;
+  unregisterPushToken(token: string, options?: RequestOptions): Promise<void>;
   /** Only the development fixture adapter supports scenario controls. */
   setScenario(scenario: DemoScenario): void;
 }

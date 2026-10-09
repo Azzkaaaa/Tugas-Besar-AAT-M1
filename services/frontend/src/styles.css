@@ -232,3 +232,10 @@ svg { flex-shrink: 0; vertical-align: middle; }
 }
 @media (max-width: 360px) { .stat-icon { display: none; } .demo-chip { font-size: 10px; } .logout-button span { display: none; } }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; scroll-behavior: auto !important; } }
+.event-table tbody tr.row-updated { animation: row-updated 4s ease-out; }
+@keyframes row-updated { from { background: #fff4d6; } to { background: transparent; } }
+.push-button { gap: 6px; }
+.push-button[aria-pressed="true"] { color: #397251; border-color: #c4d8cb; background: #eff7f1; }
+.push-status { display: inline-flex; align-items: center; gap: 6px; color: #687587; font-size: 12px; white-space: nowrap; }
+.push-error { color: #a33b2f; font-size: 12px; }
+@media (max-width: 480px) { .push-button span { display: none; } }

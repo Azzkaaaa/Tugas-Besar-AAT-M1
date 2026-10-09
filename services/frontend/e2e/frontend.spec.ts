@@ -118,3 +118,36 @@ test('login dan dashboard dapat digunakan pada layar ponsel tanpa overflow', asy
   await expect(page.getByRole('heading', { name: 'Notifikasi', exact: true })).toBeVisible();
   await expectNoHorizontalOverflow(page);
 });
+
+test('event live feed langsung masuk ke tabel dan notifikasi tanpa tombol muat ulang', async ({ page }) => {
+  await page.clock.install();
+  await enterDemo(page);
+  const rows = page.getByRole('row').filter({ has: page.getByRole('button', { name: /^Lihat detail / }) });
+  const navCount = page.getByRole('button', { name: /^Notifikasi/ }).locator('.nav-count');
+  await expect(rows).toHaveCount(8);
+  const initialAlerts = Number(await navCount.textContent());
+
+  // First simulated event (fixture 26) is Waspada: the table grows, notifications do not.
+  await page.clock.fastForward(15_000);
+  await expect(rows).toHaveCount(9);
+  await expect(page.locator('tr.row-updated')).toHaveCount(1);
+  await expect(page.getByRole('button', { name: /Ada pembaruan baru/ })).toHaveCount(0);
+
+  // Second event (fixture 27) is Awas and creates a danger notification.
+  await page.clock.fastForward(15_000);
+  await expect(rows).toHaveCount(10);
+  await expect(navCount).toHaveText(String(initialAlerts + 1));
+});
+
+test('tautan notifikasi push membuka detail kejadian dan dapat dibuka ulang', async ({ page }) => {
+  await enterDemo(page);
+  await page.evaluate(() => { window.location.hash = '/notifications?hazard=haz-demo-001'; });
+  const detail = page.getByRole('dialog', { name: 'Detail kejadian' });
+  await expect(page.getByRole('heading', { name: 'Notifikasi', exact: true })).toBeVisible();
+  await expect(detail.getByText('haz-demo-001', { exact: true })).toBeVisible();
+  await detail.getByRole('button', { name: 'Tutup detail' }).click();
+  await expect(detail).toHaveCount(0);
+  await expect(page).toHaveURL(/#\/notifications$/);
+  await page.evaluate(() => { window.location.hash = '/notifications?hazard=haz-demo-001'; });
+  await expect(detail).toBeVisible();
+});

@@ -204,6 +204,12 @@ export function createMockGatewayClient(session: AuthSession, latencyMs = 350): 
         if (!listeners.size && interval) { clearInterval(interval); interval = undefined; }
       };
     },
+    async registerPushToken() {
+      throw new ApiError(400, 'Notifikasi push tidak tersedia pada data simulasi.');
+    },
+    async unregisterPushToken() {
+      throw new ApiError(400, 'Notifikasi push tidak tersedia pada data simulasi.');
+    },
     setScenario(next) {
       if (!['normal', 'stale', 'empty', 'error'].includes(next)) throw new ApiError(400, 'Skenario tidak dikenal.');
       if (scenario !== next) scenarioStartedAt = Date.now();

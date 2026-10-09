@@ -42,6 +42,7 @@ docker compose -f compose.frontend.yaml up --build -d --wait
 | VITE_DATA_MODE | gateway / mock | API sebenarnya atau fixture lokal |
 | VITE_ENABLE_DEMO | true / false | Izin tambahan identitas demo pada build produksi |
 | VITE_API_BASE_URL | /api/v1 | Path API pada origin aplikasi yang sama |
+| VITE_FIREBASE_* | konfigurasi web Firebase | API_KEY, PROJECT_ID, MESSAGING_SENDER_ID, APP_ID, VAPID_KEY; satu saja kosong berarti push nonaktif |
 
 Standalone Auth memakai oidc + mock + demo false. Compose utama memakai oidc +
 gateway. Identitas demo tidak boleh memakai API Gateway. Semua VITE_* masuk bundle
@@ -63,6 +64,9 @@ dirender dari `otel.conf.template`. `/health` tidak di-trace.
 | pages/DashboardPage.tsx | Status sumber, filter, tabel, detail, notifikasi, error |
 | api/http.ts | REST/SSE dengan cookie same-origin dan satu percobaan refresh setelah 401 |
 | mocks/fixtures.ts, mocks/gateway.ts | 24 kejadian awal, delay 350 ms, event simulasi setiap 15 detik |
+| live/merge.ts | Menggabungkan event live feed ke halaman pertama tabel |
+| push/client.ts, push/lazy.ts | Izin, token FCM, register/unregister ke Gateway; Firebase dimuat hanya jika push dikonfigurasi |
+| push/sw.ts, push/swAuth.ts | Service worker /firebase-messaging-sw.js: ambil isi notifikasi, refresh sesi, klik notifikasi |
 
 JavaScript menerima profil, scope, expiry, dan CSRF token. Access token berada
 dalam cookie HttpOnly; refresh token disimpan server. Tidak ada token di
@@ -73,6 +77,31 @@ Media melihat ringkasan; Tim Lapangan/BNPB dapat melihat detail. Bridge memeriks
 izin request API; service bisnis tetap perlu memeriksa proyeksi dan kepemilikan.
 Statistik dan pencarian lokasi berlaku pada halaman yang dimuat. Event baru
 menawarkan tombol muat ulang agar daftar yang sedang dibaca tetap stabil.
+
+## Live feed
+
+Event `hazard.upsert` langsung masuk ke halaman pertama tabel (baris baru disorot
+sebentar). Event yang lebih lama dari baris yang tampil (`ingested_at`) diabaikan.
+Halaman pertama boleh bertambah panjang sampai dimuat ulang agar cursor halaman
+berikutnya tetap konsisten. Halaman kedua dan seterusnya tetap memakai tombol
+muat ulang. Event Siaga/Awas memuat ulang daftar notifikasi; status sumber dimuat
+ulang setelah event dan setiap 60 detik selama tab terlihat, karena feed tidak
+membawa notifikasi maupun freshness.
+
+## Notifikasi push
+
+Push hanya aktif pada build `VITE_DATA_MODE=gateway` dengan semua `VITE_FIREBASE_*`
+terisi (project Firebase yang sama dengan `FIREBASE_CREDENTIALS_PATH`), di secure
+context (HTTPS atau `localhost`; alamat IP LAN tidak bisa). Pengguna mengaktifkan
+push lewat tombol di topbar; izin browser hanya diminta dari klik tersebut.
+
+Pesan FCM hanya berisi data (`messageId` = hazard_id = notification_id), jadi
+service worker mengambil `GET /api/v1/notifications/{id}?view=summary` dengan cookie.
+Jika access token kedaluwarsa, worker memakai `GET /auth/session` (memberi CSRF saat
+`refresh_required`) lalu `POST /auth/refresh`, sama seperti halaman. Jika sesi Auth
+sudah habis, worker menampilkan notifikasi umum dan melepas langganan push browser;
+login berikutnya mendaftarkan token baru. Logout juga melepas token dari Gateway.
+Worker dibangun terpisah (`vite.sw.config.ts`, IIFE) dan tidak tersedia di `npm run dev`.
 
 ## Pengujian
 

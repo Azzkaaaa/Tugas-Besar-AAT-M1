@@ -37,11 +37,15 @@ test('pagination, notifikasi, dan sesi pratinjau berjalan bersama', async ({ pag
   expect(errors).toEqual([]);
 });
 
-test('event baru menawarkan refresh tanpa menggeser halaman yang sedang dibaca', async ({ page }) => {
+test('event baru di halaman berikutnya menawarkan refresh tanpa menggeser halaman yang sedang dibaca', async ({ page }) => {
   await page.clock.install();
   await page.goto('/');
   await page.getByRole('button', { name: 'Pratinjau sebagai Media, akun media-demo' }).click();
   await expect(page.getByRole('button', { name: /^Lihat detail / }).first()).toBeVisible();
+  // Page 1 merges events live (frontend.spec.ts); later pages keep their cursor snapshot.
+  const pageOneFirst = await page.getByRole('row').nth(1).textContent();
+  await page.getByRole('button', { name: 'Halaman berikutnya' }).click();
+  await expect.poll(() => page.getByRole('row').nth(1).textContent()).not.toBe(pageOneFirst);
   const firstBefore = await page.getByRole('row').nth(1).textContent();
   await page.clock.fastForward(16_000);
   await expect(page.getByRole('button', { name: /Ada pembaruan baru/ })).toBeVisible();

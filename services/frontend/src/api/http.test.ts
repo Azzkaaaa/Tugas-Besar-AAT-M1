@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createHttpGatewayClient } from './http';
-import { refreshSession } from '../auth/session';
+import { getCsrfToken, refreshSession } from '../auth/session';
 
-vi.mock('../auth/session', () => ({ refreshSession: vi.fn() }));
+vi.mock('../auth/session', () => ({ refreshSession: vi.fn(), getCsrfToken: vi.fn() }));
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -68,5 +68,24 @@ describe('Gateway HTTP adapter', () => {
     expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(refreshSession).toHaveBeenCalledTimes(1);
     expect(fetchMock.mock.calls[1][1].signal).toBe(signal);
+  });
+
+  it('registers a push token with CSRF and retries once after a refresh', async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(new Response('{}', { status: 401 })).mockResolvedValueOnce(new Response(null, { status: 204 }));
+    vi.stubGlobal('fetch', fetchMock);
+    vi.mocked(getCsrfToken).mockResolvedValue('csrf-test');
+    vi.mocked(refreshSession).mockResolvedValue({ user: { id: 'user', name: 'Media', role: 'MEDIA', scopes: [], mode: 'oidc' }, csrf_token: 'csrf-test', expires_at: new Date(Date.now() + 60_000).toISOString() });
+    await createHttpGatewayClient().registerPushToken('fcm-test');
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    const [url, init] = fetchMock.mock.calls[1];
+    expect(url).toContain('/notifications/push/register');
+    expect(init).toMatchObject({ method: 'POST', credentials: 'same-origin', body: JSON.stringify({ fcm_token: 'fcm-test' }) });
+    expect(init.headers).toMatchObject({ 'X-CSRF-Token': 'csrf-test', 'Content-Type': 'application/json' });
+  });
+
+  it('surfaces a rejected push unregistration as a structured error', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({ detail: 'csrf' }), { status: 403 })));
+    vi.mocked(getCsrfToken).mockResolvedValue('csrf-test');
+    await expect(createHttpGatewayClient().unregisterPushToken('fcm-test')).rejects.toMatchObject({ status: 403 });
   });
 });

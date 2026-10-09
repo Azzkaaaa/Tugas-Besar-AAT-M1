@@ -80,6 +80,13 @@ export async function getSession(signal?: AbortSignal): Promise<SessionPayload |
   throw authError(response, body);
 }
 
+/** CSRF nonce for API mutations; Envoy rejects cookie-authenticated POSTs without it. */
+export async function getCsrfToken(): Promise<string> {
+  if (!csrfToken) await getSession();
+  if (!csrfToken) throw new ApiError(401, 'Sesi telah berakhir. Silakan masuk kembali.');
+  return csrfToken;
+}
+
 /** Share one refresh across table, detail, status and SSE requests. Never replay a refresh token in parallel. */
 export function refreshSession(): Promise<SessionPayload> {
   if (refreshing) return refreshing;

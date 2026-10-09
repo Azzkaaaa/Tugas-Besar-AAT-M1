@@ -2,11 +2,14 @@ import { useEffect, useState } from 'react';
 import { getDemoSession } from './auth/demo';
 import { getSession, logoutSession, refreshSession, subscribeSession, type SessionPayload } from './auth/session';
 import { isDemoMode, isMockDataMode } from './config';
+import { createGatewayClient } from './api';
 import { DashboardPage } from './pages/DashboardPage';
+import { loadPush } from './push/lazy';
 import { LoginPage } from './pages/LoginPage';
 import type { AuthSession, Role } from './types';
 
 const demoRoleKey = 'bnpb.demo.role';
+const pushLogoutTimeoutMs = 2000;
 
 function restoreDemoSession(): AuthSession | null {
   if (!isDemoMode || !isMockDataMode) return null;
@@ -31,6 +34,15 @@ export default function App() {
     const onHashChange = () => setRoute(window.location.hash);
     window.addEventListener('hashchange', onHashChange);
     return () => window.removeEventListener('hashchange', onHashChange);
+  }, []);
+
+  // Notification clicks reach an already open window as a worker message (push/client.ts).
+  useEffect(() => {
+    if (!loadPush) return;
+    let stop: (() => void) | undefined;
+    let active = true;
+    void loadPush().then(push => { if (active) stop = push.onPushOpen(next => { window.location.hash = next; }); });
+    return () => { active = false; stop?.(); };
   }, []);
 
   useEffect(() => {
@@ -91,11 +103,21 @@ export default function App() {
       return;
     }
     setLoggingOut(true); setError('');
+    if (loadPush && session) {
+      // Stop delivery to this browser, but keep the preference so the next login resumes push.
+      // FCM must never block logout; the service worker also unsubscribes once the session is gone.
+      const client = createGatewayClient(session);
+      await Promise.race([
+        loadPush().then(push => push.disablePush(client, { keepPreference: true })),
+        new Promise(resolve => setTimeout(resolve, pushLogoutTimeoutMs)),
+      ]).catch(() => undefined);
+    }
     try { window.location.assign(await logoutSession()); }
     catch (reason) { setError(reason instanceof Error ? reason.message : 'Logout belum berhasil. Coba lagi.'); }
     finally { setLoggingOut(false); }
   }
 
+  const [path, query = ''] = route.split('?');
   if (loading) return <main className="session-state" role="status"><p>Memeriksa sesi login...</p></main>;
   if (!session) return <>
     {error && <div className="auth-status" role="alert"><p>{error}</p>{!isDemoMode && <button className="button" onClick={() => setAttempt(value => value + 1)}>Periksa sesi lagi</button>}</div>}
@@ -106,6 +128,6 @@ export default function App() {
   </>;
   return <>
     {error && <div className="auth-status" role="alert"><p>{error}</p></div>}
-    <DashboardPage session={session} onLogout={() => { void logout(); }} loggingOut={loggingOut} activePage={route === '#/notifications' ? 'notifications' : 'dashboard'} />
+    <DashboardPage session={session} onLogout={() => { void logout(); }} loggingOut={loggingOut} activePage={path === '#/notifications' ? 'notifications' : 'dashboard'} focusHazardId={path === '#/notifications' ? new URLSearchParams(query).get('hazard') ?? undefined : undefined} />
   </>;
 }
