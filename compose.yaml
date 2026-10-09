@@ -218,6 +218,7 @@ services:
       RabbitMq__QueueName: ${NOTIFICATION_CONSUMER_QUEUE}
       RabbitMq__DeadLetterQueue: ${NOTIFICATION_CONSUMER_DLQ}
       Fcm__Topic: ${NOTIFICATION_FCM_TOPIC:-hazard-alerts}
+      ConnectionStrings__Notifications: ${NOTIFICATION_STORE_CONNECTION:-Data Source=/data/notifications.db}
       Auth__Authority: ${NOTIFICATION_AUTH_AUTHORITY:-http://auth.localhost:8080}
       # The local Zitadel only serves plain HTTP.
       Auth__RequireHttpsMetadata: ${NOTIFICATION_AUTH_REQUIRE_HTTPS_METADATA:-false}
@@ -236,6 +237,7 @@ services:
         read_only: true
         bind:
           create_host_path: false
+      - notification_data:/data
     depends_on:
       rabbitmq:
         condition: service_healthy
@@ -397,3 +399,4 @@ volumes:
   pvmbg_data:
   aggregator_data:
   webhook_data:
+  notification_data:

@@ -7,16 +7,17 @@ namespace BNPB.Notification.Server.Core.Services;
 public class BroadcastService : IBroadcastProvider
 {
   private readonly ILogger<BroadcastService> _logger;
-  private readonly IPushProvider _pushProvider;
+  private readonly IMessageStore _messageStore;
 
-  public BroadcastService(ILogger<BroadcastService> logger, IPushProvider pushProvider)
+  public BroadcastService(ILogger<BroadcastService> logger, IMessageStore messageStore)
   {
     _logger = logger;
-    _pushProvider = pushProvider;
+    _messageStore = messageStore;
   }
 
+  // Stores the notification as pending; PushDispatchService sends it.
   public async Task FilterAndBroadcastAsync(
-    HazardEvent message,
+    HazardNotification message,
     CancellationToken cancellationToken)
   {
     switch (message.Severity)
@@ -28,6 +29,8 @@ public class BroadcastService : IBroadcastProvider
         return;
     }
 
-    await _pushProvider.BroadcastAsync(message, cancellationToken);
+    await _messageStore.UpsertMessageAsync(
+      message with { PushStatus = PushStatus.Pending },
+      cancellationToken);
   }
 }

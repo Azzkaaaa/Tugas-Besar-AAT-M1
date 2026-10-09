@@ -4,7 +4,7 @@ namespace BNPB.Notification.Server.Core.Ports.Outbound;
 
 public interface IMessageListProvider
 {
-  public Task<(IList<HazardEvent>, string)> GetMessageListAsync(
+  public Task<(IList<HazardNotification>, string)> GetMessageListAsync(
     HazardSource? source,
     HazardType? type,
     HazardSeverity? severity,
@@ -22,7 +22,7 @@ public interface IMessageListProvider
       pageToken,
       CancellationToken.None);
 
-  public Task<(IList<HazardEvent>, string)> GetMessageListAsync(
+  public Task<(IList<HazardNotification>, string)> GetMessageListAsync(
     HazardSource? source,
     HazardType? type,
     HazardSeverity? severity,

@@ -173,18 +173,20 @@ public class RabbitMqConsumer : BackgroundService
         extraDataBuilder.Add(typeof(HazardEventPublished), externalEvent);
         extraDataBuilder.Add(typeof(ExternalHazardEvent), externalEvent.Payload);
 
-        var internalEvent = new HazardEvent(
-          externalEvent.Payload.HazardId,
+        // One notification per published revision, identified by its event_id.
+        var notification = new HazardNotification(
+          externalEvent.EventId,
           source,
           type,
           severity,
           externalEvent.Payload.AreaName,
           externalEvent.Payload.OccurredAt.ToDateTimeOffset(),
           "",
+          PushStatus.Unspecified,
           extraDataBuilder.ToImmutable()
         );
 
-        await _broadcastProvider.FilterAndBroadcastAsync(internalEvent);
+        await _broadcastProvider.FilterAndBroadcastAsync(notification, stoppingToken);
 
         await _channel.BasicAckAsync(deliveryTag: ea.DeliveryTag, multiple: false);
 

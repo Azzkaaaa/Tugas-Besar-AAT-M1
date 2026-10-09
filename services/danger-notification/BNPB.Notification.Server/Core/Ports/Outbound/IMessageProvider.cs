@@ -4,10 +4,10 @@ namespace BNPB.Notification.Server.Core.Ports.Outbound;
 
 public interface IMessageProvider
 {
-  public Task<HazardEvent?> GetMessageAsync(string messageId)
+  public Task<HazardNotification?> GetMessageAsync(string messageId)
     => GetMessageAsync(messageId, CancellationToken.None);
 
-  public Task<HazardEvent?> GetMessageAsync(
+  public Task<HazardNotification?> GetMessageAsync(
     string messageId,
     CancellationToken cancellationToken);
 }

@@ -30,14 +30,14 @@ public class MessageServiceTests
       _summaryList);
 
     _full.GetMessageAsync(Arg.Any<string>(), Arg.Any<CancellationToken>())
-      .Returns(call => TestData.Event(call.Arg<string>()));
+      .Returns(call => TestData.Notification(call.Arg<string>()));
     _summary.GetMessageAsync(Arg.Any<string>(), Arg.Any<CancellationToken>())
-      .Returns(call => TestData.Event(call.Arg<string>()));
+      .Returns(call => TestData.Notification(call.Arg<string>()));
 
     _fullList.GetMessageListAsync(default, default, default, default, default, default, default, default)
-      .ReturnsForAnyArgs((new List<HazardEvent> { TestData.Event("f") }, "next"));
+      .ReturnsForAnyArgs((new List<HazardNotification> { TestData.Notification("f") }, "next"));
     _summaryList.GetMessageListAsync(default, default, default, default, default, default, default, default)
-      .ReturnsForAnyArgs((new List<HazardEvent> { TestData.Event("s") }, "next"));
+      .ReturnsForAnyArgs((new List<HazardNotification> { TestData.Notification("s") }, "next"));
   }
 
   [Theory]
@@ -87,7 +87,7 @@ public class MessageServiceTests
   [Fact]
   public async Task GetMessage_NotFound_ReturnsNull()
   {
-    _summary.GetMessageAsync("missing", Arg.Any<CancellationToken>()).Returns((HazardEvent?)null);
+    _summary.GetMessageAsync("missing", Arg.Any<CancellationToken>()).Returns((HazardNotification?)null);
 
     var result = await _service.GetMessageAsync("missing", HazardView.Summary, SummaryScopes, CancellationToken.None);
 
@@ -98,7 +98,7 @@ public class MessageServiceTests
   public async Task GetMessage_AlertBuiltFromSummaryFieldsOnly()
   {
     var full = TestData.Full("h1");
-    _full.GetMessageAsync("h1", Arg.Any<CancellationToken>()).Returns(TestData.Event("h1", extra: full));
+    _full.GetMessageAsync("h1", Arg.Any<CancellationToken>()).Returns(TestData.Notification("h1", extra: full));
 
     var result = await _service.GetMessageAsync("h1", HazardView.Full, FullScopes, CancellationToken.None);
 

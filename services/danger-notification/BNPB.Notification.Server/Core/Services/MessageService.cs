@@ -32,7 +32,7 @@ public class MessageService : IInboundMessageProvider
     _summaryListProvider = summaryListProvider;
   }
 
-  public async Task<HazardEvent?> GetMessageAsync(
+  public async Task<HazardNotification?> GetMessageAsync(
     string messageId,
     HazardView view,
     IEnumerable<UserPermission> permissions,
@@ -57,7 +57,7 @@ public class MessageService : IInboundMessageProvider
     return message is { } m ? WithAlert(m) : null;
   }
 
-  public async Task<(IList<HazardEvent>, string)> GetMessageListAsync(
+  public async Task<(IList<HazardNotification>, string)> GetMessageListAsync(
     HazardView view,
     HazardSource? source,
     HazardType? type,
@@ -120,11 +120,11 @@ public class MessageService : IInboundMessageProvider
     return resolvedView;
   }
 
-  private static HazardEvent WithAlert(HazardEvent message)
+  private static HazardNotification WithAlert(HazardNotification message)
     => message with { Alert = BuildAlert(message) };
 
   // Built exclusively from summary-safe fields.
-  internal static string BuildAlert(HazardEvent message)
+  internal static string BuildAlert(HazardNotification message)
   {
     var severity = message.Severity switch
     {

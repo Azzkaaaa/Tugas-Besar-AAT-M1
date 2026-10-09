@@ -4,19 +4,19 @@ namespace BNPB.Notification.Server.Core.Ports.Inbound;
 
 public interface IMessageProvider
 {
-  public Task<HazardEvent?> GetMessageAsync(
+  public Task<HazardNotification?> GetMessageAsync(
     string messageId,
     HazardView view,
     IEnumerable<UserPermission> permissions)
     => GetMessageAsync(messageId, view, permissions, CancellationToken.None);
 
-  public Task<HazardEvent?> GetMessageAsync(
+  public Task<HazardNotification?> GetMessageAsync(
     string messageId,
     HazardView view,
     IEnumerable<UserPermission> permissions,
     CancellationToken cancellationToken);
 
-  public Task<(IList<HazardEvent>, string)> GetMessageListAsync(
+  public Task<(IList<HazardNotification>, string)> GetMessageListAsync(
     HazardView view,
     HazardSource? source,
     HazardType? type,
@@ -38,7 +38,7 @@ public interface IMessageProvider
       permissions,
       CancellationToken.None);
 
-  public Task<(IList<HazardEvent>, string)> GetMessageListAsync(
+  public Task<(IList<HazardNotification>, string)> GetMessageListAsync(
     HazardView view,
     HazardSource? source,
     HazardType? type,

@@ -53,7 +53,7 @@ public class FcmClient : IPushProvider
   }
 
   public async Task BroadcastAsync(
-    HazardEvent message,
+    HazardNotification message,
     CancellationToken cancellationToken)
   {
     var messageId = message.Id;
@@ -63,7 +63,7 @@ public class FcmClient : IPushProvider
       Topic = _topic,
       Data = new Dictionary<string, string>
       {
-        ["messageId"] = messageId.ToString()!,
+        ["messageId"] = messageId,
         ["type"] = "HAZARD",
         ["timestamp"] = DateTimeOffset.UtcNow.ToString("O")
       },
@@ -85,10 +85,15 @@ public class FcmClient : IPushProvider
       }
     };
 
-    using var activity = NotificationTelemetry.Source.StartActivity("fcm.send", ActivityKind.Client);
+    // Sent from the outbox worker, so continue the consume span's trace explicitly.
+    var parent = message.ExtraData.TryGetValue(typeof(ActivityContext), out var context)
+      ? (ActivityContext)context
+      : default;
+
+    using var activity = NotificationTelemetry.Source.StartActivity("fcm.send", ActivityKind.Client, parent);
     activity?.SetTag("messaging.system", "fcm");
     activity?.SetTag("messaging.destination", _topic);
-    activity?.SetTag("hazard.id", messageId);
+    activity?.SetTag("notification.id", messageId);
     activity?.SetTag("hazard.severity", message.Severity.ToString());
 
     var severity = new KeyValuePair<string, object?>("hazard.severity", message.Severity.ToString());

@@ -1,6 +1,7 @@
 using System.Security.Claims;
 using System.Text.Encodings.Web;
 using Grpc.Core;
+using Timestamp = Google.Protobuf.WellKnownTypes.Timestamp;
 using NSubstitute.ClearExtensions;
 using NSubstitute.ExceptionExtensions;
 using Grpc.Net.Client;
@@ -19,10 +20,11 @@ using BNPB.Notification.Server.Core.Models;
 using BNPB.Notification.Server.Core.Exceptions;
 using BNPB.Notification.Server.Core.Ports.Inbound;
 using BNPB.Notification.Server.Adapters.Inbound;
+using BNPB.Notification.Server.Adapters.Outbound.Persistence;
 
-using HazardEvent = BNPB.Notification.Server.Core.Models.HazardEvent;
 using HazardType = BNPB.Notification.Server.Core.Models.HazardType;
 using SourceFreshness = BNPB.Notification.Server.Core.Models.SourceFreshness;
+using PushStatus = BNPB.Notification.Server.Core.Models.PushStatus;
 
 namespace BNPB.Notification.Server.Tests.Adapters;
 
@@ -58,10 +60,10 @@ public class NotificationV1GrpcServiceTests : IClassFixture<NotificationV1GrpcSe
   private static Metadata As(string? scopes)
     => scopes == null ? [] : new Metadata { { TestAuthHandler.ScopeHeader, scopes } };
 
-  private static HazardEvent SummaryEvent(string id)
-    => TestData.Event(id, extra: TestData.Summary(id)) with { Alert = $"alert {id}" };
+  private static HazardNotification SummaryEvent(string id)
+    => TestData.Notification(id, extra: TestData.Summary(id)) with { Alert = $"alert {id}" };
 
-  private void SetupList(params HazardEvent[] items)
+  private void SetupList(params HazardNotification[] items)
     => _messages
       .GetMessageListAsync(default, default, default, default, default, default, default, default, default!, default)
       .ReturnsForAnyArgs((items.ToList(), "next-token"));
@@ -83,7 +85,7 @@ public class NotificationV1GrpcServiceTests : IClassFixture<NotificationV1GrpcSe
     Assert.Equal("h1", item.NotificationId);
     Assert.Equal("alert h1", item.Message);
     Assert.Equal(HazardProjection.DataOneofCase.Summary, item.Hazard.DataCase);
-    Assert.Equal(item.Hazard.Summary.IngestedAt, item.CreatedAt);
+    Assert.Equal(Timestamp.FromDateTimeOffset(TestData.BaseTime.AddMinutes(5)), item.CreatedAt);
     Assert.Equal(DangerNotification.Types.PushStatus.Unspecified, item.PushStatus);
     Assert.Equal("next-token", response.NextPageToken);
 
@@ -103,6 +105,20 @@ public class NotificationV1GrpcServiceTests : IClassFixture<NotificationV1GrpcSe
       Arg.Is<IEnumerable<UserPermission>>(p =>
         p.Contains(UserPermission.ReadNotifications) && p.Contains(UserPermission.ReadHazardsSummary)),
       Arg.Any<CancellationToken>());
+  }
+
+  [Theory]
+  [InlineData(PushStatus.Pending, DangerNotification.Types.PushStatus.Pending)]
+  [InlineData(PushStatus.Delivered, DangerNotification.Types.PushStatus.Delivered)]
+  [InlineData(PushStatus.Failed, DangerNotification.Types.PushStatus.Failed)]
+  [InlineData(PushStatus.Unspecified, DangerNotification.Types.PushStatus.Unspecified)]
+  public async Task ListNotifications_MapsPushStatus(PushStatus status, DangerNotification.Types.PushStatus expected)
+  {
+    SetupList(SummaryEvent("e1") with { PushStatus = status });
+
+    var response = await Client().ListNotificationsAsync(new ListNotificationsRequest(), As(SummaryScopes));
+
+    Assert.Equal(expected, Assert.Single(response.Items).PushStatus);
   }
 
   [Fact]
@@ -186,7 +202,7 @@ public class NotificationV1GrpcServiceTests : IClassFixture<NotificationV1GrpcSe
   {
     _messages
       .GetMessageAsync("h1", HazardView.Full, Arg.Any<IEnumerable<UserPermission>>(), Arg.Any<CancellationToken>())
-      .Returns(TestData.Event("h1", extra: TestData.Full("h1")));
+      .Returns(TestData.Notification("h1", extra: TestData.Full("h1")));
 
     var response = await Client().GetNotificationAsync(
       new GetNotificationRequest { NotificationId = "h1", View = View.Full },
@@ -219,7 +235,7 @@ public class NotificationV1GrpcServiceTests : IClassFixture<NotificationV1GrpcSe
   {
     _messages
       .GetMessageAsync(default!, default, default!, default)
-      .ReturnsForAnyArgs((HazardEvent?)null);
+      .ReturnsForAnyArgs((HazardNotification?)null);
 
     var ex = await Assert.ThrowsAsync<RpcException>(() => Client().GetNotificationAsync(
       new GetNotificationRequest { NotificationId = "missing" },
@@ -327,8 +343,10 @@ public class NotificationV1GrpcServiceTests : IClassFixture<NotificationV1GrpcSe
         services.AddSingleton(Subscriptions);
         services.AddSingleton(Sources);
 
-        var consumer = services.Single(d => d.ImplementationType == typeof(RabbitMqConsumer));
-        services.Remove(consumer);
+        // No broker, store schema or outbox in these tests; core ports are substitutes.
+        Type[] hostedServices = [typeof(RabbitMqConsumer), typeof(PushOutboxWorker), typeof(NotificationStoreMigrator)];
+        foreach (var hosted in services.Where(d => hostedServices.Contains(d.ImplementationType)).ToList())
+          services.Remove(hosted);
 
         services
           .AddAuthentication(options =>

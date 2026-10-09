@@ -18,10 +18,10 @@ public interface IPushProvider
     string token,
     CancellationToken cancellationToken);
 
-  public Task BroadcastAsync(HazardEvent message)
+  public Task BroadcastAsync(HazardNotification message)
     => BroadcastAsync(message, CancellationToken.None);
 
   public Task BroadcastAsync(
-    HazardEvent message,
+    HazardNotification message,
     CancellationToken cancellationToken);
 }

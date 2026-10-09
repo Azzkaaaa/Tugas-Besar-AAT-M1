@@ -1,7 +1,9 @@
 using Grpc.Core;
+using Google.Protobuf.WellKnownTypes;
 using BNPB.Common.V1;
 using BNPB.Notification.V1;
 using Microsoft.AspNetCore.Authorization;
+using BNPB.Notification.Server.Adapters.Models;
 using BNPB.Notification.Server.Core.Models;
 using BNPB.Notification.Server.Core.Exceptions;
 using BNPB.Notification.Server.Core.Ports.Inbound;
@@ -9,7 +11,8 @@ using BNPB.Notification.Server.Core.Ports.Inbound;
 using EHazardType = BNPB.Common.V1.HazardType;
 using HazardType = BNPB.Notification.Server.Core.Models.HazardType;
 using EHazardEvent = BNPB.Common.V1.HazardEvent;
-using HazardEvent = BNPB.Notification.Server.Core.Models.HazardEvent;
+using EPushStatus = BNPB.Notification.V1.DangerNotification.Types.PushStatus;
+using PushStatus = BNPB.Notification.Server.Core.Models.PushStatus;
 using ESourceFreshness = BNPB.Common.V1.SourceFreshness;
 using SourceFreshness = BNPB.Notification.Server.Core.Models.SourceFreshness;
 using AdapterBadInputException = BNPB.Notification.Server.Adapters.Exceptions.BadInputException;
@@ -257,31 +260,32 @@ public class NotificationV1GrpcService : DangerNotificationService.DangerNotific
       throw new AdapterBadInputException("Source and hazard type combination is invalid");
   }
 
-  private static DangerNotification ToDangerNotification(HazardEvent message)
+  private static DangerNotification ToDangerNotification(HazardNotification message)
   {
     var notification = new DangerNotification
     {
       NotificationId = message.Id,
       Message = message.Alert,
-      PushStatus = DangerNotification.Types.PushStatus.Unspecified,
+      PushStatus = message.PushStatus switch
+      {
+        PushStatus.Pending => EPushStatus.Pending,
+        PushStatus.Delivered => EPushStatus.Delivered,
+        PushStatus.Failed => EPushStatus.Failed,
+        _ => EPushStatus.Unspecified,
+      },
     };
 
-    if (message.ExtraData.TryGetValue(typeof(EHazardEvent), out var full))
-    {
-      var hazard = (EHazardEvent)full;
-      notification.Hazard = new HazardProjection { Full = hazard };
-      notification.CreatedAt = hazard.IngestedAt;
-    }
-    else if (message.ExtraData.TryGetValue(typeof(HazardSummary), out var summary))
-    {
-      var hazard = (HazardSummary)summary;
-      notification.Hazard = new HazardProjection { Summary = hazard };
-      notification.CreatedAt = hazard.IngestedAt;
-    }
+    if (message.ExtraData.TryGetValue(typeof(NotificationCreatedAt), out var createdAt))
+      notification.CreatedAt = Timestamp.FromDateTimeOffset(((NotificationCreatedAt)createdAt).Value);
     else
-    {
+      throw new InvalidOperationException($"Message {message.Id} carries no creation time");
+
+    if (message.ExtraData.TryGetValue(typeof(EHazardEvent), out var full))
+      notification.Hazard = new HazardProjection { Full = (EHazardEvent)full };
+    else if (message.ExtraData.TryGetValue(typeof(HazardSummary), out var summary))
+      notification.Hazard = new HazardProjection { Summary = (HazardSummary)summary };
+    else
       throw new InvalidOperationException($"Message {message.Id} carries no hazard projection");
-    }
 
     return notification;
   }

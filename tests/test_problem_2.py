@@ -18,6 +18,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import http.client
 import json
 import os
+import threading
 import time
 import unittest
 from typing import Dict, List, Tuple, Any
@@ -165,13 +166,20 @@ class TestProblem2ConcurrencyAvailability(unittest.TestCase):
         start_time = time.monotonic()
         deadline = start_time + duration_s
 
+        # Tokens live ~60s, shorter than the run; resolve per request so the cache in
+        # token() refreshes them. The lock keeps workers from racing to refresh at once.
+        token_lock = threading.Lock()
+
+        def current_token():
+            with token_lock:
+                return token(FIELD_USER)
+
         def load_worker(worker_id):
             local_durations = []
             local_statuses = {}
             local_errors = 0
             req_idx = worker_id
 
-            tok = token(FIELD_USER)
             conn = http.client.HTTPConnection(HOST, PORT, timeout=10.0)
 
             try:
@@ -180,7 +188,7 @@ class TestProblem2ConcurrencyAvailability(unittest.TestCase):
                     req_idx += 1
                     headers = {
                         "Host": APP_HOST,
-                        "Authorization": f"Bearer {tok}",
+                        "Authorization": f"Bearer {current_token()}",
                         "Accept": "application/json",
                         "Connection": "keep-alive",
                     }

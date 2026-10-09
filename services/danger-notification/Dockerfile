@@ -31,6 +31,8 @@ FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS runtime
 WORKDIR /app
 
 COPY --from=builder /app .
+# Notification store volume; a fresh named volume copies this ownership.
+RUN mkdir -p /data && chown app:app /data
 USER app
 
 EXPOSE 9095

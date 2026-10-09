@@ -5,12 +5,14 @@ using BNPB.Aggregator.V1;
 using BNPB.Common.V1;
 using BNPB.Notification.Server.Adapters.Inbound;
 using BNPB.Notification.Server.Adapters.Outbound;
+using BNPB.Notification.Server.Adapters.Outbound.Persistence;
 using BNPB.Notification.Server.Adapters.Telemetry;
 using BNPB.Notification.Server.Core.Services;
 using BNPB.Notification.Server.Core.Ports.Inbound;
 using BNPB.Notification.Server.Core.Ports.Outbound;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
 using OpenTelemetry;
 using OpenTelemetry.Logs;
@@ -88,14 +90,36 @@ builder.Services
   .EnableCallContextPropagation(options => options.SuppressContextNotFoundErrors = true)
   .ConfigureChannel(options => options.UnsafeUseInsecureChannelCallCredentials = true);
 
-builder.Services.AddScoped<IOutboundSourceProvider>(sp =>
-  ActivatorUtilities.CreateInstance<AggregatorClient>(sp, View.Summary));
+builder.Services.AddScoped<IOutboundSourceProvider, AggregatorClient>();
+
+// Notification store. Only SQLite for now; another provider needs its own branch and migrations.
+var outboxOptions = builder.Configuration.GetSection("Outbox").Get<OutboxOptions>() ?? new OutboxOptions();
+var storeProvider = builder.Configuration["Persistence:Provider"] ?? "sqlite";
+var storeConnection = builder.Configuration.GetConnectionString("Notifications");
+
+builder.Services.AddDbContextFactory<NotificationDbContext>(options =>
+{
+  switch (storeProvider)
+  {
+    case "sqlite":
+      options.UseSqlite(storeConnection);
+      break;
+    default:
+      throw new InvalidOperationException($"Unsupported Persistence:Provider '{storeProvider}'");
+  }
+});
+builder.Services.AddSingleton(TimeProvider.System);
+builder.Services.AddSingleton(outboxOptions);
+builder.Services.AddSingleton<PushOutboxSignal>();
+builder.Services.AddSingleton(sp => ActivatorUtilities.CreateInstance<EfNotificationStore>(sp, View.Full));
+builder.Services.AddSingleton<IMessageStore>(sp => sp.GetRequiredService<EfNotificationStore>());
+builder.Services.AddSingleton<IPushOutbox>(sp => sp.GetRequiredService<EfNotificationStore>());
 
 // Core
-builder.Services.AddScoped<IInboundMessageProvider>(sp =>
+builder.Services.AddSingleton<IInboundMessageProvider>(sp =>
 {
-  var full = ActivatorUtilities.CreateInstance<AggregatorClient>(sp, View.Full);
-  var summary = ActivatorUtilities.CreateInstance<AggregatorClient>(sp, View.Summary);
+  var full = sp.GetRequiredService<EfNotificationStore>();
+  var summary = ActivatorUtilities.CreateInstance<EfNotificationStore>(sp, View.Summary);
 
   return new MessageService(
     sp.GetRequiredService<ILogger<MessageService>>(),
@@ -107,9 +131,13 @@ builder.Services.AddScoped<IInboundMessageProvider>(sp =>
 builder.Services.AddScoped<IInboundSourceProvider, SourceService>();
 builder.Services.AddScoped<ISubscriptionProvider, SubscriptionService>();
 builder.Services.AddSingleton<IBroadcastProvider, BroadcastService>();
+builder.Services.AddSingleton<IPushDispatchProvider>(sp =>
+  ActivatorUtilities.CreateInstance<PushDispatchService>(sp, outboxOptions.BatchSize));
 
-// Broker
+// Hosted services start in order: schema first, then the consumer and the outbox.
+builder.Services.AddHostedService<NotificationStoreMigrator>();
 builder.Services.AddHostedService<RabbitMqConsumer>();
+builder.Services.AddHostedService<PushOutboxWorker>();
 
 // gRPC
 builder.Services.AddGrpc();

@@ -4,10 +4,10 @@ namespace BNPB.Notification.Server.Core.Ports.Inbound;
 
 public interface IBroadcastProvider
 {
-  public Task FilterAndBroadcastAsync(HazardEvent message)
+  public Task FilterAndBroadcastAsync(HazardNotification message)
     => FilterAndBroadcastAsync(message, CancellationToken.None);
 
   public Task FilterAndBroadcastAsync(
-    HazardEvent message,
+    HazardNotification message,
     CancellationToken cancellationToken);
 }

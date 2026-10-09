@@ -5,7 +5,8 @@ using BNPB.Notification.Server.Core.Models;
 using EHazardType = BNPB.Common.V1.HazardType;
 using HazardType = BNPB.Notification.Server.Core.Models.HazardType;
 using EHazardEvent = BNPB.Common.V1.HazardEvent;
-using HazardEvent = BNPB.Notification.Server.Core.Models.HazardEvent;
+using BNPB.Event.V1;
+using BNPB.Notification.Server.Adapters.Models;
 using ESourceFreshness = BNPB.Common.V1.SourceFreshness;
 using SourceFreshness = BNPB.Notification.Server.Core.Models.SourceFreshness;
 
@@ -51,16 +52,19 @@ internal static class TestData
       Attributes = new Struct(),
     };
 
-  public static HazardEvent Event(
+  public static HazardNotification Notification(
     string id,
     HazardSeverity severity = HazardSeverity.Awas,
-    object? extra = null)
+    object? extra = null,
+    PushStatus pushStatus = PushStatus.Unspecified)
   {
-    var extraData = extra == null
-      ? ImmutableDictionary<System.Type, object>.Empty
-      : ImmutableDictionary<System.Type, object>.Empty.Add(extra.GetType(), extra);
+    var extraData = ImmutableDictionary<System.Type, object>.Empty
+      .Add(typeof(NotificationCreatedAt), new NotificationCreatedAt(BaseTime.AddMinutes(5)));
 
-    return new HazardEvent(
+    if (extra != null)
+      extraData = extraData.Add(extra.GetType(), extra);
+
+    return new HazardNotification(
       id,
       HazardSource.BMKG,
       HazardType.Seismic,
@@ -68,7 +72,47 @@ internal static class TestData
       $"Area {id}",
       BaseTime,
       "",
+      pushStatus,
       extraData);
+  }
+
+  // A notification as the RabbitMQ consumer builds it for one published revision.
+  public static HazardNotification Published(
+    string eventId,
+    string hazardId,
+    Severity severity = Severity.Awas,
+    Source source = Source.Bmkg,
+    int publishedMinutes = 0,
+    int occurredMinutes = 0)
+  {
+    var hazard = Full(hazardId, severity, source, occurredMinutes);
+    var envelope = new HazardEventPublished
+    {
+      EventId = eventId,
+      SchemaVersion = 1,
+      Source = source,
+      Publisher = "aggregator",
+      OccurredAt = Timestamp.FromDateTimeOffset(BaseTime.AddMinutes(publishedMinutes)),
+      Payload = hazard,
+    };
+
+    return new HazardNotification(
+      eventId,
+      source == Source.Pvmbg ? HazardSource.PVMBG : HazardSource.BMKG,
+      source == Source.Pvmbg ? HazardType.Volcanic : HazardType.Seismic,
+      severity switch
+      {
+        Severity.Siaga => HazardSeverity.Siaga,
+        Severity.Awas => HazardSeverity.Awas,
+        _ => HazardSeverity.Other,
+      },
+      hazard.AreaName,
+      hazard.OccurredAt.ToDateTimeOffset(),
+      "",
+      PushStatus.Unspecified,
+      ImmutableDictionary<System.Type, object>.Empty
+        .Add(typeof(HazardEventPublished), envelope)
+        .Add(typeof(EHazardEvent), hazard));
   }
 
   public static ESourceFreshness ProtoFreshness(Source source, SourceStatus status)

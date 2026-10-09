@@ -480,3 +480,8 @@ $RECYCLE.BIN/
 
 # Vim temporary swap files
 *.swp
+
+# Local notification store (Data Source=notifications.db)
+*.db
+*.db-shm
+*.db-wal

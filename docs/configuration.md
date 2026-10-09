@@ -216,8 +216,8 @@ Kedua mock memakai file SQLite yang berbeda. DSN `sqlite:///data/...` mengarah
 ke path relatif `data/...` terhadap direktori kerja: repo saat memakai launcher
 lokal, dan `/app` dalam container. Compose memasang volume terpisah pada
 `/app/data` masing-masing container. Setiap store hanya boleh diakses langsung
-oleh pemilik berikut. Danger Notification dan Event Live Feed belum memiliki
-store: notifikasi diambil dari Aggregator dan buffer replay feed berada di memori.
+oleh pemilik berikut. Event Live Feed belum memiliki store: buffer replay feed
+berada di memori.
 
 DSN mock harus berawalan `sqlite:///` dan menunjuk file persisten. Nilai kosong,
 `:memory:`, dan URI `file:` ditolak. Path absolut dapat digunakan, misalnya
@@ -232,6 +232,7 @@ DSN mock harus berawalan `sqlite:///` dan menunjuk file persisten. Nilai kosong,
 | `AUTH_DATABASE_PATH` | `/data/sessions.sqlite` | Auth bridge; volume `auth_sessions` |
 | PostgreSQL Zitadel | database `zitadel` | Zitadel; volume `auth_postgres`, tidak dibaca langsung oleh bridge |
 | `WEBHOOK_STORE_DSN` | `file:/data/webhook.db` | Webhook Provider; volume `webhook_data` |
+| `NOTIFICATION_STORE_CONNECTION` | `Data Source=/data/notifications.db` | Danger Notification, termasuk outbox push; volume `notification_data` |
 
 Record SQLite bertahan setelah restart proses/container selama file/volume
 dipertahankan. Kontrol skema/outage PVMBG adalah state runtime terpisah dari data.
@@ -276,9 +277,16 @@ hanya dipakai saat service dijalankan di luar Compose.
 | `RABBITMQ_EXCHANGE` | `bnpb.hazards.v1` | `RabbitMq:Exchange` |
 | `NOTIFICATION_CONSUMER_QUEUE` / `NOTIFICATION_CONSUMER_DLQ` | `bnpb.danger-notification.v1` / `.dlq.v1` | `RabbitMq:QueueName` / `RabbitMq:DeadLetterQueue` |
 | `NOTIFICATION_FCM_TOPIC` | `hazard-alerts` | `Fcm:Topic` |
+| `NOTIFICATION_STORE_CONNECTION` | `Data Source=/data/notifications.db` | `ConnectionStrings:Notifications`; provider dari `Persistence:Provider` (`sqlite`) |
 | `FIREBASE_CREDENTIALS_PATH` | `./.secrets/firebase-credentials.json` | Bukan appsettings; di-mount untuk `GOOGLE_APPLICATION_CREDENTIALS` |
 
 Service ini tidak menerima URL AMQP karena klien .NET dikonfigurasi per bagian.
+
+Outbox push diatur lewat bagian `Outbox` di appsettings (tanpa variabel `.env`):
+`PollInterval` (`00:00:05`), `BatchSize` (`10`), `MaxAttempts` (`5`),
+`BaseBackoff` (`00:00:05`, berlipat dua per kegagalan), dan `LeaseDuration`
+(`00:01:00`, harus lebih lama dari satu batch pengiriman FCM). Override dengan
+`Outbox__<Key>` bila perlu.
 
 ## RabbitMQ
 
