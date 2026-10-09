@@ -1,80 +1,37 @@
 \usepackage[utf8]{inputenc}
 \usepackage[T1]{fontenc}
-\usepackage[margin=2.5cm]{geometry}
-\usepackage{enumitem}
-
-\usepackage{amsmath, amssymb, amsfonts, amsthm}
-\usepackage{cancel}
-
-% layout
-\usepackage{parskip}
-\usepackage{float}
-\usepackage{graphicx}
-\usepackage{caption}
-\usepackage{subcaption}
-\usepackage{booktabs}
-\usepackage{array}
-\usepackage{lipsum}
-
-% colors & links
-\usepackage[dvipsnames]{xcolor}
-\usepackage{hyperref}
-
-% snippets
-\usepackage{listings}
-\definecolor{codegreen}{rgb}{0,0.6,0}
-\definecolor{codegray}{rgb}{0.5,0.5,0.5}
-\definecolor{codepurple}{rgb}{0.58,0,0.82}
-\definecolor{backcolour}{rgb}{0.95,0.95,0.92}
-
-\lstset{
-    backgroundcolor=\color{backcolour},
-    commentstyle=\color{codegreen},
-    keywordstyle=\color{magenta},
-    numberstyle=\tiny\color{codegray},
-    stringstyle=\color{codepurple},
-    basicstyle=\ttfamily\small,
-    breakatwhitespace=false,
-    breaklines=true,
-    captionpos=b,
-    keepspaces=true,
-    numbers=left,
-    numbersep=5pt,
-    showspaces=false,
-    showstringspaces=false,
-    showtabs=false,
-    tabsize=2
-}
-
-\usepackage{tikz}
-\usepackage{tikz-network}
-\usetikzlibrary{trees, graphs, arrows.meta, shapes.geometric, positioning}
-
-\usepackage[breakable]{tcolorbox}
-\tcbuselibrary{theorems}
-
-\newtcbtheorem[number within=chapter]{definisi}{Definisi}
-{breakable, colback=green!5,colframe=green!35!black,fonttitle=\bfseries}{def}
-
-\newtcbtheorem[number within=chapter]{teorema}{Teorema}
-{breakable, colback=blue!5,colframe=blue!35!black,fonttitle=\bfseries}{th}
-
-\newtcbtheorem[number within=chapter]{contoh}{Contoh}
-{breakable, colback=red!5,colframe=red!35!black,fonttitle=\bfseries}{ex}
-
-% header & footer
+\usepackage[a4paper,margin=2.5cm,headheight=15pt]{geometry}
+\usepackage{lmodern}
+\usepackage{parskip,enumitem,float,graphicx,caption}
+\usepackage{booktabs,array,tabularx,longtable,amsmath}
+\usepackage{xcolor,listings,tikz}
+\usetikzlibrary{arrows.meta,positioning,fit,backgrounds,calc}
+\usepackage{xurl}
+\usepackage[hidelinks]{hyperref}
 \usepackage{fancyhdr}
+\hypersetup{pdftitle={IF4031 M1 - Sistem Koordinasi Kebencanaan},pdfauthor={Kelompok nasgor}}
 \pagestyle{fancy}
 \fancyhf{}
-\fancyhead[L]{\small IF4031 - nasigoreng}
-\fancyhead[R]{\small \leftmark}
+\fancyhead[L]{\small IF4031 -- Kelompok nasgor}
+\fancyhead[R]{\small\nouppercase{\leftmark}}
 \fancyfoot[C]{\thepage}
-
-\usepackage[noabbrev, capitalize]{cleveref}
-\graphicspath{{images/}}
-
+\renewcommand{\chaptermark}[1]{\markboth{Bab \thechapter}{}}
+\setlength{\emergencystretch}{3em}
+\setlength{\tabcolsep}{5pt}
+\renewcommand{\arraystretch}{1.2}
+\setlist{nosep,topsep=5pt,leftmargin=*}
+\setcounter{tocdepth}{1}
+\definecolor{reportblue}{HTML}{224B68}
+\definecolor{codebg}{HTML}{F4F5F6}
+\lstset{basicstyle=\ttfamily\footnotesize,backgroundcolor=\color{codebg},breaklines=true,columns=fullflexible,keepspaces=true,showstringspaces=false,frame=single,rulecolor=\color{black!15},xleftmargin=4pt,xrightmargin=4pt,aboveskip=8pt,belowskip=8pt}
+\DeclareRobustCommand{\code}[1]{\nolinkurl{#1}}
+\newcolumntype{P}[1]{>{\raggedright\arraybackslash}p{#1}}
+\renewcommand{\tabularxcolumn}[1]{>{\raggedright\arraybackslash}p{#1}}
+\newcolumntype{Y}{>{\raggedright\arraybackslash}X}
 \renewcommand{\contentsname}{Daftar Isi}
 \renewcommand{\chaptername}{Bab}
 \renewcommand{\figurename}{Gambar}
 \renewcommand{\tablename}{Tabel}
 \renewcommand{\bibname}{Daftar Pustaka}
+\renewcommand{\appendixname}{Lampiran}
+\graphicspath{{images/}}

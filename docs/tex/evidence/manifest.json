@@ -1,0 +1,36 @@
+{
+  "report_snapshot": "64c03cf",
+  "report_date": "2026-10-09",
+  "evidence": [
+    {
+      "id": "E1",
+      "file": "mock-container-2026-09-30.json",
+      "original_source": ".cache/mock-container-test-results.json",
+      "sha256": "87925567706f2b79de8fe0a7b5c7cd1523a40f933b13cf590d0246f8fbbea03d"
+    },
+    {
+      "id": "E2",
+      "file": "auth-browser-2026-10-06.json",
+      "original_source": ".cache/auth-browser-test-results.json",
+      "sha256": "5ce5794d5992979e9ea5dd9d32e753ebcef953d71d38c59804e06e9f95ad973e"
+    },
+    {
+      "id": "E3",
+      "file": "aggregator-unit-2026-10-09.jsonl",
+      "original_source": ".cache/report-aggregator-tests.jsonl",
+      "sha256": "a921d2788885fdfc02acaac274966c00bdf7eb42ac33505c29ba75ab72383563"
+    }
+  ],
+  "verification_limits": [
+    "No current full-stack or k6 results were available for this report.",
+    "Historical Auth result used the former bridge API path, not the current Envoy/Go API path."
+  ],
+  "additional_attempts": [
+    {
+      "date": "2026-10-09",
+      "command": "node --test services/auth-bridge/test/auth.test.mjs",
+      "status": "test_cases_not_started",
+      "reason": "ERR_MODULE_NOT_FOUND: @opentelemetry/api; local Node dependencies incomplete"
+    }
+  ]
+}

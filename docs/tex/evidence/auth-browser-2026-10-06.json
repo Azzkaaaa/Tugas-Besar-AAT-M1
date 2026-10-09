@@ -1,0 +1,188 @@
+{
+  "tested_at": "2026-10-06T08:18:40.546Z",
+  "target": "http://localhost:8080",
+  "real_provider": true,
+  "complete": true,
+  "results": [
+    {
+      "name": "anonymous session denied",
+      "passed": true
+    },
+    {
+      "name": "MEDIA hosted login",
+      "passed": true
+    },
+    {
+      "name": "MEDIA authenticated role",
+      "passed": true
+    },
+    {
+      "name": "MEDIA session JSON hides tokens",
+      "passed": true
+    },
+    {
+      "name": "MEDIA private cookies",
+      "passed": true
+    },
+    {
+      "name": "MEDIA access cookie hidden from JavaScript",
+      "passed": true
+    },
+    {
+      "name": "MEDIA 60-second token lifetime",
+      "passed": true
+    },
+    {
+      "name": "MEDIA full-view authorization before unfinished backend",
+      "passed": true
+    },
+    {
+      "name": "MEDIA missing CSRF rejected",
+      "passed": true
+    },
+    {
+      "name": "MEDIA logout invalidates session",
+      "passed": true
+    },
+    {
+      "name": "MEDIA logout clears cookies",
+      "passed": true
+    },
+    {
+      "name": "MEDIA logout rejects bearer",
+      "passed": true
+    },
+    {
+      "name": "MEDIA provider requires login again",
+      "passed": true
+    },
+    {
+      "name": "FIELD_TEAM hosted login",
+      "passed": true
+    },
+    {
+      "name": "FIELD_TEAM authenticated role",
+      "passed": true
+    },
+    {
+      "name": "FIELD_TEAM session JSON hides tokens",
+      "passed": true
+    },
+    {
+      "name": "FIELD_TEAM private cookies",
+      "passed": true
+    },
+    {
+      "name": "FIELD_TEAM access cookie hidden from JavaScript",
+      "passed": true
+    },
+    {
+      "name": "FIELD_TEAM 60-second token lifetime",
+      "passed": true
+    },
+    {
+      "name": "FIELD_TEAM full-view authorization before unfinished backend",
+      "passed": true
+    },
+    {
+      "name": "FIELD_TEAM missing CSRF rejected",
+      "passed": true
+    },
+    {
+      "name": "automatic browser refresh without login",
+      "passed": true
+    },
+    {
+      "name": "automatic refresh rotates access token",
+      "passed": true
+    },
+    {
+      "name": "old bearer rejected after refresh",
+      "passed": true
+    },
+    {
+      "name": "expired access requires refresh",
+      "passed": true
+    },
+    {
+      "name": "naturally expired bearer rejected",
+      "passed": true
+    },
+    {
+      "name": "expired session recovers without password",
+      "passed": true
+    },
+    {
+      "name": "expired old bearer remains rejected after refresh",
+      "passed": true
+    },
+    {
+      "name": "SQLite session survives container restart",
+      "passed": true
+    },
+    {
+      "name": "FIELD_TEAM logout invalidates session",
+      "passed": true
+    },
+    {
+      "name": "FIELD_TEAM logout clears cookies",
+      "passed": true
+    },
+    {
+      "name": "FIELD_TEAM logout rejects bearer",
+      "passed": true
+    },
+    {
+      "name": "FIELD_TEAM provider requires login again",
+      "passed": true
+    },
+    {
+      "name": "BNPB_INTERNAL hosted login",
+      "passed": true
+    },
+    {
+      "name": "BNPB_INTERNAL authenticated role",
+      "passed": true
+    },
+    {
+      "name": "BNPB_INTERNAL session JSON hides tokens",
+      "passed": true
+    },
+    {
+      "name": "BNPB_INTERNAL private cookies",
+      "passed": true
+    },
+    {
+      "name": "BNPB_INTERNAL access cookie hidden from JavaScript",
+      "passed": true
+    },
+    {
+      "name": "BNPB_INTERNAL 60-second token lifetime",
+      "passed": true
+    },
+    {
+      "name": "BNPB_INTERNAL full-view authorization before unfinished backend",
+      "passed": true
+    },
+    {
+      "name": "BNPB_INTERNAL missing CSRF rejected",
+      "passed": true
+    },
+    {
+      "name": "BNPB_INTERNAL logout invalidates session",
+      "passed": true
+    },
+    {
+      "name": "BNPB_INTERNAL logout clears cookies",
+      "passed": true
+    },
+    {
+      "name": "BNPB_INTERNAL logout rejects bearer",
+      "passed": true
+    },
+    {
+      "name": "BNPB_INTERNAL provider requires login again",
+      "passed": true
+    }
+  ]
+}

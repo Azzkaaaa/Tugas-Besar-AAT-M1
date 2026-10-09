@@ -1,0 +1,113 @@
+{
+  "started_at": "2026-09-30T13:13:50.345128+00:00",
+  "transport": "HTTP to published Docker ports",
+  "restart_checks": true,
+  "results": [
+    {
+      "name": "public_health",
+      "status": "passed",
+      "duration_ms": 5.45,
+      "details": {}
+    },
+    {
+      "name": "seed_payloads_and_relationships",
+      "status": "passed",
+      "duration_ms": 2455.8,
+      "details": {
+        "seismic_events": 161,
+        "tsunami_warnings": 41,
+        "volcanic_reports": 162
+      }
+    },
+    {
+      "name": "authentication_isolation",
+      "status": "passed",
+      "duration_ms": 57.17,
+      "details": {
+        "rejected_requests": 7
+      }
+    },
+    {
+      "name": "validation_and_correlation",
+      "status": "passed",
+      "duration_ms": 899.15,
+      "details": {}
+    },
+    {
+      "name": "inclusive_timezone_filtering",
+      "status": "passed",
+      "duration_ms": 3997.18,
+      "details": {}
+    },
+    {
+      "name": "generation_and_schema_evolution",
+      "status": "passed",
+      "duration_ms": 8157.62,
+      "details": {
+        "new_earthquakes": 1,
+        "new_v2_reports": 1
+      }
+    },
+    {
+      "name": "outage_recovery_and_catchup",
+      "status": "passed",
+      "duration_ms": 13787.03,
+      "details": {
+        "reports_generated_during_outage": 1,
+        "outage_seconds": 10.64
+      }
+    },
+    {
+      "name": "response_latency_samples",
+      "status": "passed",
+      "duration_ms": 9606.22,
+      "details": {
+        "bmkg": {
+          "samples": 6,
+          "min_ms": 104.66,
+          "median_ms": 105.19,
+          "max_ms": 119.01
+        },
+        "pvmbg": {
+          "samples": 6,
+          "min_ms": 672.97,
+          "median_ms": 1642.1,
+          "max_ms": 2254.86
+        }
+      }
+    },
+    {
+      "name": "concurrent_request_isolation",
+      "status": "passed",
+      "duration_ms": 2673.14,
+      "details": {
+        "pvmbg_parallel_reads": 4,
+        "pvmbg_health_ms": 22.29,
+        "pvmbg_admin_ms": 17.8,
+        "bmkg_data_ms": 113.86
+      }
+    },
+    {
+      "name": "container_restart_persistence_and_isolation",
+      "status": "passed",
+      "duration_ms": 10078.28,
+      "details": {
+        "bmkg": {
+          "records_preserved": 165,
+          "other_service_health_checks": 14
+        },
+        "pvmbg": {
+          "records_preserved": 166,
+          "other_service_health_checks": 14
+        }
+      }
+    }
+  ],
+  "final_state": {
+    "health": "both ok",
+    "pvmbg_schema": 1,
+    "pvmbg_outage": false
+  },
+  "finished_at": "2026-09-30T13:14:42.155977+00:00",
+  "status": "passed"
+}

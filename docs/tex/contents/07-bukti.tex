@@ -1,0 +1,103 @@
+\chapter{Bukti dan Reproduksi Pengujian}\label{app:bukti}
+\section{Inventaris Bukti}
+Seluruh path pada laporan bersifat relatif terhadap root repository, kecuali path pada kolom berkas berikut yang relatif terhadap \code{docs/tex/evidence/}. Berkas hasil historis disalin apa adanya dari cache agar tidak hilang ketika cache lokal tidak diikutkan ke Git. Hash SHA-256 pada \code{evidence/manifest.json} dapat digunakan untuk memeriksa integritas salinan. Laporan ini tidak menyatakan bahwa semua kriteria penerimaan M1 telah lulus.
+
+\begin{longtable}{@{}P{.6cm}P{2.5cm}P{6.3cm}P{5.4cm}@{}}
+\toprule \textbf{ID} & \textbf{Waktu} & \textbf{Berkas dan hasil} & \textbf{Cakupan}\\\midrule\endhead
+E1 & 30 September 2026, 20:13--20:14 WIB & \code{mock-container-2026-09-30.json}; 10 pemeriksaan lulus. & HTTP ke port Docker kedua mock; termasuk restart. Tidak melewati Aggregator/BNPB API.\\
+E2 & 6 Oktober 2026, 15:18 WIB & \code{auth-browser-2026-10-06.json}; 45 pemeriksaan lulus. & Browser dan provider Zitadel nyata pada arsitektur sebelumnya; hasil tidak mewakili integrasi Envoy/API Gateway terbaru.\\
+E3 & 9 Oktober 2026, 08:33 WIB & \code{aggregator-unit-2026-10-09.jsonl}; ingest 7 dan auth 15 tes utama lulus. & Unit dan HTTP/JWKS server tes. Paket domain tidak memiliki tes. Subtest tidak dihitung ulang sebagai tes utama.\\\bottomrule
+\end{longtable}
+
+Dokumen testing lama menyebut 48 pemeriksaan pada versi gateway yang lebih baru, tetapi artefak JSON yang tersedia berisi 45 pemeriksaan pada versi sebelumnya. Laporan menggunakan angka dari artefak yang dapat diperiksa dan tidak menaikkan cakupannya berdasarkan narasi saja. Percobaan tes Auth bridge lokal pada 9 Oktober berhenti sebelum test case berjalan akibat paket \code{@opentelemetry/api} belum terpasang; status ini dicatat pada manifest sebagai kendala lingkungan.
+
+\section{Hasil Mock yang Direkam}
+\begin{table}[H]\small
+\begin{tabularx}{\textwidth}{@{}P{5.3cm}Y@{}}
+\toprule \textbf{Pemeriksaan E1} & \textbf{Hasil yang direkam}\\\midrule
+Health, kontrak payload, korelasi & Lulus; saat diperiksa ada 161 gempa, 41 warning, dan 162 laporan vulkanik. Angka ini mencakup data yang terus dibangkitkan, bukan ukuran seed awal.\\
+Isolasi autentikasi & Tujuh request tidak sah ditolak.\\
+Validasi, correlation ID, filter waktu & Lulus, termasuk batas \code{since} inklusif dan zona waktu.\\
+Generator dan perubahan skema & Satu gempa baru dan satu laporan v2 baru ditemukan.\\
+Outage dan pemulihan & Satu laporan dibangkitkan selama outage; durasi yang direkam 10,64 detik. Ini bukan uji outage 10--20 menit.\\
+Delay BMKG, 6 sampel & Minimum 104,66 ms; median 105,19 ms; maksimum 119,01 ms.\\
+Delay PVMBG, 6 sampel & Minimum 672,97 ms; median 1642,10 ms; maksimum 2254,86 ms.\\
+Isolasi request paralel & Empat pembacaan PVMBG paralel; health PVMBG 22,29 ms; admin 17,80 ms; data BMKG 113,86 ms.\\
+Persistensi setelah restart & BMKG mempertahankan 165 record dan PVMBG 166; 14 health check service lain berhasil pada masing-masing restart.\\\bottomrule
+\end{tabularx}
+\caption{Ringkasan angka nyata dari E1. Sampel kecil ini bukan benchmark P2.}
+\end{table}
+
+Cuplikan berikut diambil dari E1; nilainya bukan contoh hasil yang dikarang.
+\begin{lstlisting}
+"name": "generation_and_schema_evolution",
+"status": "passed",
+"details": {"new_earthquakes": 1, "new_v2_reports": 1}
+
+"final_state": {
+  "health": "both ok",
+  "pvmbg_schema": 1,
+  "pvmbg_outage": false
+}
+\end{lstlisting}
+
+\section{Hasil Auth dan Aggregator}
+E2 memuat tiga login hosted UI dengan role berbeda, cookie HttpOnly yang tidak terbaca JavaScript, masa token 60 detik, CSRF, logout, refresh otomatis tanpa login ulang, penolakan token lama, expiry alami, serta persistensi sesi setelah restart bridge. Beberapa nama pemeriksaan memuat frasa \emph{before unfinished backend}; hal ini menegaskan cakupannya masih pengamanan di depan backend yang saat itu belum lengkap. Respons API bisnis yang belum tersedia tidak boleh dihitung sebagai keberhasilan integrasi data.
+
+Contoh baris hasil E2 yang dapat ditelusuri dalam JSON:
+\begin{lstlisting}
+{"name": "automatic browser refresh without login", "passed": true}
+{"name": "naturally expired bearer rejected", "passed": true}
+{"name": "SQLite session survives container restart", "passed": true}
+\end{lstlisting}
+
+E3 adalah hasil eksekusi baru pada snapshot kode laporan. Ringkasan tes utama, tanpa menghitung ulang subtest:
+\begin{table}[H]\small
+\begin{tabularx}{\textwidth}{@{}P{2cm}P{1.8cm}Y@{}}
+\toprule \textbf{Paket} & \textbf{Hasil} & \textbf{Perilaku yang diuji}\\\midrule
+\code{ingest} & 7 lulus & Fetch BMKG/PVMBG, penolakan autentikasi sumber, severity gempa, warning tsunami, skema v1/v2 dan atribut tambahan, proyeksi Media/full.\\
+\code{auth} & 15 lulus & JWT dengan scope, prioritas claim, expiry, issuer salah, penolakan HS256, rotasi JWKS, token internal, placeholder, mode konfigurasi, provider unavailable dan pemulihan key.\\
+\code{domain} & Tidak ada tes & Paket berhasil dimuat dalam perintah, tetapi tidak memberikan bukti test case mandiri.\\\bottomrule
+\end{tabularx}
+\caption{Cakupan tes Aggregator aktual pada E3.}
+\end{table}
+
+\section{Perintah Reproduksi}
+Jalankan dari root repository kecuali diberi keterangan lain. Siapkan dependensi dan stack sebagaimana Bab 1. Jangan menganggap hasil \emph{skipped} sebagai lulus.
+
+\textbf{Tes mock Docker.} Setelah kedua mock berjalan, skrip berikut memeriksa HTTP dan restart, lalu memulihkan kontrol PVMBG. Hasil baru menggantikan artefak cache, bukan salinan historis laporan.
+\begin{lstlisting}
+python tools/test_mock_containers.py --restart-check
+\end{lstlisting}
+
+\textbf{Tes unit Aggregator.} Jalankan dari \code{services/aggregator}; tidak membutuhkan stack bisnis penuh. Hasil JSON dapat disimpan sebagai bukti baru.
+\begin{lstlisting}
+go test -json ./internal/ingest ./internal/domain ./internal/auth
+\end{lstlisting}
+
+\textbf{Tes Auth lokal dan browser.} Tes lokal memerlukan dependensi Node workspace yang terpasang. Untuk browser gunakan stack Zitadel yang sesuai dan ikuti prasyarat pada panduan Auth.
+\begin{lstlisting}
+npx nx run auth-bridge:test
+node tools/test_auth_browser.mjs
+\end{lstlisting}
+
+\textbf{Tes stack penuh.} Suite tidak menyalakan Docker secara otomatis. Setelah stack utama siap dan bootstrap menulis konfigurasi service user, aktifkan tes E2E pada PowerShell:
+\begin{lstlisting}
+$env:BNPB_E2E = "1"
+python -m unittest discover -s tests -p "test_e2e_*.py" -v
+Remove-Item Env:BNPB_E2E
+\end{lstlisting}
+
+Suite menguji jalur Envoy, token exchange, REST/gRPC, hazard dua sumber, SSE, webhook, serta notifikasi. Test tertentu dapat dilewati ketika data/prasyarat push belum tersedia; jumlah dan alasannya harus dicatat. Uji beban dan isolasi latensi mengikuti \code{docs/load-testing.md} dengan skrip \code{tests/load/aggregator.js} dan \code{tests/load/aggregator-isolation.js}.
+
+\section{Bukti yang Masih Harus Dilengkapi}
+\begin{longtable}{@{}P{1.4cm}P{6.1cm}P{7.3cm}@{}}
+\toprule \textbf{Bagian} & \textbf{Pengukuran atau demonstrasi} & \textbf{Artefak yang perlu disimpan}\\\midrule\endhead
+P1 & Toggle v1 ke v2 dengan stack tetap hidup dan hazard baru terlihat melalui API BNPB. & Respons sebelum/sesudah, correlation ID, serta identitas/start time container.\\
+P2 & Minimal 50 koneksi selama minimal 60 detik; isolasi BMKG saat PVMBG 3 detik; outage dan pulih tanpa restart. & Output k6 aktual, p50/p95/p99, throughput, jumlah request, error tidak terkendali, 429 terpisah, serta log status stale/unavailable.\\
+P3 & Tiga role melalui gateway saat ini, Media ditolak saat meminta raw/full, expiry alami, refresh, dan token lama ditolak. & Respons dengan token disembunyikan, waktu expiry/refresh, status HTTP, role, dan hasil browser/E2E terbaru.\\
+P4 & Stop/rebuild satu layanan tanpa menjatuhkan jalur independen; record skema lama/baru tetap terbaca tanpa perubahan DDL. & ID container, hasil health/akses sebelum/saat/sesudah, respons data, serta skema tabel.\\
+P5 & Event sama diterima minimal dua consumer; satu consumer dihentikan dan dihidupkan; consumer baru ditambahkan tanpa perubahan producer. & Log dengan \code{event_id} dan correlation ID yang sama, kedalaman queue, ack/redelivery, serta konfigurasi binding consumer tambahan.\\\bottomrule
+\end{longtable}
+
+Bagian ini adalah daftar kelengkapan bukti, bukan pengganti hasil penerimaan. Setelah pengujian benar-benar dijalankan, tambahkan artefak yang disanitasi ke direktori evidence, perbarui hasil pada bab terkait dan manifest, lalu kompilasi ulang PDF. Kontribusi anggota diisi manual pada \code{docs/tex/metadata.tex} sebelum pengumpulan.

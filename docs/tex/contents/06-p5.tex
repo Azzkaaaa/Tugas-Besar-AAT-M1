@@ -1,5 +1,219 @@
-\chapter{P5: Fan-out Event Distribution/Pub-sub}
+\chapter{P5: Distribusi Event}
+\label{chap:p5}
+
 \section{Rancangan Solusi}
-\section{Justifikasi Solusi}
+
+Aggregator memublikasikan perubahan hazard melalui exchange RabbitMQ bertipe
+fanout. Setiap consumer memiliki queue sendiri, sehingga satu publication
+disalin ke Event Live Feed, Webhook Provider, dan Danger Notification.
+Ketiga layanan dapat memproses publication yang sama untuk tujuan berbeda.
+Menempatkan ketiganya pada satu queue akan menghasilkan pembagian pekerjaan
+antar-consumer, bukan penyalinan event ke seluruh layanan.
+
+\begin{table}[htbp]
+    \centering
+    \small
+    \caption{Topologi distribusi event}
+    \begin{tabularx}{\textwidth}{@{}P{0.22\textwidth}X P{0.25\textwidth}@{}}
+        \toprule
+        \textbf{Komponen} & \textbf{Nama contoh/default} & \textbf{Peran} \\
+        \midrule
+        Exchange & \code{bnpb.hazards.v1} & Fanout durable. \\
+        Queue feed & \code{bnpb.event-live-feed.v1} & Event streaming dan replay. \\
+        Queue webhook & \code{bnpb.webhook-provider.v1} & Callback subscription. \\
+        Queue notification & \code{bnpb.danger-notification.v1} & Push SIAGA/AWAS. \\
+        DLQ per consumer & Nama layanan dengan akhiran \code{.dlq.v1} & Menampung pesan yang ditolak tanpa requeue. \\
+        \bottomrule
+    \end{tabularx}
+\end{table}
+
+Nama exchange dan queue berasal dari konfigurasi. Producer hanya
+mendeklarasikan exchange; tiap consumer mendeklarasikan queue durable,
+dead-letter queue, dan binding miliknya. Routing dead-letter menggunakan
+default exchange dengan routing key nama DLQ. Ketiga consumer menggunakan
+prefetch satu pesan dan acknowledgement manual. Pengaturan ini membatasi
+pesan yang belum diakui, tetapi juga membuat pekerjaan lambat dalam satu
+consumer menahan pekerjaan berikutnya pada consumer tersebut.
+
+Publication memakai envelope Protobuf \code{HazardEventPublished}, berisi
+\code{event_id}, \code{schema_version}, sumber, publisher, correlation ID,
+waktu publication, dan payload hazard kanonis. Implementasi saat ini
+menggunakan versi schema 1 dan publisher \code{aggregator}.
+\code{event_id} berupa UUID publication dan berbeda dari \code{hazard_id}
+yang stabil untuk satu referensi sumber. Pembentukan envelope dapat
+ditelusuri pada \code{services/aggregator/internal/ingest/mapper.go}.
+
+Alur penyimpanan dan publication menggunakan pola transactional outbox:
+\begin{enumerate}
+    \item Poller memetakan data sumber ke hazard kanonis, lalu membuka
+    transaksi PostgreSQL.
+    \item Upsert hazard dan penyisipan envelope ke \code{outbox_events}
+    menggunakan transaksi yang sama, kemudian transaksi di-commit.
+    \item Publisher mengambil paling banyak 20 publication pending
+    setiap 200 ms dan mengirim pesan persisten ke exchange.
+    \item Publisher menunggu publisher confirm dari broker sebelum
+    mengisi \code{published_at}. Kegagalan publish menaikkan retry record.
+    \item Pada batas retry, contoh konfigurasi lima percobaan, record
+    ditandai gagal dan disalin ke tabel \code{outbox_dead_letters}.
+\end{enumerate}
+
+Implementasi publisher terdapat pada
+\code{services/aggregator/internal/broker/publisher.go} dan
+\code{services/aggregator/internal/store/outbox_store.go}.
+Tabel dead-letter outbox merupakan state PostgreSQL producer, berbeda
+dari DLQ RabbitMQ masing-masing consumer. Kegagalan koneksi awal broker
+diulang setiap dua detik; retry koneksi tersebut bukan penghitung percobaan
+publish setiap record.
+
+Setiap consumer menentukan titik acknowledgement sesuai pekerjaannya:
+\begin{itemize}
+    \item \textbf{Event Live Feed} memvalidasi envelope, menambahkan event
+    ke replay buffer, lalu ack. ID yang masih berada dalam replay window
+    dideduplikasi. Envelope rusak atau tidak didukung langsung di-nack
+    tanpa requeue. Koneksi diulang dengan backoff 1--30 detik.
+    \item \textbf{Webhook Provider} mencari subscription yang sesuai filter,
+    memeriksa dedup, membentuk payload sesuai view, dan mengirim HTTP POST
+    dengan tanda tangan HMAC-SHA256 pada \code{X-BNPB-Signature}.
+    Hasil dicatat ke SQLite dan delivery sukses ditandai untuk dedup.
+    Default dispatcher melakukan lima percobaan dengan timeout 10 detik
+    per request serta jeda 1, 2, 4, dan 8 detik.
+    \item \textbf{Danger Notification} memproses envelope, memilih severity
+    SIAGA/AWAS, kemudian mengirim melalui topic FCM. Ack dilakukan setelah
+    pemrosesan berhasil. Parse error Protobuf langsung ditolak; error
+    lain memperoleh satu redelivery sebelum ditolak menuju DLQ.
+\end{itemize}
+
+Kode consumer berada pada
+\code{services/event-live-feed/src/adapters/inbound/rabbitmq.rs},
+\code{services/webhook-provider/internal/consumer/consumer.go}, dan
+\code{services/danger-notification/BNPB.Notification.Server/Adapters/Inbound/RabbitMqConsumer.cs}.
+Header trace dibawa melalui AMQP untuk menghubungkan span publish dan
+consume. Identitas publication membantu menelusuri satu event di beberapa
+consumer, sementara correlation ID menghubungkannya dengan putaran ingestion.
+
+\section{Justifikasi dan Alternatif}
+
+Fanout dipilih karena semua consumer menerima event hazard yang sama lalu
+melakukan filter atau proyeksi sesuai fungsi layanan. Producer tidak perlu
+mengetahui alamat callback maupun perangkat pengguna. Queue terpisah
+memungkinkan consumer yang berhenti menimbun backlog tanpa memaksa consumer
+lain berhenti memproses queue masing-masing, selama broker dan resource
+bersama masih tersedia.
+
+Alternatif panggilan HTTP langsung dari Aggregator ke setiap consumer
+mengurangi kebutuhan broker, tetapi menjadikan publisher bertanggung jawab
+atas timeout, retry, dan availability setiap tujuan. Alternatif exchange
+topic dapat mengurangi lalu lintas dengan routing menurut sumber atau jenis
+hazard; konsekuensinya ialah penambahan aturan routing dan kesepakatan key.
+Fanout mempertahankan topologi yang sederhana untuk tiga consumer saat ini.
+
+Alternatif log terdistribusi berbasis offset memberi retensi dan replay
+yang lebih panjang, tetapi memerlukan pengelolaan partition, offset, dan
+consumer group. Kebutuhan milestone dapat ditangani RabbitMQ dan outbox
+PostgreSQL. Keputusan ini tidak menyamakan queue dengan arsip event permanen:
+event yang telah di-ack tidak lagi menjadi backlog broker, dan replay feed
+memiliki retensi sendiri.
+
 \section{Batasan Solusi}
-\section{\textit{Proof-of-Concept}}
+
+Pada transport broker, persistent message, publisher confirm, manual ack,
+dan redelivery mendukung pola \emph{at-least-once} selama queue sudah terikat,
+state broker masih tersedia, dan pesan belum dihentikan oleh kebijakan retry
+atau DLQ. Confirm producer dan ack consumer mengonfirmasi tahap berbeda~\cite{rabbit}.
+Jaminan tersebut tidak sama dengan keberhasilan efek bisnis untuk setiap
+subscriber. Semantik sistem belum exactly-once. Publisher confirm dan penandaan
+\code{published_at} merupakan dua operasi berbeda, sehingga crash di
+antaranya dapat menyebabkan publication dikirim ulang. Demikian pula,
+keberhasilan HTTP/FCM dan acknowledgement broker tidak berada dalam
+transaksi yang sama. Mekanisme dedup harus dinilai per consumer:
+\begin{enumerate}
+    \item Feed hanya mendeduplikasi sepanjang replay window dalam memori.
+    Ack setelah append tidak berarti data tersimpan di disk; restart
+    menghapus replay dan himpunan dedup.
+    \item Webhook menyimpan dedup persisten per pasangan publication dan
+    subscription, tetapi crash setelah penerima menerima POST dan sebelum
+    penandaan dedup masih dapat menghasilkan pengiriman ulang. Penerima
+    juga perlu menangani duplikasi.
+    \item Notification belum menyimpan dedup publication atau riwayat
+    pengiriman. Redelivery setelah FCM menerima pesan masih dapat
+    menghasilkan push berulang.
+\end{enumerate}
+
+Retry webhook memiliki keterbatasan khusus: setelah seluruh percobaan HTTP
+gagal, consumer mengatur kegagalan pemrosesan dan melakukan nack dengan
+requeue. Belum ada batas total redelivery pada jalur tersebut. Dengan
+demikian, lima kegagalan dispatcher tidak otomatis memindahkan event ke
+DLQ. Komentar kode yang menyebut dispatch failure tidak menghalangi ack
+tidak sesuai dengan alur kondisi aktual; uraian laporan mengikuti alur
+yang dieksekusi.
+
+Pola outbox juga belum menutup semua jalur kegagalan aplikasi. Poller
+mengabaikan error pembentukan envelope dan hasil pemanggilan
+\code{EnqueueOutbox}. Transaksi SQL yang sama mendukung konsistensi ketika
+operasinya berhasil, tetapi belum cukup untuk menjanjikan bahwa setiap
+hazard pasti mempunyai publication pada seluruh jalur error. Pembaruan
+watermark dan publikasi berulang perlu diuji secara terpisah.
+
+Publication memakai \code{mandatory=false}; apabila queue consumer belum
+pernah dibuat dan diikat ketika pesan dipublikasikan, publisher confirm
+tidak membuktikan consumer tersebut memperoleh salinannya. Compose belum
+memasang volume broker secara eksplisit. Karena itu, label durable pada
+queue dan persistent pada pesan tidak cukup untuk menjanjikan pemulihan
+setelah container broker dibuat ulang. Pemeriksaan schema juga tidak
+seragam: feed memvalidasi publisher, ID, sumber, dan payload, sedangkan
+notification terutama bergantung pada parsing serta akses field yang dipakai.
+
+\section{Proof-of-Concept dan Keterlacakan}
+
+Pada snapshot 9 Oktober 2026 tersedia publisher, tiga consumer, kontrak
+event, serta skenario pengujian. Belum terdapat hasil pengujian fanout,
+redelivery, dan pemulihan menyeluruh terbaru yang dilampirkan. Bukti
+container mock historis tidak digunakan sebagai pengganti bukti
+RabbitMQ dan ketiga consumer.
+
+\begin{table}[htbp]
+    \centering
+    \small
+    \caption{Artefak pengujian dan batas cakupannya}
+    \begin{tabularx}{\textwidth}{@{}P{0.28\textwidth}X@{}}
+        \toprule
+        \textbf{Artefak} & \textbf{Cakupan yang dapat ditelusuri} \\
+        \midrule
+        \code{tests/test_e2e_feeds.py} & Penerimaan event SSE, filter seismic/volcanic, dan izin full view. \\
+        \code{tests/test_e2e_webhooks.py} & Lifecycle subscription, tanda tangan ping/event, serta pencatatan delivery. \\
+        \code{tests/test_e2e_notifications.py} & Pembacaan notification dan lifecycle token; tidak dengan sendirinya membuktikan dedup push. \\
+        Tes unit adapter consumer & Feed menguji validasi envelope; notification menguji keputusan requeue. Keberadaan tes bukan hasil eksekusi terbaru. \\
+        \bottomrule
+    \end{tabularx}
+\end{table}
+
+Untuk pembuktian yang dapat diulang, ketiga consumer harus dinyalakan lebih
+dahulu hingga queue dan binding tersedia. Catat satu \code{event_id} yang
+dipublikasikan Aggregator, lalu cocokkan penerimaan pada feed, log delivery
+webhook, dan pemrosesan notification. Gunakan hazard SIAGA/AWAS apabila
+observasi mencakup pengiriman FCM. Simpan hasil publisher confirm, ack,
+queue depth, dan trace terkait tanpa menyalin token atau secret.
+
+Skenario berikutnya menghentikan satu consumer setelah binding terbentuk,
+memublikasikan event, dan memeriksa bahwa consumer lain tetap memproses
+salinannya. Setelah consumer dinyalakan kembali, periksa backlog dan
+redelivery pada queue miliknya. Uji pesan tidak valid secara terpisah untuk
+memastikan arah DLQ. Uji replay \code{event_id} yang sama harus dibedakan
+dari upsert baru dengan \code{event_id} berbeda, karena keduanya mempunyai
+makna deduplikasi yang berbeda.
+
+Eksekusi E2E mengikuti \code{docs/e2e-testing.md}, dengan stack aktif dan
+\code{BNPB_E2E=1}. Hasil yang perlu dilengkapi mencakup penerimaan di tiga
+consumer, jumlah pengiriman ulang, perilaku DLQ, dan kehilangan replay saat
+restart feed. Sampai hasil tersebut direkam, status pembuktian P5 adalah
+mekanisme dan skenario tersedia, sedangkan keberhasilan integrasi serta
+karakteristik pemulihan terbaru belum diukur.
+
+Untuk menunjukkan penambahan consumer tanpa perubahan producer, buat queue
+pengamat baru dengan nama unik dan bind ke exchange fanout yang sama melalui
+RabbitMQ Management atau consumer uji. Setelah binding aktif, tunggu publication
+baru dan cocokkan \code{event_id} dengan minimal dua queue layanan yang sudah
+ada. Rekam konfigurasi binding, payload yang telah disanitasi, dan identitas
+container Aggregator yang tetap berjalan. Consumer baru menerima publication
+sejak binding dibuat, bukan otomatis seluruh sejarah sebelum berlangganan.
+Skenario ini belum dieksekusi sebagai bagian bukti laporan.
