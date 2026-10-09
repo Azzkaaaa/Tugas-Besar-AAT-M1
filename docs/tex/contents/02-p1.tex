@@ -1,5 +1,64 @@
-\chapter{P1: Arsitektur \& Interoperabilitas Data}
+\chapter[P1: Interoperabilitas Data]{P1: Arsitektur dan Interoperabilitas Data}
 \section{Rancangan Solusi}
-\section{Justifikasi Solusi}
+\subsection{Kontrak Sumber dan Akuisisi Data}
+BMKG menyediakan \code{GET /seismic-events} dan \code{GET /tsunami-warnings}; PVMBG menyediakan \code{GET /volcanic-reports}. Ketiganya menerima \code{since} ISO 8601 yang inklusif dan mengembalikan koleksi \code{items}. Aggregator tidak meminta sumber mengikuti satu skema baru. Adapter per sumber memahami format asli, mengambil data dengan HTTP, lalu mengubahnya menjadi \code{HazardEvent}. Kontrak sumber didokumentasikan dalam \code{contracts/openapi/bmkg.yaml} dan \code{contracts/openapi/pvmbg.yaml}; kontrak keluaran publik ada pada \code{contracts/openapi/gateway.yaml}.
+
+Kedua mock menggunakan SQLite file dengan kolom ID, waktu terindeks, dan payload JSON. Inisialisasi membuat tabel serta minimal 20 record ketika penyimpanan belum berisi data; seed tidak ditambahkan ulang pada setiap restart. Generator menambah satu event per interval, default 10 detik. BMKG memakai pola variasi berdasarkan indeks dan UUID untuk ID baru; tidak seluruh nilai gempa dibangkitkan acak. PVMBG memilih variasi laporan dengan bilangan acak, termasuk \code{confidence_level} ketika skema v2 aktif. Delay BMKG tetap, default 100 ms; delay PVMBG diambil acak antara 500--3000 ms. Sumber implementasi adalah \code{app.py}, \code{config.py}, dan \code{storage.py} pada direktori masing-masing mock.
+
+\subsection{Model Kanonik dan Pemetaan}
+\code{HazardEvent} memisahkan atribut lintas sumber dari rincian mentah. Tujuh field ringkasan adalah \code{hazard_id}, \code{source}, \code{hazard_type}, \code{severity}, \code{area_name}, \code{occurred_at}, dan \code{ingested_at}. Tampilan penuh menambahkan \code{source_ref_id}, \code{latitude}, \code{longitude}, serta \code{attributes}. BNPB memberikan ID kanonik dan waktu ingest saat menyimpan record. Unique key pasangan sumber dan ID asli menjaga identitas kanonik pada pengambilan berulang.
+
+\begin{table}[H]\small
+\begin{tabularx}{\textwidth}{@{}P{2.5cm}YY@{}}
+\toprule \textbf{Field kanonik} & \textbf{BMKG} & \textbf{PVMBG}\\\midrule
+\code{source} & BMKG & PVMBG\\
+\code{source_ref_id} & \code{event_id} & \code{report_id}\\
+\code{hazard_type} & SEISMIC & VOLCANIC\\
+\code{area_name} & \code{region_name} & Nama gunung dari referensi BNPB berdasarkan \code{volcano_id}.\\
+Koordinat & \code{epicenter_lat}, \code{epicenter_lon} & Koordinat referensi gunung statis.\\
+\code{occurred_at} & \code{occurred_at} & \code{reported_at}\\
+\code{severity} & Tingkat warning terkait; jika tidak ada, berdasarkan magnitudo. & Normal/Waspada/Siaga/Awas menjadi enum huruf kapital.\\
+\code{attributes} & Magnitudo, kedalaman, potensi tsunami, daftar warning, dan tambahan sumber. & Jumlah erupsi, tinggi kolom abu, ID gunung, confidence bila ada, dan tambahan sumber.\\\bottomrule
+\end{tabularx}
+\caption{Pemetaan ke model kanonik pada adapter Aggregator.}
+\end{table}
+
+\code{BMKGPoller} mengambil gempa serta warning melalui endpoint terpisah, lalu membentuk indeks warning menurut \code{related_event_id}. Warning dihubungkan ke \code{event_id} sebelum normalisasi. Jika terdapat lebih dari satu warning, tingkat terberat dipilih dengan urutan AWAS, SIAGA, WASPADA. Tanpa warning, magnitudo $m<5{,}0$ menghasilkan NORMAL, $5{,}0\leq m<6{,}5$ WASPADA, dan $m\geq6{,}5$ SIAGA. Rincian warning disimpan sebagai array \code{attributes.tsunami_warnings}, sehingga informasi korelasi tetap tersedia pada proyeksi penuh.
+
+Pemetaan PVMBG memakai \code{LookupVolcano} di \code{services/aggregator/internal/domain/volcano.go}. Implementasi menormalkan ID ke huruf kecil dan menerima awalan \code{v-}. Referensi memuat nama serta koordinat; dengan demikian mock tidak harus menambahkan field lokasi ke kontrak aslinya. Implementasi pemetaan kedua sumber berada di \code{services/aggregator/internal/ingest/mapper.go}.
+
+\subsection{Perubahan Skema saat Runtime}
+Operator mengirim \code{POST /admin/schema-version} dengan \verb|{"version":2}| pada PVMBG. Pengaturan ini memengaruhi laporan yang dibuat selanjutnya, tanpa restart. Laporan lama tetap tidak memiliki \code{confidence_level}; laporan baru menyimpan nilai tersebut dalam JSON SQLite. Mengembalikan versi menjadi 1 tidak menghapus field yang telah tersimpan pada laporan v2.
+
+Decoder Aggregator memiliki field \code{ConfidenceLevel} opsional sekaligus map \code{RawFields}. JSON dibaca menjadi struktur bertipe untuk field inti dan map untuk field tambahan. Field yang sudah dikenal dikeluarkan dari map, sedangkan field tidak dikenal diteruskan ke \code{attributes}. Kebijakan ini berlaku pada gempa, warning tsunami, dan laporan vulkanik. Nilai confidence yang tidak ada dibedakan dari nilai numerik 0. PostgreSQL menyimpan atribut dalam JSONB tanpa menambah kolom; kontrak internal membawa atribut melalui struktur dinamis Protobuf. Pemanfaatan JSONB ini sesuai kemampuan penyimpanan dan pemrosesan JSON pada PostgreSQL~\cite{postgres}.
+
+\section{Justifikasi dan Alternatif}
+Model kanonik menghindarkan klien dari keharusan memahami dua format, dua kredensial sumber, serta aturan korelasi tsunami. Adapter terpisah membuat perubahan pada satu sumber tidak harus merombak API publik. Alternatif meneruskan payload mentah apa adanya lebih singkat untuk dibuat, tetapi setiap klien harus menduplikasi pemetaan dan pemisahan akses Media.
+
+Struktur inti bertipe dengan map tambahan dipilih sebagai kompromi. Deserialisasi sangat ketat yang menolak semua field baru dapat menghentikan ingest ketika confidence mulai muncul. Sebaliknya, map bebas untuk seluruh record memindahkan kesalahan tipe dan field wajib ke tahap yang lebih jauh. Implementasi saat ini mempertahankan tipe inti dan menggunakan map untuk perubahan aditif. Field tambahan dapat ditelusuri kembali dalam proyeksi penuh, tanpa memperluas tujuh field ringkasan Media.
+
+Polling mengikuti spesifikasi dan memudahkan pengujian sumber yang tidak menyediakan push. Watermark mengurangi pengambilan data berulang, sementara upsert melindungi identitas record. Konsekuensinya, data yang terlihat klien tertinggal setidaknya selama waktu tunggu polling dan pemrosesan; sistem ini bukan integrasi real-time dengan jaminan keterlambatan nol.
+
 \section{Batasan Solusi}
-\section{\textit{Proof-of-Concept}}
+\begin{itemize}
+\item Dukungan perubahan aditif tidak otomatis menangani rename, penghapusan field wajib, atau perubahan tipe, misalnya \code{magnitude} menjadi objek. Perubahan semantik tersebut memerlukan pembaruan adapter dan kontrak.
+\item Field yang tidak dikenal diteruskan, tetapi tidak otomatis dipahami secara bisnis. Penambahan nama yang bertabrakan dengan key atribut hasil normalisasi perlu kebijakan validasi yang lebih tegas.
+\item ID gunung yang tidak ditemukan menggunakan ID asli sebagai nama area dan koordinat 0,0. Nilai ini merupakan fallback implementasi, bukan koordinat valid yang sudah diverifikasi.
+\item Fetch warning BMKG dilakukan setelah fetch gempa. Error warning saat ini diabaikan, sehingga kejadian dapat dipetakan berdasarkan magnitudo tanpa pengayaan tsunami. Pembaruan warning untuk gempa yang sudah melewati watermark juga belum mempunyai alur pembaruan mandiri.
+\item JSONB tidak menghilangkan kebutuhan validasi domain. Data tidak lengkap dan enum tidak dikenal belum memiliki karantina ingest yang menyeluruh.
+\end{itemize}
+
+\section{Proof-of-Concept dan Keterlacakan}
+Pada 9 Oktober 2026 dijalankan tes paket Aggregator dengan \code{go test -json ./internal/ingest ./internal/domain ./internal/auth}. Tujuh tes tingkat utama paket ingest lulus, mencakup fetch HTTP kedua sumber, penolakan kredensial, pemetaan magnitudo, korelasi warning, evolusi skema, dan proyeksi data. Paket domain tidak memiliki test case dan tidak dihitung sebagai tes lulus. Rekaman ada dalam bukti E3 pada Lampiran~\ref{app:bukti}.
+
+\begin{table}[H]\small
+\begin{tabularx}{\textwidth}{@{}P{3.5cm}YY@{}}
+\toprule \textbf{Kriteria} & \textbf{Bukti tersedia} & \textbf{Batas kesimpulan}\\\midrule
+Pemetaan dua sumber & E3: tes mapping gempa/warning dan vulkanik lulus; \code{mapper_test.go}. & Membuktikan fungsi dengan input tes, belum seluruh alur Docker.\\
+Skema v1/v2 dan field tambahan & E3: \code{TestMapPVMBGToHazard_SchemaEvolution}; E1: satu laporan v2 baru ditemukan saat kontrol runtime diubah. & E1 menguji mock; tes unit menguji mapper. Demo kontinu melalui gateway belum direkam.\\
+Proyeksi kanonik & E3: \code{TestProjection_MediaVsFull} lulus. & Perlu E2E untuk mengikat proyeksi dengan role dan respons REST sesungguhnya.\\\bottomrule
+\end{tabularx}
+\caption{Bukti P1 yang tersedia dan batas cakupannya.}
+\end{table}
+
+Untuk melengkapi demo runtime, jalankan stack utama pada skema v1, rekam satu respons hazard vulkanik penuh beserta ID dan waktu ingest, ubah skema menjadi v2, lalu tunggu generator dan polling. Verifikasi hazard baru memiliki \code{attributes.confidence_level}, record lama tetap dapat dibaca, dan ID/start time container mock serta Aggregator tidak berubah. Request admin harus membawa bearer PVMBG dari konfigurasi lokal. Kembalikan skema ke v1 setelah demo. Simpan respons yang sudah disanitasi, correlation ID, serta log terkait; skenario ini belum diberi status lulus pada laporan.

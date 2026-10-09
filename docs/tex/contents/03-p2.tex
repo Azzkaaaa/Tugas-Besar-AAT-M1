@@ -1,5 +1,201 @@
-\chapter{P2: Concurrency, Availability, \& Graceful Degradation}
+\chapter{P2: Konkurensi dan Ketersediaan}
+\label{chap:p2}
+
 \section{Rancangan Solusi}
-\section{Justifikasi Solusi}
+
+Sistem memisahkan pengambilan data sumber dari pelayanan permintaan pengguna.
+Aggregator menjalankan poller BMKG dan PVMBG sebagai dua goroutine independen,
+sementara layanan gRPC membaca data kanonis di PostgreSQL. Publisher outbox
+berjalan pada goroutine lain. Pemisahan ini terlihat pada
+\code{services/aggregator/cmd/main.go}. Dengan demikian, keterlambatan PVMBG
+memengaruhi waktu pembaruan data PVMBG, bukan menambahkan waktu tunggu upstream
+ke setiap pembacaan BMKG. Permintaan pengguna tetap bergantung pada kapasitas
+gateway, autentikasi, Aggregator, dan database yang dipakai bersama.
+
+Setiap poller melakukan pengambilan awal, kemudian mengulangi polling menurut
+interval masing-masing. HTTP client memiliki timeout per sumber dan menerima
+context untuk pembatalan saat layanan berhenti. Dalam satu poller, satu putaran
+diselesaikan sebelum putaran berikutnya diproses; implementasi tidak membuat
+goroutine baru tanpa batas pada setiap tick. BMKG mengambil seismic event lalu
+peringatan tsunami secara berurutan, sedangkan PVMBG mengambil laporan vulkanik.
+Implementasi berada pada \code{services/aggregator/internal/ingest/bmkg.go} dan
+\code{services/aggregator/internal/ingest/pvmbg.go}.
+
+\begin{table}[htbp]
+    \centering
+    \small
+    \caption{Parameter konkurensi dan kesegaran data}
+    \begin{tabularx}{\textwidth}{@{}P{0.30\textwidth}P{0.18\textwidth}X@{}}
+        \toprule
+        \textbf{Parameter} & \textbf{Nilai acuan} & \textbf{Makna} \\
+        \midrule
+        Interval polling kedua sumber & 3.000 ms & Contoh konfigurasi di \code{.env.example}. \\
+        Timeout BMKG / PVMBG & 1.000 / 3.500 ms & Batas setiap request HTTP upstream, bukan target latensi API. \\
+        Ambang stale & 10.000 ms & Acuan usia keberhasilan pengambilan sumber. \\
+        Timeout unary gateway & 2.000 ms & Default deadline panggilan backend. \\
+        Permintaan unary aktif & 100 & Default kapasitas semaphore gateway; stream dikecualikan. \\
+        Koneksi PostgreSQL & 5--25 & Minimum dan maksimum pool Aggregator. \\
+        \bottomrule
+    \end{tabularx}
+\end{table}
+
+Setiap sumber mempunyai watermark, waktu keberhasilan terakhir, waktu percobaan
+terakhir, dan pesan kegagalan. Setelah fetch berhasil, data dinormalisasi dan
+disimpan sebelum watermark dimajukan. Pada kegagalan, data sebelumnya tidak
+dihapus dan watermark keberhasilan dipertahankan. Pada pembacaan API,
+\code{services/aggregator/internal/domain/status.go} menghitung status berikut:
+\begin{itemize}
+    \item \textbf{FRESH}: keberhasilan terakhir masih dalam ambang waktu dan
+    tidak ada error sumber yang tercatat.
+    \item \textbf{STALE}: sumber gagal atau terlalu lama tidak berhasil,
+    tetapi data kanonis sumber tersebut masih tersedia.
+    \item \textbf{UNAVAILABLE}: tidak tersedia data tersimpan untuk digunakan
+    ketika sumber belum berhasil atau tidak dapat diperbarui.
+\end{itemize}
+
+Respons hazard tetap membawa item yang tersedia beserta metadata
+\code{freshness}. Nilai \code{partial=true} diberikan apabila sumber yang
+relevan dengan permintaan tidak fresh. Filter sumber membatasi pemeriksaan
+kesegaran pada sumber tersebut. Mekanisme ini membedakan kondisi tidak ada
+peristiwa dari sumber yang belum dapat memberikan data, sekaligus memungkinkan
+klien menampilkan usia data. Pembentukan respons ada pada
+\code{services/aggregator/internal/grpc/server.go}; penyimpanan watermark ada
+pada \code{services/aggregator/internal/store/hazard_store.go}.
+
+Gateway juga membatasi permintaan unary aktif dengan channel berkapasitas
+tetap. Ketika penuh, permintaan ditolak dengan respons overload sesuai kontrak,
+umumnya HTTP 429, dan \code{Retry-After}. Deadline unary membatasi waktu tunggu
+backend. Pembatas ini bukan pembatas laju per pengguna dan tidak menghitung
+stream SSE yang berumur panjang. Kode terkait adalah
+\code{services/api-gateway/internal/server/server.go},
+\code{services/api-gateway/internal/config/config.go}, dan
+\code{services/api-gateway/internal/problem/problem.go}.
+
+\section{Justifikasi dan Alternatif}
+
+Polling independen dipilih karena data kebencanaan dikumpulkan secara berkala
+dan dapat dilayani dari penyimpanan kanonis. Pengguna memperoleh respons dari
+satu bentuk data meskipun kedua sumber memiliki latensi serta skema berbeda.
+Biaya keputusan ini adalah jeda antara perubahan upstream dan kemunculannya
+pada API. Karena itu, freshness merupakan bagian dari kontrak respons, bukan
+sekadar informasi log.
+
+Alternatif pertama ialah melakukan dua panggilan upstream secara serial pada
+setiap request. Pendekatan tersebut sederhana, tetapi latensi sumber terakumulasi
+dan gangguan satu sumber langsung memengaruhi request pengguna. Alternatif kedua
+ialah fan-out paralel per request dengan deadline terpisah. Pendekatan kedua
+mengurangi penjumlahan waktu tunggu, tetapi tetap menambah beban upstream
+sebanding dengan jumlah pengguna dan memerlukan fallback tersendiri.
+
+Penyimpanan kanonis dengan polling mengurangi keterikatan tersebut, dengan
+konsekuensi kapasitas database menjadi sumber daya bersama. Pool koneksi dan
+batas unary gateway menahan pertumbuhan pekerjaan aktif. Penggunaan circuit
+breaker atau penjadwal polling terdistribusi dapat menjadi pengembangan
+berikutnya, tetapi keduanya belum menjadi mekanisme yang digunakan pada
+implementasi ini.
+
 \section{Batasan Solusi}
-\section{\textit{Proof-of-Concept}}
+
+Isolasi pada tingkat goroutine tidak menjamin isolasi CPU, memori, database,
+atau autentikasi. Permintaan BMKG dan PVMBG tetap melewati komponen bersama.
+Kegagalan PostgreSQL tidak dapat ditutupi oleh fallback memori karena jalur
+baca kanonis masih membutuhkan database. Compose juga belum memberikan bukti
+failover beberapa replika Aggregator atau database.
+
+Status kesegaran BMKG terutama mengikuti keberhasilan seismic event. Error
+pengambilan peringatan tsunami saat ini diabaikan oleh poller, sehingga
+kegagalan pengayaan tsunami belum selalu muncul sebagai status stale.
+Selain itu, pembaruan watermark dilakukan sesudah transaksi data selesai,
+bukan di dalam transaksi yang sama. Restart pada sela kedua operasi dapat
+menyebabkan data diambil kembali; kestabilan identitas hazard membantu menjaga
+baris kanonis, tetapi tidak membuktikan tidak ada publication berulang.
+
+Nilai timeout, kapasitas pool, serta semaphore merupakan konfigurasi atau
+mekanisme yang ditemukan pada kode. Nilai tersebut tidak membuktikan target
+p95, throughput, maupun tingkat availability tertentu tanpa pengukuran.
+Tidak ada hasil uji beban gateway terbaru yang dilampirkan untuk snapshot
+laporan 9 Oktober 2026.
+
+\section{Proof-of-Concept dan Keterlacakan}
+
+Bukti historis container pada 30 September 2026 disimpan dalam
+\code{docs/tex/evidence/mock-container-2026-09-30.json}. Catatan tersebut memuat
+10 pemeriksaan berhasil pada lingkup mock. Pengukuran langsung BMKG ketika
+empat request PVMBG berjalan paralel tercatat 113,86 ms; pemeriksaan health dan
+admin PVMBG tercatat masing-masing 22,29 ms dan 17,80 ms. Angka ini menunjukkan
+perilaku pada skenario mock yang dicatat, bukan p95 gateway atau hasil
+50 pengguna selama 60 detik.
+
+\begin{table}[htbp]
+    \centering
+    \small
+    \caption{Status pembuktian P2 pada snapshot laporan}
+    \begin{tabularx}{\textwidth}{@{}P{0.25\textwidth}X P{0.20\textwidth}@{}}
+        \toprule
+        \textbf{Skenario} & \textbf{Target atau cakupan} & \textbf{Hasil} \\
+        \midrule
+        Konkurensi mock & Request BMKG bersamaan dengan empat request PVMBG & Bukti historis tersedia. \\
+        Beban API lengkap & 50 VU, 60 detik; error tidak terkendali di bawah 1\%. Skrip juga menetapkan p95 di bawah 2 detik & Belum diukur. \\
+        Isolasi melalui gateway & PVMBG ditunda 3 detik; p95 grup BMKG di bawah 300 ms & Belum diukur. \\
+        Degradasi sumber & Data lama tetap terbaca dengan freshness yang sesuai & Mekanisme tersedia; hasil terbaru belum dilampirkan. \\
+        \bottomrule
+    \end{tabularx}
+\end{table}
+
+Repositori menyediakan skenario yang dapat diulang pada
+\code{tests/load/aggregator.js} dan
+\code{tests/load/aggregator-isolation.js}, dengan petunjuk pada
+\code{docs/load-testing.md}. Prosedur pembuktian yang direncanakan adalah:
+\begin{enumerate}
+    \item Jalankan stack yang telah diprovisikan, pastikan akun layanan tersedia
+    pada \code{.cache/auth/}, dan buat direktori \code{.cache/load/}.
+    Jalankan \code{k6 run tests/load/aggregator.js} dari root repositori.
+    Defaultnya adalah pemanasan 10 detik, lalu 50 VU selama 60 detik.
+    Campuran request adalah 60\% daftar, 30\% detail, dan 10\% status sumber.
+    Hanya fase beban dihitung; kegagalan pengambilan token dicatat terpisah.
+    \item Untuk isolasi, tetapkan
+    \code{PVMBG_RESPONSE_DELAY_MIN_MS} dan
+    \code{PVMBG_RESPONSE_DELAY_MAX_MS} menjadi 3000, lalu buat ulang
+    \code{pvmbg-mock} sebagaimana panduan. Jalankan
+    \code{k6 run tests/load/aggregator-isolation.js}. Setup memeriksa tiga
+    request langsung ke mock dan membatalkan pengujian bila median delay
+    kurang dari 2900 ms.
+    \item Bandingkan fase baseline 30 detik dengan fase kontensi 60 detik,
+    setelah pemanasan 5 detik. Kedua fase menggunakan 10 VU BMKG yang diukur
+    dan 10 VU kelompok kedua; kelompok kedua beralih dari BMKG ke PVMBG.
+    Simpan p50/p95/p99, error, throughput, ringkasan JSON, dan jendela waktu
+    untuk pencocokan trace. Pulihkan konfigurasi delay setelah selesai.
+\end{enumerate}
+
+Latensi yang diukur skrip tersebut mencakup Envoy, token exchange, gateway,
+RPC, dan pembacaan database. Hasilnya harus dilaporkan sebagai latensi jalur API
+lengkap. Keberadaan skrip, threshold, dan instrumen observabilitas merupakan
+keterlacakan rancangan pengujian; belum merupakan hasil eksekusi pengujian.
+
+Untuk menilai batas error spesifikasi, HTTP 429 yang merupakan backpressure
+terkendali dilaporkan terpisah dari error tidak terkendali. Pada fase beban,
+catat jumlah request API $N$, jumlah 429 $N_{429}$, dan kegagalan lain
+$N_{\mathrm{err}}$; laporkan $100N_{\mathrm{err}}/N$ serta
+$100N_{429}/N$. Denominator dan definisi kegagalan harus dicantumkan agar
+angka dapat diperiksa. Threshold error bawaan skrip masih menghitung 429,
+sehingga lebih ketat daripada penghitungan penerimaan yang mengecualikannya.
+Hasil token endpoint tidak dicampur ke persentil request API.
+
+\begin{table}[htbp]\centering\small
+\caption{Format hasil beban yang belum diisi dengan pengukuran}
+\begin{tabularx}{\textwidth}{@{}P{.36\textwidth}XX@{}}
+\toprule \textbf{Metrik} & \textbf{Beban 50 VU / 60 detik} & \textbf{BMKG saat PVMBG 3 detik}\\\midrule
+Jumlah request / throughput & Belum diukur & Belum diukur\\
+p50 / p95 / p99 & Belum diukur & Belum diukur\\
+Error tidak terkendali / 429 & Belum diukur & Belum diukur\\\bottomrule
+\end{tabularx}
+\end{table}
+
+Untuk demo outage, catat respons awal kedua jenis hazard, aktifkan
+\code{/admin/outage} PVMBG, lalu ulangi request BMKG-only dan volcanic.
+Data vulkanik terakhir harus tetap dapat dibaca dengan
+\code{stale_since}, atau status unavailable dinyatakan bila data belum ada.
+Pertahankan gangguan selama durasi demo yang dipilih, rekam log dan waktu
+percobaan, kemudian nonaktifkan outage dan tunggu poller pulih tanpa restart.
+Bukti mock historis hanya mencakup 10,64 detik, sehingga tidak membuktikan
+skenario outage panjang maupun perilaku fallback API BNPB.

@@ -1,71 +1,54 @@
-\documentclass{report}
+\documentclass[11pt,a4paper]{report}
 \input{preamble}
-
-\hypersetup{
-    colorlinks=true,
-    linkcolor=black,
-    filecolor=magenta,
-    urlcolor=cyan,
-    pdftitle={Tugas Besar IF4031 Arsitektur Aplikasi Terdistribusi},
-}
-\hypersetup{pageanchor=false}
+\input{metadata}
 \begin{document}
-
+\hypersetup{pageanchor=false}
 \begin{titlepage}
-    \centering
-
-    \Large \textsf{Tugas Besar IF4031 Arsitektur Aplikasi Terdistribusi} \\
-    \vspace{1.5cm}
-
-    \huge \textbf{systemname \\ Sistem Koordinasi Kebencanaan} \\
-    \vspace{1.5cm}
-
-    \includegraphics[width=0.4\textwidth]{cover.jpeg} \\
-    \vspace{1.5cm}
-
-    \large \textit{Disusun oleh: nasgor} \\
-    \vspace{0.5cm}
-
-    \begin{tabular}{r l}
-        Muhammad Aulia Azka & 13523137 \\
-        Arlow Emmanuel Hergara & 13523161 \\
-        Fachriza Ahmad Setiyono & 13523162
-    \end{tabular}
-
-    \vfill
-
-    \large
-    Program Studi Teknik Informatika \\
-    Sekolah Teknik Elektro dan Informatika \\
-    Institut Teknologi Bandung \\
-    2026
+\centering
+{\Large Tugas Besar IF4031\\[0.2cm]Arsitektur Aplikasi Terdistribusi\par}
+\vspace{2.4cm}
+{\Huge\bfseries \NamaSistem\par}
+\vspace{0.8cm}
+{\Large Laporan Milestone 1\par}
+\vspace{1cm}
+\rule{0.68\textwidth}{0.5pt}
+\vspace{1cm}
+{\large Kelompok \textbf{\NamaKelompok}\par}
+\vspace{0.6cm}
+\begin{tabular}{ll}
+Muhammad Aulia Azka & 13523137\\
+Arlow Emmanuel Hergara & 13523161\\
+Fachriza Ahmad Setiyono & 13523162
+\end{tabular}
+\vfill
+{\large Program Studi Teknik Informatika\\
+Sekolah Teknik Elektro dan Informatika\\
+Institut Teknologi Bandung\\[0.5cm]
+\TanggalLaporan\par}
 \end{titlepage}
-
-\pagenumbering{roman}
-\begin{table}[H]
-    \centering
-    \small
-    \begin{tabular}{@{} p{2.5cm} p{4.5cm} p{4.5cm} @{} }
-        \toprule
-        \textbf{NIM} & \textbf{Nama} & \textbf{Kontribusi} \\ \midrule
-        \textbf{13523137} & Muhammad Aulia Azka & test \\ \midrule
-        \textbf{13523161} & Arlow Emmanuel Hergara & bsea \\ \midrule
-        \textbf{13523162} & Fachriza Ahmad Setiyono & Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum.
-        \\ \bottomrule
-    \end{tabular}
-    \caption{Tabel Kontribusi}
-\end{table}
-\tableofcontents
-\newpage
-
 \hypersetup{pageanchor=true}
+\pagenumbering{roman}
+\chapter*{Kontribusi Anggota}
+\addcontentsline{toc}{chapter}{Kontribusi Anggota}
+\begin{tabularx}{\textwidth}{@{}P{2.0cm}P{4.1cm}Y@{}}
+\toprule
+\textbf{NIM} & \textbf{Nama} & \textbf{Kontribusi}\\\midrule
+13523137 & Muhammad Aulia Azka & \KontribusiAzka\\\addlinespace
+13523161 & Arlow Emmanuel Hergara & \KontribusiArlow\\\addlinespace
+13523162 & Fachriza Ahmad Setiyono & \KontribusiFachriza\\\bottomrule
+\end{tabularx}
+\vspace{1cm}
+Kontribusi diisi manual oleh anggota agar pembagian perancangan, implementasi, dan penulisan mencerminkan pekerjaan yang benar-benar dilakukan.
+\tableofcontents
+\clearpage
 \pagenumbering{arabic}
-
-\input{contents/01-sistem.tex}
-\input{contents/02-p1.tex}
-\input{contents/03-p2.tex}
-\input{contents/04-p3.tex}
-\input{contents/05-p4.tex}
-\input{contents/06-p5.tex}
-
+\input{contents/01-sistem}
+\input{contents/02-p1}
+\input{contents/03-p2}
+\input{contents/04-p3}
+\input{contents/05-p4}
+\input{contents/06-p5}
+\appendix
+\input{contents/07-bukti}
+\input{references}
 \end{document}

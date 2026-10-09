@@ -1,5 +1,74 @@
-\chapter{P3: Service-to-Service Authentication \& Trust}
+\chapter[P3: Autentikasi dan Trust]{P3: Autentikasi, Otorisasi, dan Trust}
 \section{Rancangan Solusi}
-\section{Justifikasi Solusi}
+\subsection{Pemisahan Domain Kepercayaan}
+BMKG menerima API key melalui \code{X-BMKG-Key}; PVMBG menerima token opaque melalui \code{Authorization: Bearer}. Keduanya memvalidasi secret milik sendiri. Endpoint data dan kontrol PVMBG terlindungi, sedangkan health dapat dipakai tanpa kredensial. Aggregator mengirim header yang sesuai pada adapter sumber; kredensial pengguna BNPB tidak diteruskan ke mock.
+
+Helper \code{tools/setup_mock_env.py} membuat dua nilai acak berbeda dengan generator secret, menolak penggunaan nilai sama, dan mempertahankan secret yang sudah valid. Helper hanya memprovisikan konfigurasi; layanan dapat dijalankan tanpa helper bila environment sudah diisi. SQLite menyimpan data mock, bukan menjadi sumber API key. Seorang anggota tim yang menyiapkan environment sendiri memperoleh secret lokal sendiri dan harus menyamakan konfigurasi pemanggil serta penerima pada instalasinya.
+
+Untuk pengguna, Zitadel menjadi identity provider sekaligus authorization server. OIDC memberikan identitas login melalui ID token; OAuth menyediakan access token untuk akses API~\cite{oidc}. Akun \code{media-demo}, \code{lapangan-demo}, dan \code{bnpb-demo} mempunyai subject dan kredensial terpisah di PostgreSQL Zitadel. Bootstrap mengatur role, grant, aplikasi OIDC, serta TTL access token default 60 detik. Akun service untuk tes API juga diprovisikan terpisah. SQLite Auth bridge hanya menyimpan sesi dan transaksi login.
+
+\subsection{Login, Cookie, dan Pemanggilan API}
+Alur login menggunakan Authorization Code dengan PKCE S256. PKCE mengikat pertukaran authorization code dengan verifier transaksi, sehingga kepemilikan code saja tidak cukup untuk menukarnya~\cite{pkce}.
+\begin{enumerate}
+\item Browser membuka \code{/auth/login}. Bridge membuat state, nonce, verifier PKCE, dan cookie transaksi, lalu mengarahkan pengguna ke hosted Login UI Zitadel. Password dikirim ke provider.
+\item Callback memvalidasi transaksi browser dan menukar authorization code. Library \code{openid-client} memeriksa ID token, issuer, audience, nonce, serta masa berlaku. Introspeksi access token harus menghasilkan identitas aktif dengan audience project dan role/scope yang dikenal.
+\item Bridge menyimpan refresh token serta payload sesi dalam SQLite yang dienkripsi AES-256-GCM. Browser memperoleh cookie \code{bnpb_access} berisi access token opaque asli dan \code{bnpb_session} berisi ID sesi acak.
+\item Kedua cookie bersifat HttpOnly, SameSite=Lax, host-only, dan Path=/; Secure diaktifkan pada HTTPS. Respons \code{/auth/session} hanya mengembalikan profil, scope, expiry, dan CSRF token. Token akses/refresh tidak dimasukkan ke JSON ataupun penyimpanan JavaScript.
+\item Untuk \code{/api/*}, filter Lua Envoy memindahkan access cookie menjadi header bearer dan menghapus cookie sebelum meneruskan request. Campuran bearer eksplisit dan cookie Auth ditolak agar sumber kredensial tidak ambigu.
+\item Filter token exchange Envoy menggunakan confidential client ke Zitadel dan meminta JWT melalui mekanisme RFC 8693~\cite{exchange}. JWT diteruskan melalui API Gateway sebagai metadata otorisasi gRPC. Service bisnis memverifikasi token dan memeriksa izin method.
+\end{enumerate}
+
+Target Rust \code{zitadel-claims} menerima hook Actions v2 sebelum pembentukan access token dan userinfo/introspeksi. Target memeriksa signature HMAC-SHA256 beserta timestamp panggilan dari Zitadel, lalu membentuk \code{role} dan \code{scopes} dari grant pada project/organisasi yang diizinkan. Claim tidak ditentukan oleh input role di frontend. Target ini tidak dibuka sebagai endpoint publik pada Envoy.
+
+\subsection{Hak Akses dan Pembatasan Data}
+\begin{table}[H]\small
+\begin{tabularx}{\textwidth}{@{}P{3cm}YYY@{}}
+\toprule \textbf{Hak akses} & \textbf{MEDIA} & \textbf{FIELD\_TEAM} & \textbf{BNPB\_INTERNAL}\\\midrule
+Hazard ringkasan & Diizinkan & Diizinkan & Diizinkan\\
+Hazard penuh/mentah & Ditolak & Diizinkan & Diizinkan\\
+Baca notifikasi & Diizinkan & Diizinkan & Diizinkan\\
+Baca webhook & Diizinkan sesuai kepemilikan & Diizinkan sesuai kepemilikan & Diizinkan sesuai kepemilikan\\
+Buat/ubah webhook & Ditolak & Diizinkan & Diizinkan\\\bottomrule
+\end{tabularx}
+\caption{Scope role yang dibentuk oleh target Actions. Pemeriksaan izin berada pada backend.}
+\end{table}
+
+Untuk hazard, Aggregator menolak permintaan \code{VIEW_FULL} tanpa \code{hazards:read:full}. Proyeksi summary hanya memuat tujuh field ringkasan Bab 2; koordinat, referensi asli, dan attributes tidak disertakan. API Gateway menerjemahkan representasi Protobuf menjadi bentuk OpenAPI dan menolak bentuk backend yang melanggar proyeksi. Menyembunyikan tombol detail pada UI hanya mendukung pengalaman pengguna; pengamanan utama adalah pengecekan scope dan pemilihan proyeksi pada server.
+
+\subsection{Refresh, Logout, dan CSRF}
+SPA menjadwalkan refresh sekitar lima detik sebelum expiry serta dapat memulihkan sesi setelah 401. Bridge menggunakan refresh token server dan menggabungkan request refresh bersamaan untuk sesi yang sama. Rotasi data sesi dan pencatatan hash token yang ditolak dilakukan dalam transaksi SQLite. Pengguna tidak perlu memasukkan password lagi selama refresh token dan sesi masih berlaku. Kode bridge juga mencoba mencabut access token lama pada Zitadel setelah rotasi.
+
+POST refresh/logout mensyaratkan Origin aplikasi dan kecocokan nilai \code{X-CSRF-Token} dengan sesi. Pada mutasi API berbasis cookie, Envoy memeriksa Origin dan keberadaan header CSRF; Envoy tidak melakukan perbandingan dengan SQLite bridge. Kebijakan ini bergantung pada origin yang tepat dan tidak dibukanya CORS untuk origin sembarang. Bearer eksplisit bagi klien API mengikuti jalur tersendiri tanpa cookie browser.
+
+Logout menghapus sesi lokal, membersihkan cookie, dan mencoba revokasi provider. Browser diarahkan ke logout Zitadel untuk mengakhiri SSO. Login UI V2 dapat menampilkan tindakan \emph{End Session}; penghapusan cookie aplikasi saja tidak selalu mengakhiri sesi provider. Implementasi ada di \code{services/auth-bridge/src/server.mjs}, \code{provider.mjs}, dan \code{store.mjs}.
+
+\section{Justifikasi dan Alternatif}
+API key/opaque token sederhana dipakai untuk mock agar perbedaan protokol autentikasi antarsumber tetap terlihat tanpa membangun provider untuk setiap instansi. Pemisahan secret membatasi penggunaan kredensial lintas instansi. Konsekuensinya, rotasi dan distribusi secret mock tetap menjadi tugas konfigurasi.
+
+OIDC terpusat menghindari pembuatan form password, hash password, dan penerbitan JWT sendiri di frontend BNPB. Dibanding menyimpan bearer token dalam localStorage, cookie HttpOnly mengurangi keterbacaan token oleh JavaScript, tetapi menambah kebutuhan perlindungan CSRF. Bridge dipakai karena refresh token serta client secret perlu berada di server. Dibanding introspeksi pada setiap service, token exchange di edge memberikan format JWT untuk validasi backend. Biayanya adalah dependensi pada provider pada jalur masuk dan tambahan konfigurasi client.
+
+Alternatif mTLS dapat mengautentikasi identitas workload antarlayanan dengan lebih kuat, tetapi memerlukan pengelolaan sertifikat. Implementasi M1 menggunakan JWT pengguna serta token internal \code{x-service-token} pada jalur yang mendukungnya. Token internal bukan identitas pengguna dan tidak boleh diberikan kepada browser. Pembagian broker user per consumer akan memberi isolasi lebih baik daripada satu akun broker bersama, tetapi belum diterapkan seragam pada Compose.
+
 \section{Batasan Solusi}
-\section{\textit{Proof-of-Concept}}
+\begin{itemize}
+\item Revokasi access token lama pada provider dilakukan asinkron dan kegagalannya ditoleransi. Daftar penolakan lokal bridge tidak dibaca Envoy. Karena itu penolakan seketika pada gateway tidak dapat dijamin jika revokasi gagal; token lama mungkin berlaku hingga expiry. JWT hasil exchange yang sudah diterbitkan juga memiliki siklus validasinya sendiri.
+\item Validasi audience belum seragam: Aggregator memeriksanya bila dikonfigurasi, sedangkan Danger Notification memiliki \code{ValidateAudience=false}. Verifier Aggregator memberi toleransi waktu 30 detik; ini perlu dibedakan dari expiry pada token opaque yang dicek provider di edge.
+\item Compose lokal memakai HTTP dan gRPC plaintext, bukan mTLS. Koordinasi refresh dan SQLite sesi ditujukan untuk satu instance bridge; replikasi membutuhkan koordinasi/penyimpanan bersama.
+\item Secret mock, Auth, PAT, dan file Firebase dikeluarkan dari Git, tetapi Compose canonical database masih menulis password pengembangan literal. Selain itu beberapa service menerima seluruh \code{.env} dan akun RabbitMQ bersama. Dengan demikian ketentuan tanpa secret hardcoded dan distribusi secret minimum belum terpenuhi menyeluruh; perlu perbaikan konfigurasi sebelum klaim tersebut dinyatakan lulus.
+\item Provider yang tidak tersedia dapat menyebabkan token exchange gagal meskipun data hazard masih tersimpan. Graceful degradation terhadap mock pada P2 tidak otomatis menghilangkan dependensi Auth ini.
+\end{itemize}
+
+\section{Proof-of-Concept dan Keterlacakan}
+\begin{table}[H]\small
+\begin{tabularx}{\textwidth}{@{}P{3.4cm}YY@{}}
+\toprule \textbf{Kriteria} & \textbf{Bukti tersedia} & \textbf{Batas kesimpulan}\\\midrule
+Isolasi kredensial BMKG/PVMBG & E1: tujuh request tidak sah ditolak dalam tes isolasi. & Hasil mock historis 30 September; bukan audit seluruh secret BNPB.\\
+Tiga identitas, cookie, refresh & E2: 45 pemeriksaan browser/provider nyata lulus pada 6 Oktober. & Berlaku pada arsitektur API melalui bridge saat tes direkam, bukan verifikasi gateway terbaru.\\
+Validasi JWT backend & E3: 15 tes utama Auth Aggregator lulus pada 9 Oktober. & Mencakup issuer, expiry, algoritme, rotasi JWKS, service token, dan provider unavailable dengan server tes.\\
+Media hanya ringkasan & E3: proyeksi summary/full lulus. Tes E2E role tersedia di \code{tests/test_e2e_hazards.py}. & Belum dilampiri rekaman E2E tiga role pada stack penuh terbaru.\\
+Expiry 60 detik dan token lama & E2 merekam expiry alami serta refresh tanpa password. & Perlu tes ulang melalui Envoy; keterbatasan revokasi asinkron tetap berlaku.\\\bottomrule
+\end{tabularx}
+\caption{Bukti P3 dipisahkan berdasarkan jalur dan waktu pengujian.}
+\end{table}
+
+Urutan demo P3 adalah: uji request tanpa kredensial dan kredensial silang pada kedua mock; login sebagai Media, tampilkan tujuh field lalu buktikan permintaan full ditolak; login sebagai Tim Lapangan, simpan token uji secara privat, tunggu expiry alami 60 detik, lalu amati refresh otomatis; ulangi akses dengan token lama dan pastikan ditolak pada gateway. Akhiri dengan logout serta login BNPB menggunakan akun berbeda. Tangkapan layar/log hanya menampilkan waktu, role, status HTTP, dan correlation ID; nilai token, cookie, password, dan client secret harus disembunyikan. Panduan rinci tersedia di \code{docs/auth-testing.md} dan \code{docs/e2e-testing.md}. Percobaan tes bridge lokal saat penulisan laporan belum berhasil dimulai karena dependensi OpenTelemetry pada instalasi Node lokal belum tersedia; percobaan tersebut tidak dihitung sebagai hasil lulus.
