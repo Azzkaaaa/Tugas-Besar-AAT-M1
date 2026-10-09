@@ -22,6 +22,7 @@ services:
       - ./services/otel-lgtm/grafana/alerting/bnpb-rules.yaml:/otel-lgtm/grafana/conf/provisioning/alerting/bnpb-rules.yaml:ro
       - ./services/otel-lgtm/grafana/dashboards/provider.yaml:/otel-lgtm/grafana/conf/provisioning/dashboards/bnpb.yaml:ro
       - ./services/otel-lgtm/grafana/dashboards:/otel-lgtm/bnpb-dashboards:ro
+    restart: unless-stopped
     networks:
       bnpb_net:
         aliases:
@@ -38,6 +39,7 @@ services:
     # instead of going upstream: grpc-go looks up a _grpc_config TXT record before every dial,
     # and a slow upstream resolver turns each gRPC probe into a 10 s scrape timeout.
     dns: [127.0.0.1]
+    restart: unless-stopped
     networks:
       bnpb_net:
         aliases:
@@ -151,6 +153,7 @@ services:
     depends_on:
       otel-lgtm:
         condition: service_started
+    restart: unless-stopped
     networks:
       bnpb_net:
         aliases:
@@ -180,6 +183,7 @@ services:
         condition: service_healthy
       otel-lgtm:
         condition: service_started
+    restart: unless-stopped
     networks:
       bnpb_net:
         aliases:
@@ -189,18 +193,23 @@ services:
     build:
       context: .
       dockerfile: services/danger-notification/Dockerfile
+    # appsettings.json overrides (Section__Key) from the NOTIFICATION_* variables in .env.
     environment:
-      Aggregator__Address: http://aggregator-service:9091
-      RabbitMq__HostName: rabbitmq
+      Kestrel__Endpoints__Grpc__Url: http://0.0.0.0:${NOTIFICATION_GRPC_PORT:-9095}
+      Aggregator__Address: http://${AGGREGATOR_GRPC_ADDRESS:-aggregator-service:9091}
+      RabbitMq__HostName: ${NOTIFICATION_RABBITMQ_HOST:-rabbitmq}
+      RabbitMq__Port: ${NOTIFICATION_RABBITMQ_PORT:-5672}
       RabbitMq__UserName: ${RABBITMQ_DEFAULT_USER}
       RabbitMq__Password: ${RABBITMQ_DEFAULT_PASS}
       RabbitMq__VirtualHost: ${RABBITMQ_DEFAULT_VHOST}
       RabbitMq__Exchange: ${RABBITMQ_EXCHANGE}
-      RabbitMq__QueueName: ${CONSUMER_3_QUEUE}
-      RabbitMq__DeadLetterQueue: ${CONSUMER_3_DLQ}
+      RabbitMq__QueueName: ${NOTIFICATION_CONSUMER_QUEUE}
+      RabbitMq__DeadLetterQueue: ${NOTIFICATION_CONSUMER_DLQ}
+      Fcm__Topic: ${NOTIFICATION_FCM_TOPIC:-hazard-alerts}
       Auth__Authority: ${NOTIFICATION_AUTH_AUTHORITY:-http://auth.localhost:8080}
       # The local Zitadel only serves plain HTTP.
-      Auth__RequireHttpsMetadata: "false"
+      Auth__RequireHttpsMetadata: ${NOTIFICATION_AUTH_REQUIRE_HTTPS_METADATA:-false}
+      Auth__ScopeClaim: ${NOTIFICATION_AUTH_SCOPE_CLAIM:-scopes}
       GOOGLE_APPLICATION_CREDENTIALS: /run/secrets/firebase-credentials.json
       OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-lgtm:4318
       OTEL_EXPORTER_OTLP_PROTOCOL: http/protobuf
@@ -237,8 +246,8 @@ services:
       EVENT_FEED_GRPC_PORT: ${EVENT_FEED_GRPC_PORT:-9093}
       EVENT_FEED_AMQP_URL: amqp://${RABBITMQ_DEFAULT_USER}:${RABBITMQ_DEFAULT_PASS}@rabbitmq:5672/${RABBITMQ_DEFAULT_VHOST}
       RABBITMQ_EXCHANGE: ${RABBITMQ_EXCHANGE}
-      CONSUMER_1_QUEUE: ${CONSUMER_1_QUEUE}
-      CONSUMER_1_DLQ: ${CONSUMER_1_DLQ}
+      EVENT_FEED_CONSUMER_QUEUE: ${EVENT_FEED_CONSUMER_QUEUE}
+      EVENT_FEED_CONSUMER_DLQ: ${EVENT_FEED_CONSUMER_DLQ}
       FEED_REPLAY_RETENTION_SECONDS: ${FEED_REPLAY_RETENTION_SECONDS:-600}
       FEED_REPLAY_MAX_ENTRIES: ${FEED_REPLAY_MAX_ENTRIES:-10000}
       FEED_AUTH_AUTHORITY: ${FEED_AUTH_AUTHORITY:-http://auth.localhost:8080}
@@ -295,6 +304,7 @@ services:
         condition: service_started
       otel-lgtm:
         condition: service_started
+    restart: unless-stopped
     networks:
       bnpb_net:
         aliases:
@@ -313,6 +323,7 @@ services:
       - "5432:5432"
     volumes:
       - aggregator_data:/var/lib/postgresql/data
+    restart: unless-stopped
     networks:
       bnpb_net:
         aliases:
@@ -337,6 +348,7 @@ services:
       interval: 5s
       timeout: 5s
       retries: 5
+    restart: unless-stopped
     networks:
       bnpb_net:
         aliases:

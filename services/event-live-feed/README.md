@@ -36,7 +36,6 @@ komposisi hanya di `main.rs`.
   Sequence naik mulai 1 per epoch. Buffer dibatasi `FEED_REPLAY_RETENTION_SECONDS`
   dan `FEED_REPLAY_MAX_ENTRIES`. Buffer berada di memori: restart membuat epoch acak
   baru sehingga cursor lama ditolak `OUT_OF_RANGE`, sesuai kontrak.
-  `EVENT_FEED_CACHE_DSN` belum dipakai.
 - **Subscribe.** Urutan pemeriksaan: bearer JWT (tanda tangan JWKS, issuer, `exp`),
   resolusi view (UNSPECIFIED→SUMMARY), scope (`hazards:read:summary`; FULL juga
   `hazards:read:full`, tanpa downgrade), filter, lalu cursor. Replay dan live diambil
@@ -89,7 +88,7 @@ token baru dari sesinya.
 | `EVENT_FEED_GRPC_PORT` | `9093` |
 | `EVENT_FEED_AMQP_URL` | wajib |
 | `RABBITMQ_EXCHANGE` | `bnpb.hazards.v1` |
-| `CONSUMER_1_QUEUE` / `CONSUMER_1_DLQ` | `bnpb.event-live-feed.v1` / kosong (pesan ditolak dibuang) |
+| `EVENT_FEED_CONSUMER_QUEUE` / `EVENT_FEED_CONSUMER_DLQ` | `bnpb.event-live-feed.v1` / kosong (pesan ditolak dibuang) |
 | `FEED_REPLAY_RETENTION_SECONDS` / `FEED_REPLAY_MAX_ENTRIES` | `600` / `10000` |
 | `FEED_AUTH_AUTHORITY` | `http://auth.localhost:8080` |
 | `OIDC_CONFIG_FILE` | kosong |

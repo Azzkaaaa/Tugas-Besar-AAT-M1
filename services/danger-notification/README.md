@@ -10,8 +10,8 @@ Implementasi dan bahasa belum dipilih.
   RPC `ListNotifications` dan `GetNotification` dari Gateway.
 - **Output:** notifikasi turunan hazard **SIAGA/AWAS**, lengkap dengan proyeksi
   yang diizinkan bagi aktor. Teks pesan hanya dibangun dari field ringkasan.
-- **Storage milik sendiri:** `NOTIFICATION_STORE_DSN`; notifikasi, state
-  idempotensi, dan snapshot pagination. Tidak mengakses Canonical Store langsung.
+- **Storage:** belum ada; daftar dan detail notifikasi diambil dari Aggregator
+  melalui gRPC. Tidak mengakses Canonical Store langsung.
 - **Tanggung jawab:** deduplikasi event, persistensi sebelum ack, filter/order
   sesuai kontrak, dan scope notifikasi beserta scope hazard. Freshness sumber
   diminta lewat API Aggregator; metadata ini bukan jaminan consumer sudah

@@ -39,7 +39,7 @@ impl<S: ReplayStore> Consumer<S> {
     /// Consumes forever, reconnecting with backoff. Health is SERVING only while connected.
     pub async fn run(self) {
         if self.dead_letter_queue.is_none() {
-            tracing::warn!("CONSUMER_1_DLQ is not set; rejected messages will be dropped");
+            tracing::warn!("EVENT_FEED_CONSUMER_DLQ is not set; rejected messages will be dropped");
         }
         let mut backoff = RECONNECT_MIN;
         loop {

@@ -45,6 +45,7 @@ services:
       interval: 5s
       timeout: 5s
       retries: 20
+    restart: unless-stopped
     networks: [bnpb_net]
 
   zitadel:
@@ -88,6 +89,7 @@ services:
       timeout: 10s
       retries: 30
       start_period: 20s
+    restart: unless-stopped
     networks: [bnpb_net]
 
   zitadel-login:
@@ -109,6 +111,7 @@ services:
       timeout: 10s
       retries: 30
       start_period: 10s
+    restart: unless-stopped
     networks: [bnpb_net]
 
   auth-bootstrap:
@@ -161,6 +164,7 @@ services:
       interval: 5s
       timeout: 5s
       retries: 20
+    restart: unless-stopped
     networks: [bnpb_net]
 
   auth-bridge:
@@ -187,6 +191,7 @@ services:
       interval: 5s
       timeout: 5s
       retries: 20
+    restart: unless-stopped
     networks: [bnpb_net]
 
   spa-server:
@@ -197,6 +202,7 @@ services:
         VITE_DATA_MODE: "${FRONTEND_DATA_MODE:-mock}"
         VITE_ENABLE_DEMO: "false"
         VITE_API_BASE_URL: /api/v1
+    restart: unless-stopped
     networks:
       bnpb_net:
         aliases: [spa-server.local]
@@ -208,17 +214,20 @@ services:
       dockerfile: services/api-gateway/Dockerfile
     environment:
       GATEWAY_HTTP_PORT: "8080"
-      AGGREGATOR_GRPC_ADDRESS: aggregator-service:9091
-      NOTIFICATION_GRPC_ADDRESS: notification-service:9095
-      WEBHOOK_GRPC_ADDRESS: webhook-provider:9094
-      EVENT_FEED_GRPC_ADDRESS: feed-service:9093
+      AGGREGATOR_GRPC_ADDRESS: "${AGGREGATOR_GRPC_ADDRESS:-aggregator-service:9091}"
+      NOTIFICATION_GRPC_ADDRESS: "${NOTIFICATION_GRPC_ADDRESS:-notification-service:9095}"
+      WEBHOOK_GRPC_ADDRESS: "${WEBHOOK_GRPC_ADDRESS:-webhook-provider:9094}"
+      EVENT_FEED_GRPC_ADDRESS: "${EVENT_FEED_GRPC_ADDRESS:-feed-service:9093}"
       GATEWAY_REQUEST_TIMEOUT_MS: "${GATEWAY_REQUEST_TIMEOUT_MS:-2000}"
       GATEWAY_MAX_IN_FLIGHT: "${GATEWAY_MAX_IN_FLIGHT:-100}"
+      GATEWAY_RETRY_AFTER_SECONDS: "${GATEWAY_RETRY_AFTER_SECONDS:-5}"
+      GATEWAY_SSE_HEARTBEAT_SECONDS: "${GATEWAY_SSE_HEARTBEAT_SECONDS:-15}"
     healthcheck:
       test: [CMD, /api-gateway, --healthcheck]
       interval: 5s
       timeout: 5s
       retries: 20
+    restart: unless-stopped
     networks:
       bnpb_net:
         aliases: [api-gateway.local]
@@ -238,6 +247,7 @@ services:
       auth-bridge: {condition: service_healthy}
       zitadel-login: {condition: service_healthy}
       api-gateway: {condition: service_healthy}
+    restart: unless-stopped
     networks:
       bnpb_net:
         aliases: [auth.localhost, envoy.local]

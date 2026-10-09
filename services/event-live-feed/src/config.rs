@@ -28,8 +28,8 @@ impl Config {
             port: number("EVENT_FEED_GRPC_PORT", 9093)?,
             amqp_url: required("EVENT_FEED_AMQP_URL")?,
             exchange: optional("RABBITMQ_EXCHANGE")?.unwrap_or_else(|| "bnpb.hazards.v1".into()),
-            queue: optional("CONSUMER_1_QUEUE")?.unwrap_or_else(|| "bnpb.event-live-feed.v1".into()),
-            dead_letter_queue: optional("CONSUMER_1_DLQ")?,
+            queue: optional("EVENT_FEED_CONSUMER_QUEUE")?.unwrap_or_else(|| "bnpb.event-live-feed.v1".into()),
+            dead_letter_queue: optional("EVENT_FEED_CONSUMER_DLQ")?,
             replay_retention: Duration::from_secs(number("FEED_REPLAY_RETENTION_SECONDS", 600)?),
             replay_max_entries: number("FEED_REPLAY_MAX_ENTRIES", 10_000)?,
             auth_authority: optional("FEED_AUTH_AUTHORITY")?

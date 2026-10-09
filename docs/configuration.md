@@ -5,9 +5,9 @@ sudah menggunakan Python 3.12 dan SQLite. Jalankan kedua mock melalui
 [`compose.mocks.yaml`](../compose.mocks.yaml); Compose utama juga memuat service
 lain yang belum selesai. Konfigurasi Auth yang sudah dipisahkan berada di
 [`.env.auth.example`](../.env.auth.example) dan
-[`compose.auth.yaml`](../compose.auth.yaml). Variabel Aggregator, API bisnis,
-broker, dan observability tetap target integrasi, bukan jaminan semua service
-sudah menggunakannya.
+[`compose.auth.yaml`](../compose.auth.yaml). Setiap variabel di `.env.example`
+dibaca oleh Compose atau oleh service yang memuat `.env`; variabel yang tidak
+dipakai tidak dicantumkan.
 
 Jalankan `python tools/setup_mock_env.py` dari root repo untuk membuat `.env`
 lokal dan mengisi placeholder kredensial kedua mock dengan nilai acak independen.
@@ -25,19 +25,17 @@ ada di [panduan mock](mock-services.md).
 
 | Variabel | Default contoh | Pemakai |
 | --- | --- | --- |
-| `API_DOCS_PORT` | `8090` | Penampil Swagger UI; bind localhost |
-| `APP_ENV` | `development` | Rencana konfigurasi aplikasi BNPB; belum dibaca mock |
-| `LOG_LEVEL` | `info` | Rencana konfigurasi aplikasi BNPB; mock mencatat log JSON tanpa override ini |
-| `GATEWAY_HTTP_PORT` | `8080` | api-gateway (port container; Envoy memakai `API_GATEWAY_PORT`) |
+| `APP_ENV` | `development` | Aggregator dan Webhook Provider (atribut `deployment.environment` telemetry) |
+| `LOG_LEVEL` | `info` | Aggregator, Webhook Provider, Event Live Feed; mock mencatat log JSON tanpa override ini |
 | `BMKG_HTTP_PORT` | `8081` | Listener BMKG lokal; port host saat memakai Compose |
 | `PVMBG_HTTP_PORT` | `8082` | Listener PVMBG lokal; port host saat memakai Compose |
 | `AGGREGATOR_GRPC_PORT` | `9091` | Aggregator |
 | `EVENT_FEED_GRPC_PORT` | `9093` | Event Live Feed |
 | `WEBHOOK_GRPC_PORT` | `9094` | Webhook Provider |
-| `NOTIFICATION_GRPC_PORT` | `9095` | Danger Notification |
+| `NOTIFICATION_GRPC_PORT` | `9095` | Danger Notification (`Kestrel__Endpoints__Grpc__Url`) |
 | `BMKG_BASE_URL` | `http://bmkg-mock:8080` | Aggregator pada jaringan Compose |
 | `PVMBG_BASE_URL` | `http://pvmbg-mock:8080` | Aggregator pada jaringan Compose |
-| `AGGREGATOR_GRPC_ADDRESS` | `aggregator-service:9091` | api-gateway, Danger Notification untuk freshness |
+| `AGGREGATOR_GRPC_ADDRESS` | `aggregator-service:9091` | api-gateway; Danger Notification sebagai `http://<alamat>` (`Aggregator__Address`) |
 | `EVENT_FEED_GRPC_ADDRESS` | `feed-service:9093` | api-gateway |
 | `WEBHOOK_GRPC_ADDRESS` | `webhook-provider:9094` | api-gateway |
 | `NOTIFICATION_GRPC_ADDRESS` | `notification-service:9095` | api-gateway |
@@ -95,6 +93,8 @@ PKCE; cookie mengirim access token kepada bridge. Konfigurasi tidak memakai
 | `AUTH_FIELD_TEAM_PASSWORD` | nilai acak dari setup | Provisioning `lapangan-demo`, role `FIELD_TEAM` |
 | `AUTH_BNPB_PASSWORD` | nilai acak dari setup | Provisioning `bnpb-demo`, role `BNPB_INTERNAL` |
 | `FRONTEND_DATA_MODE` | `mock` pada standalone Auth | Build Compose: `mock` memakai fixture, `gateway` memakai API |
+| `FRONTEND_API_BASE_URL` | `/api/v1` | Build SPA `compose.yaml` (`VITE_API_BASE_URL`); di `.env` |
+| `FRONTEND_HTTP_PORT` | `5173` | Port host preview `compose.frontend.yaml`; di `.env` |
 
 Bootstrap menyimpan `issuer`, `client_id`, `client_secret`, `project_id`,
 `organization_id`, `introspection_client_id`, `introspection_client_secret`,
@@ -141,9 +141,10 @@ dihapus; gunakan `AUTH_AUTHORITY` sebagai gantinya.
 
 | Variabel | Default contoh | Pemakai |
 | --- | --- | --- |
-| `AGGREGATOR_AUTH_AUTHORITY` | `http://auth.localhost:8080` | Aggregator; URL issuer OIDC untuk JWKS discovery |
-| `AUTH_AUDIENCE` | *(kosong)* | Aggregator; aud claim yang diharapkan. Kosong = tidak divalidasi |
-| `AUTH_INSECURE_SKIP_VERIFY` | `false` | Aggregator; `true` melewatkan verifikasi signature JWT (**hanya development**) |
+| `AGGREGATOR_AUTH_AUTHORITY` | `http://auth.localhost:8080` | Aggregator; URL issuer OIDC untuk JWKS discovery (Compose: `AUTH_AUTHORITY`) |
+| `WEBHOOK_AUTH_AUTHORITY` | `http://auth.localhost:8080` | Webhook Provider; idem |
+| `AUTH_AUDIENCE` | *(kosong)* | Aggregator dan Webhook Provider; aud claim yang diharapkan. Kosong = tidak divalidasi |
+| `AUTH_INSECURE_SKIP_VERIFY` | `false` | Aggregator dan Webhook Provider; `true` melewatkan verifikasi signature JWT (**hanya development**) |
 
 > ⚠️ `AUTH_INSECURE_SKIP_VERIFY=true` menampilkan peringatan saat startup dan
 > tidak boleh digunakan di production. Token tetap harus memiliki `exp` yang
@@ -156,9 +157,7 @@ dihapus; gunakan `AUTH_AUTHORITY` sebagai gantinya.
 | `BMKG_API_KEY` | BMKG Mock sebagai validator, Aggregator sebagai pemanggil |
 | `PVMBG_BEARER_TOKEN` | PVMBG Mock sebagai validator, Aggregator sebagai pemanggil |
 | `AGGREGATOR_SERVICE_TOKEN` | Identitas outbound Aggregator pada integrasi antar-service berikutnya |
-| `EVENT_FEED_SERVICE_TOKEN` | Identitas outbound Event Live Feed pada integrasi berikutnya |
 | `WEBHOOK_SERVICE_TOKEN` | Identitas outbound Webhook Provider pada integrasi berikutnya |
-| `NOTIFICATION_SERVICE_TOKEN` | Identitas outbound Danger Notification pada integrasi berikutnya |
 
 Domain kredensial BMKG, PVMBG, dan pengguna BNPB tetap independen. Access token
 Zitadel tidak menggantikan API key BMKG ataupun bearer PVMBG. Gateway meneruskan
@@ -192,7 +191,8 @@ Aturan scope, pencabutan sesi, dan metadata ada di
 | `GATEWAY_RETRY_AFTER_SECONDS` | `5` | Gateway; header `Retry-After` pada 429/503 |
 | `GATEWAY_SSE_HEARTBEAT_SECONDS` | `15` | Gateway; interval komentar heartbeat SSE |
 | `FEED_REPLAY_RETENTION_SECONDS` | `600` | Kedua feed; buffer masing-masing, bukan retensi queue RabbitMQ |
-| `PAGE_TOKEN_TTL_SECONDS` | `300` | Aggregator dan Danger Notification; snapshot cursor masing-masing |
+| `WEBHOOK_MAX_RETRIES` | `5` | Webhook Provider; batas percobaan pengiriman ke subscriber |
+| `WEBHOOK_HTTP_TIMEOUT_MS` | `10000` | Webhook Provider; timeout satu panggilan HTTP ke subscriber |
 
 Baseline delay PVMBG adalah rentang 500–3.000 ms; uji P2 memakai min=max=3.000 ms.
 Validator mock memeriksa min ≤ max dan kedua nilai nonnegatif sesuai OpenAPI;
@@ -213,9 +213,9 @@ outage. Pemulihan dilakukan lewat polling sukses, tanpa restart.
 Kedua mock memakai file SQLite yang berbeda. DSN `sqlite:///data/...` mengarah
 ke path relatif `data/...` terhadap direktori kerja: repo saat memakai launcher
 lokal, dan `/app` dalam container. Compose memasang volume terpisah pada
-`/app/data` masing-masing container. Store BNPB lain belum ditentukan; DSN kosong
-di bagian tersebut bukan database siap pakai. Setiap store/cache hanya boleh
-diakses langsung oleh pemilik berikut.
+`/app/data` masing-masing container. Setiap store hanya boleh diakses langsung
+oleh pemilik berikut. Danger Notification dan Event Live Feed belum memiliki
+store: notifikasi diambil dari Aggregator dan buffer replay feed berada di memori.
 
 DSN mock harus berawalan `sqlite:///` dan menunjuk file persisten. Nilai kosong,
 `:memory:`, dan URI `file:` ditolak. Path absolut dapat digunakan, misalnya
@@ -226,12 +226,10 @@ DSN mock harus berawalan `sqlite:///` dan menunjuk file persisten. Nilai kosong,
 | --- | --- | --- |
 | `BMKG_STORE_DSN` | `sqlite:///data/bmkg.sqlite3` | BMKG Mock; volume Compose `bmkg_data` |
 | `PVMBG_STORE_DSN` | `sqlite:///data/pvmbg.sqlite3` | PVMBG Mock; volume Compose `pvmbg_data` |
-| `CANONICAL_STORE_DSN` | kosong | Aggregator, termasuk state ingest/outbox |
+| `CANONICAL_STORE_DSN` | `postgres://aggregator:postgres@aggregator-db.local:5432/bnpb_canonical?sslmode=disable` | Aggregator, termasuk state ingest/outbox; volume `aggregator_data` |
 | `AUTH_DATABASE_PATH` | `/data/sessions.sqlite` | Auth bridge; volume `auth_sessions` |
 | PostgreSQL Zitadel | database `zitadel` | Zitadel; volume `auth_postgres`, tidak dibaca langsung oleh bridge |
-| `NOTIFICATION_STORE_DSN` | kosong | Danger Notification |
-| `EVENT_FEED_CACHE_DSN` | kosong | Event Live Feed; belum dipakai, buffer replay saat ini in-memory per epoch |
-| `WEBHOOK_STORE_DSN` | kosong | Webhook Provider |
+| `WEBHOOK_STORE_DSN` | `file:/data/webhook.db` | Webhook Provider; volume `webhook_data` |
 
 Record SQLite bertahan setelah restart proses/container selama file/volume
 dipertahankan. Kontrol skema/outage PVMBG adalah state runtime terpisah dari data.
@@ -248,7 +246,7 @@ Komponen lain meminta data kanonik melalui API Aggregator.
 | --- | --- | --- |
 | `EVENT_FEED_AMQP_URL` | wajib | Koneksi consumer; Compose menyusunnya dari `RABBITMQ_DEFAULT_*` |
 | `RABBITMQ_EXCHANGE` | `bnpb.hazards.v1` | Exchange fanout tempat queue diikat |
-| `CONSUMER_1_QUEUE` / `CONSUMER_1_DLQ` | `bnpb.event-live-feed.v1` / kosong | Queue dan DLQ; dideklarasikan dan diikat oleh service ini sendiri |
+| `EVENT_FEED_CONSUMER_QUEUE` / `EVENT_FEED_CONSUMER_DLQ` | `bnpb.event-live-feed.v1` / kosong | Queue dan DLQ; dideklarasikan dan diikat oleh service ini sendiri |
 | `FEED_REPLAY_MAX_ENTRIES` | `10000` | Batas jumlah entri replay selain `FEED_REPLAY_RETENTION_SECONDS` |
 | `FEED_AUTH_AUTHORITY` | `http://auth.localhost:8080` | Issuer JWT; discovery, JWKS, dan endpoint token exchange |
 | `OIDC_CONFIG_FILE` | kosong | `oidc.json` dari auth-bootstrap; dibaca `feed_client_id`/`feed_client_secret` |
@@ -258,18 +256,39 @@ Komponen lain meminta data kanonik melalui API Aggregator.
 
 Rincian rotasi token dan batasannya ada di [README Event Live Feed](../services/event-live-feed/README.md).
 
+## Danger Notification
+
+Service .NET ini membaca `appsettings.json`. `compose.yaml` memetakan variabel
+`.env` ke override environment ASP.NET (`Section__Key`); nilai di appsettings
+hanya dipakai saat service dijalankan di luar Compose.
+
+| Variabel `.env` | Default contoh | Key appsettings |
+| --- | --- | --- |
+| `NOTIFICATION_GRPC_PORT` | `9095` | `Kestrel:Endpoints:Grpc:Url` (`http://0.0.0.0:<port>`) |
+| `AGGREGATOR_GRPC_ADDRESS` | `aggregator-service:9091` | `Aggregator:Address` (`http://<alamat>`) |
+| `NOTIFICATION_AUTH_AUTHORITY` | kosong → `http://auth.localhost:8080` | `Auth:Authority` |
+| `NOTIFICATION_AUTH_REQUIRE_HTTPS_METADATA` | `false` | `Auth:RequireHttpsMetadata`; Zitadel lokal hanya HTTP |
+| `NOTIFICATION_AUTH_SCOPE_CLAIM` | `scopes` | `Auth:ScopeClaim`; klaim dari `zitadel-claims` |
+| `NOTIFICATION_RABBITMQ_HOST` / `_PORT` | `rabbitmq` / `5672` | `RabbitMq:HostName` / `RabbitMq:Port` |
+| `RABBITMQ_DEFAULT_USER` / `_PASS` / `_VHOST` | lihat RabbitMQ | `RabbitMq:UserName` / `Password` / `VirtualHost` |
+| `RABBITMQ_EXCHANGE` | `bnpb.hazards.v1` | `RabbitMq:Exchange` |
+| `NOTIFICATION_CONSUMER_QUEUE` / `NOTIFICATION_CONSUMER_DLQ` | `bnpb.danger-notification.v1` / `.dlq.v1` | `RabbitMq:QueueName` / `RabbitMq:DeadLetterQueue` |
+| `NOTIFICATION_FCM_TOPIC` | `hazard-alerts` | `Fcm:Topic` |
+| `FIREBASE_CREDENTIALS_PATH` | `./.secrets/firebase-credentials.json` | Bukan appsettings; di-mount untuk `GOOGLE_APPLICATION_CREDENTIALS` |
+
+Service ini tidak menerima URL AMQP karena klien .NET dikonfigurasi per bagian.
+
 ## RabbitMQ
 
 | Variabel | Default contoh | Pemakai |
 | --- | --- | --- |
-| `AGGREGATOR_AMQP_URL` | `amqp://aggregator:REPLACE_PUBLISHER_SECRET@rabbitmq:5672/bnpb` | Aggregator; publish |
-| `EVENT_FEED_AMQP_URL` | `amqp://event-feed:REPLACE_FEED_BROKER_SECRET@rabbitmq:5672/bnpb` | Event Live Feed; consume queue sendiri |
-| `WEBHOOK_AMQP_URL` | `amqp://webhook-provider:REPLACE_WEBHOOK_BROKER_SECRET@rabbitmq:5672/bnpb` | Webhook Provider; consume queue sendiri |
-| `NOTIFICATION_AMQP_URL` | `amqp://notifier:REPLACE_NOTIFIER_BROKER_SECRET@rabbitmq:5672/bnpb` | Danger Notification; consume queue sendiri |
-| `RABBITMQ_EXCHANGE` | `bnpb.hazards.v1` | Publisher, ketiga consumer, provisioning broker |
-| `RABBITMQ_EVENT_FEED_QUEUE` | `bnpb.event-live-feed.v1` | Event Live Feed, provisioning broker |
-| `RABBITMQ_WEBHOOK_QUEUE` | `bnpb.webhook-provider.v1` | Webhook Provider, provisioning broker |
-| `RABBITMQ_NOTIFICATION_QUEUE` | `bnpb.danger-notification.v1` | Danger Notification, provisioning broker |
+| `RABBITMQ_DEFAULT_USER` / `_PASS` / `_VHOST` | `guest` / `guest` / `vhost` | Akun broker yang dibuat Compose; dipakai bersama semua service lokal. Compose menyusun `EVENT_FEED_AMQP_URL` dan setelan RabbitMQ Danger Notification darinya |
+| `AGGREGATOR_AMQP_URL` | `amqp://guest:guest@rabbitmq:5672/vhost` | Aggregator; publish |
+| `WEBHOOK_AMQP_URL` | `amqp://guest:guest@rabbitmq:5672/vhost` | Webhook Provider; consume queue sendiri |
+| `RABBITMQ_EXCHANGE` | `bnpb.hazards.v1` | Publisher dan ketiga consumer |
+| `EVENT_FEED_CONSUMER_QUEUE` / `EVENT_FEED_CONSUMER_DLQ` | `bnpb.event-live-feed.v1` / `.dlq.v1` | Event Live Feed |
+| `WEBHOOK_CONSUMER_QUEUE` / `WEBHOOK_CONSUMER_DLQ` | `bnpb.webhook-provider.v1` / `.dlq.v1` | Webhook Provider (lewat `env_file`) |
+| `NOTIFICATION_CONSUMER_QUEUE` / `NOTIFICATION_CONSUMER_DLQ` | `bnpb.danger-notification.v1` / `.dlq.v1` | Danger Notification (`RabbitMq:QueueName` / `DeadLetterQueue`) |
 
 Rencanakan exchange fan-out dan queue durable independen, pesan persistent,
 publisher confirm, ack setelah pemrosesan, retry terbatas, serta dead-letter
