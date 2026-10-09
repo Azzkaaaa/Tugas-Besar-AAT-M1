@@ -89,7 +89,6 @@ type PVMBGVolcanicRaw struct {
 	EruptionCount24h int       `json:"eruption_count_24h"`
 	AshColumnHeightM float64   `json:"ash_column_height_m"`
 	ReportedAt       time.Time `json:"reported_at"`
-	ConfidenceLevel  *float64  `json:"confidence_level,omitempty"`
 	RawFields        map[string]any
 }
 
@@ -111,7 +110,6 @@ func (v *PVMBGVolcanicRaw) UnmarshalJSON(b []byte) error {
 		delete(all, "eruption_count_24h")
 		delete(all, "ash_column_height_m")
 		delete(all, "reported_at")
-		delete(all, "confidence_level")
 		v.RawFields = all
 	}
 	return nil
@@ -195,10 +193,6 @@ func MapPVMBGToHazard(volcanic *PVMBGVolcanicRaw) *domain.HazardRecord {
 	attributes["eruption_count_24h"] = volcanic.EruptionCount24h
 	attributes["ash_column_height_m"] = volcanic.AshColumnHeightM
 	attributes["volcano_id"] = volcanic.VolcanoID
-
-	if volcanic.ConfidenceLevel != nil {
-		attributes["confidence_level"] = *volcanic.ConfidenceLevel
-	}
 
 	for k, v := range volcanic.RawFields {
 		attributes[k] = v

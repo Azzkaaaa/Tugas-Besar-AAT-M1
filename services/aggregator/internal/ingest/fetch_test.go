@@ -118,8 +118,8 @@ func TestPVMBGPoller_FetchVolcanicReports(t *testing.T) {
 	if reports[0].ReportID != "volc-001" || reports[0].VolcanoID != "v-merapi" {
 		t.Errorf("report fields mismatch: %+v", reports[0])
 	}
-	if reports[0].ConfidenceLevel == nil || *reports[0].ConfidenceLevel != 0.88 {
-		t.Errorf("confidence level mismatch: %v", reports[0].ConfidenceLevel)
+	if reports[0].RawFields["confidence_level"] != 0.88 {
+		t.Errorf("confidence level mismatch in RawFields: %v", reports[0].RawFields["confidence_level"])
 	}
 }
 

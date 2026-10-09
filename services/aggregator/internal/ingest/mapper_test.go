@@ -1,6 +1,7 @@
 package ingest
 
 import (
+	"encoding/json"
 	"testing"
 	"time"
 
@@ -102,19 +103,22 @@ func TestMapBMKGToHazard_WithTsunamiWarning(t *testing.T) {
 
 func TestMapPVMBGToHazard_SchemaEvolution(t *testing.T) {
 	// 1. Schema v1 (without confidence_level)
-	rawV1 := &PVMBGVolcanicRaw{
-		ReportID:         "pvmbg-rep-001",
-		VolcanoID:        "merapi",
-		AlertLevel:       "Siaga",
-		EruptionCount24h: 3,
-		AshColumnHeightM: 500,
-		ReportedAt:       time.Now().UTC(),
-		RawFields: map[string]any{
-			"seismicity_count": 42,
-		},
+	rawV1JSON := []byte(`{
+		"report_id": "pvmbg-rep-001",
+		"volcano_id": "merapi",
+		"alert_level": "Siaga",
+		"eruption_count_24h": 3,
+		"ash_column_height_m": 500,
+		"reported_at": "2026-10-09T00:00:00Z",
+		"seismicity_count": 42
+	}`)
+
+	var rawV1 PVMBGVolcanicRaw
+	if err := json.Unmarshal(rawV1JSON, &rawV1); err != nil {
+		t.Fatalf("failed unmarshaling v1 json: %v", err)
 	}
 
-	hazardV1 := MapPVMBGToHazard(rawV1)
+	hazardV1 := MapPVMBGToHazard(&rawV1)
 	if hazardV1.AreaName != "Gunung Merapi" {
 		t.Errorf("expected AreaName Gunung Merapi mapped from volcano ID, got %s", hazardV1.AreaName)
 	}
@@ -124,23 +128,28 @@ func TestMapPVMBGToHazard_SchemaEvolution(t *testing.T) {
 	if hazardV1.Attributes["confidence_level"] != nil {
 		t.Errorf("confidence_level should be nil in v1, got %v", hazardV1.Attributes["confidence_level"])
 	}
-	if hazardV1.Attributes["seismicity_count"] != 42 {
+	if num, ok := hazardV1.Attributes["seismicity_count"].(float64); !ok || num != 42 {
 		t.Errorf("additive dynamic field should be preserved in attributes, got %v", hazardV1.Attributes["seismicity_count"])
 	}
 
-	// 2. Schema v2 (with confidence_level)
-	conf := 0.95
-	rawV2 := &PVMBGVolcanicRaw{
-		ReportID:         "pvmbg-rep-002",
-		VolcanoID:        "anak-krakatau",
-		AlertLevel:       "Awas",
-		EruptionCount24h: 12,
-		AshColumnHeightM: 2000,
-		ConfidenceLevel:  &conf,
-		ReportedAt:       time.Now().UTC(),
+	// 2. Schema v2 (with confidence_level and unexpected fields from schema version bump)
+	rawV2JSON := []byte(`{
+		"report_id": "pvmbg-rep-002",
+		"volcano_id": "anak-krakatau",
+		"alert_level": "Awas",
+		"eruption_count_24h": 12,
+		"ash_column_height_m": 2000,
+		"reported_at": "2026-10-09T00:00:00Z",
+		"confidence_level": 0.95,
+		"sensor_status": "nominal"
+	}`)
+
+	var rawV2 PVMBGVolcanicRaw
+	if err := json.Unmarshal(rawV2JSON, &rawV2); err != nil {
+		t.Fatalf("failed unmarshaling v2 json: %v", err)
 	}
 
-	hazardV2 := MapPVMBGToHazard(rawV2)
+	hazardV2 := MapPVMBGToHazard(&rawV2)
 	if hazardV2.AreaName != "Gunung Anak Krakatau" {
 		t.Errorf("expected AreaName Gunung Anak Krakatau, got %s", hazardV2.AreaName)
 	}
@@ -149,6 +158,9 @@ func TestMapPVMBGToHazard_SchemaEvolution(t *testing.T) {
 	}
 	if hazardV2.Attributes["confidence_level"] != 0.95 {
 		t.Errorf("expected confidence_level 0.95 in v2 attributes, got %v", hazardV2.Attributes["confidence_level"])
+	}
+	if hazardV2.Attributes["sensor_status"] != "nominal" {
+		t.Errorf("expected sensor_status 'nominal' in v2 attributes, got %v", hazardV2.Attributes["sensor_status"])
 	}
 }
 
