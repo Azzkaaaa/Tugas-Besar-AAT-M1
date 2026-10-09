@@ -60,11 +60,18 @@ func main() {
 	defer db.Close()
 	log.Println("[WebhookProvider] SQLite store ready.")
 
-	// 2. Initialise JWT verifier.
-	verifier, err := auth.NewJWTVerifier(cfg.AuthPublicKeyPEM, cfg.AuthPublicKeyPath, cfg.ServiceToken)
+	// 2. Initialize Auth JWT Verifier. Discovery and JWKS load in the background (retried until the
+	// issuer behind Envoy answers), so ingestion never waits on auth; only bad config is fatal.
+	verifier, err := auth.NewJWTVerifier(ctx, auth.JWTVerifierConfig{
+		AuthAuthority:      cfg.AuthAuthority,
+		Audience:           cfg.AuthAudience,
+		ServiceToken:       cfg.ServiceToken,
+		InsecureSkipVerify: cfg.AuthInsecureSkipVerify,
+	})
 	if err != nil {
 		log.Fatalf("[WebhookProvider] FATAL: Failed initialising JWT verifier: %v", err)
 	}
+	defer verifier.Close()
 
 	// 3. Initialise HTTP dispatcher.
 	disp := dispatcher.New(cfg.HTTPTimeoutMS, cfg.MaxDeliveryRetries)

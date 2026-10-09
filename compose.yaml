@@ -166,6 +166,8 @@ services:
       - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-lgtm:4318
       - OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf
       - OTEL_SERVICE_NAME=webhook-provider
+      - AUTH_AUTHORITY=${WEBHOOK_AUTH_AUTHORITY:-http://auth.localhost:8080}
+      - AUTH_INSECURE_SKIP_VERIFY=${AUTH_INSECURE_SKIP_VERIFY:-false}
     ports:
       - "9094:9094"
     # Lets e2e tests (tests/test_e2e_webhooks.py) receive deliveries on the host under Linux.
