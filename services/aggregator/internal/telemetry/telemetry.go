@@ -5,12 +5,14 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"net/http"
 	"net/url"
 	"os"
 	"strings"
 	"time"
 
 	amqp "github.com/rabbitmq/amqp091-go"
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetricgrpc"
@@ -244,13 +246,22 @@ func initInstruments(m metric.Meter) error {
 	return err
 }
 
+// ExternalTransport records client spans for requests that leave the system but injects no
+// trace context (traceparent, tracestate, baggage): third parties never learn trace ids.
+func ExternalTransport(base http.RoundTripper) http.RoundTripper {
+	return otelhttp.NewTransport(base, otelhttp.WithPropagators(propagation.NewCompositeTextMapPropagator()))
+}
+
 // AMQPHeaderCarrier adapts amqp.Table to propagation.TextMapCarrier.
 type AMQPHeaderCarrier amqp.Table
 
 func (c AMQPHeaderCarrier) Get(key string) string {
 	if val, ok := c[key]; ok {
-		if s, ok := val.(string); ok {
-			return s
+		switch v := val.(type) {
+		case string:
+			return v
+		case []byte:
+			return string(v)
 		}
 		return fmt.Sprintf("%v", val)
 	}
@@ -277,6 +288,22 @@ func InjectAMQPHeaders(ctx context.Context, headers amqp.Table) amqp.Table {
 	carrier := AMQPHeaderCarrier(headers)
 	otel.GetTextMapPropagator().Inject(ctx, carrier)
 	return amqp.Table(carrier)
+}
+
+// TraceCarrier captures ctx's trace context (W3C traceparent, tracestate and baggage) so it can
+// be stored and restored later, e.g. on an outbox row. Empty when ctx carries no span.
+func TraceCarrier(ctx context.Context) map[string]string {
+	carrier := propagation.MapCarrier{}
+	otel.GetTextMapPropagator().Inject(ctx, carrier)
+	return carrier
+}
+
+// ContextFromCarrier restores a context saved by TraceCarrier as the remote parent of ctx.
+func ContextFromCarrier(ctx context.Context, carrier map[string]string) context.Context {
+	if len(carrier) == 0 {
+		return ctx
+	}
+	return otel.GetTextMapPropagator().Extract(ctx, propagation.MapCarrier(carrier))
 }
 
 // ExtractAMQPHeaders extracts trace context from amqp.Table headers into a new context.

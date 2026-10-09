@@ -10,10 +10,12 @@ use lapin::options::{
 };
 use lapin::types::{AMQPValue, FieldTable, LongString};
 use lapin::{Connection, ConnectionProperties, ExchangeKind};
+use opentelemetry::trace::{TraceContextExt, TraceId};
 use prost::Message;
 use tonic_health::ServingStatus;
 use tonic_health::server::HealthReporter;
 use tracing::Instrument;
+use tracing::field::Empty;
 use tracing_opentelemetry::OpenTelemetrySpanExt;
 
 use crate::core::feed::FeedService;
@@ -82,21 +84,52 @@ impl<S: ReplayStore> Consumer<S> {
     }
 
     async fn handle(&self, delivery: Delivery) -> Result<(), lapin::Error> {
-        let span = tracing::info_span!("rabbitmq.consume", otel.kind = "consumer", messaging.system = "rabbitmq", messaging.destination = %self.queue);
+        // Child of the aggregator's rabbitmq.publish span. trace_id puts the trace in every log line.
+        let span = tracing::info_span!(
+            "rabbitmq.consume",
+            otel.kind = "consumer",
+            otel.status_code = Empty,
+            otel.status_message = Empty,
+            messaging.system = "rabbitmq",
+            messaging.operation.type = "process",
+            messaging.destination = %self.queue,
+            messaging.destination.name = %self.queue,
+            messaging.message.id = Empty,
+            event.id = Empty,
+            hazard.id = Empty,
+            feed.duplicate = Empty,
+            trace_id = Empty,
+        );
         if let Some(headers) = delivery.properties.headers() {
             let _ = span.set_parent(telemetry::amqp_parent(headers));
         }
+        if let Some(message_id) = delivery.properties.message_id() {
+            span.record("messaging.message.id", message_id.as_str());
+        }
+        let trace_id = span.context().span().span_context().trace_id();
+        if trace_id != TraceId::INVALID {
+            span.record("trace_id", tracing::field::display(trace_id));
+        }
         async {
             match decode(&delivery.data) {
-                Ok(publication) => {
+                Ok(mut publication) => {
+                    let span = tracing::Span::current();
+                    span.record("event.id", publication.event_id.as_str());
+                    span.record("hazard.id", publication.hazard.hazard_id.as_str());
+                    // Subscriber deliveries become children of this span (see grpc::Forward).
+                    publication.trace = telemetry::carrier(&span);
                     let event_id = publication.event_id.clone();
                     let stored = self.feed.ingest(publication);
+                    span.record("feed.duplicate", !stored);
                     // Ack only after the entry is in the replay buffer; redeliveries are deduplicated.
                     delivery.ack(BasicAckOptions::default()).await?;
                     tracing::debug!(%event_id, duplicate = !stored, "hazard event processed");
                 }
                 Err(reason) => {
                     // Malformed envelopes never succeed on retry: dead-letter immediately.
+                    let span = tracing::Span::current();
+                    span.record("otel.status_code", "ERROR");
+                    span.record("otel.status_message", reason.as_str());
                     tracing::warn!(%reason, "rejecting hazard event");
                     delivery.nack(BasicNackOptions { requeue: false, ..Default::default() }).await?;
                 }
@@ -132,7 +165,7 @@ pub fn decode(data: &[u8]) -> Result<Publication, String> {
     if envelope.source == Source::Unspecified as i32 || envelope.source != hazard.source {
         return Err("source must be set and match payload.source".into());
     }
-    Ok(Publication { event_id: envelope.event_id, published_at: envelope.occurred_at, hazard })
+    Ok(Publication { event_id: envelope.event_id, published_at: envelope.occurred_at, hazard, trace: Vec::new() })
 }
 
 #[cfg(test)]

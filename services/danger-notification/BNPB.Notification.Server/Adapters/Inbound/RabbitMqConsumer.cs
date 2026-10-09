@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Text;
 using BNPB.Event.V1;
 using Google.Protobuf;
+using OpenTelemetry;
 using RabbitMQ.Client;
 using RabbitMQ.Client.Events;
 using BNPB.Notification.Server.Core.Models;
@@ -118,12 +119,20 @@ public class RabbitMqConsumer : BackgroundService
       var body = ea.Body.ToArray();
       string? eventId = null;
 
+      // Child of the aggregator's rabbitmq.publish span. Baggage.Current is an AsyncLocal,
+      // so the baggage applies to this handler (and its outgoing calls) only.
+      var parent = NotificationTelemetry.ExtractAmqpContext(ea.BasicProperties.Headers);
+      Baggage.Current = parent.Baggage;
+
       using var activity = NotificationTelemetry.Source.StartActivity(
         "rabbitmq.consume",
         ActivityKind.Consumer,
-        NotificationTelemetry.ExtractAmqpParent(ea.BasicProperties.Headers));
+        parent.ActivityContext);
 
       activity?.SetTag("messaging.system", "rabbitmq");
+      activity?.SetTag("messaging.operation.type", "process");
+      activity?.SetTag("messaging.destination.name", _queueName);
+      activity?.SetTag("messaging.message.id", ea.BasicProperties.MessageId);
       activity?.SetTag("messaging.destination", _queueName);
       activity?.SetTag("messaging.message_id", ea.BasicProperties.MessageId);
 

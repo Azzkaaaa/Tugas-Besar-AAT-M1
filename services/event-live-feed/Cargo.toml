@@ -35,6 +35,7 @@ tracing-opentelemetry = "0.32"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 
 [dev-dependencies]
+opentelemetry_sdk = { version = "0.31", features = ["testing"] }
 tokio = { version = "1", features = ["test-util"] }
 
 [profile.release]

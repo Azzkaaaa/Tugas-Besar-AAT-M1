@@ -30,6 +30,10 @@ x-envoy-env: &envoy-env
   TOKEN_EXCHANGE_URL: auth.localhost:8080/oauth/v2/token
   AUTH_ACCESS_COOKIE: bnpb_access
   AUTH_COOKIE_PREFIX: bnpb_
+  # Development only: lets a request with TRACE_ESCAPE_HATCH_HEADER read its trace id from the
+  # x-trace-id response header. Responses carry no trace identifiers otherwise.
+  TRACE_ESCAPE_HATCH_ENABLED: "${TRACE_ESCAPE_HATCH_ENABLED:-false}"
+  TRACE_ESCAPE_HATCH_HEADER: x-bnpb-trace-debug
 
 services:
   auth-db:
@@ -90,7 +94,14 @@ services:
       retries: 30
       start_period: 20s
     restart: unless-stopped
-    networks: [bnpb_net]
+    # Split-horizon DNS: inside bnpb_net the public issuer host resolves to Zitadel itself, so
+    # services fetch discovery, JWKS and tokens without hairpinning through Envoy. Browsers on
+    # the host resolve *.localhost to loopback and reach the same URL through Envoy's published
+    # port. Both views share http://auth.localhost:8080, so ZITADEL_PORT, ZITADEL_EXTERNALPORT
+    # and Envoy's published port must stay equal.
+    networks:
+      bnpb_net:
+        aliases: [auth.localhost, zitadel.local]
 
   zitadel-login:
     image: ghcr.io/zitadel/zitadel-login:v4.16.0
@@ -250,7 +261,8 @@ services:
     restart: unless-stopped
     networks:
       bnpb_net:
-        aliases: [auth.localhost, envoy.local]
+        # No auth.localhost here: that name is Zitadel's inside the network (see zitadel above).
+        aliases: [envoy.local]
 
 networks:
   bnpb_net:

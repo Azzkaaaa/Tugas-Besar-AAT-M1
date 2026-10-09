@@ -30,16 +30,20 @@ public static class NotificationTelemetry
     unit: "s",
     description: "Duration of FCM topic broadcasts in seconds");
 
-  // The aggregator injects W3C trace context into the AMQP headers. RabbitMQ.Client
-  // delivers string header values as byte[].
-  public static ActivityContext ExtractAmqpParent(IDictionary<string, object?>? headers)
+  // W3C trace context and baggage, like the Go and Rust services. Explicit rather than the
+  // SDK default so extraction does not depend on SDK initialization.
+  private static readonly TextMapPropagator AmqpPropagator =
+    new CompositeTextMapPropagator([new TraceContextPropagator(), new BaggagePropagator()]);
+
+  // The aggregator injects W3C trace context and baggage into the AMQP headers.
+  // RabbitMQ.Client delivers string header values as byte[]. Missing or malformed
+  // headers give an empty context, so the consume span starts a new trace.
+  public static PropagationContext ExtractAmqpContext(IDictionary<string, object?>? headers)
   {
     if (headers == null)
       return default;
 
-    var context = Propagators.DefaultTextMapPropagator.Extract(default, headers, ReadHeader);
-
-    return context.ActivityContext;
+    return AmqpPropagator.Extract(default, headers, ReadHeader);
   }
 
   private static IEnumerable<string> ReadHeader(IDictionary<string, object?> headers, string key)

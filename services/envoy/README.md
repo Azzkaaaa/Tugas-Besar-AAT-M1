@@ -8,7 +8,7 @@ melewati Auth bridge.
 
 | Host / prefix | Tujuan |
 | --- | --- |
-| `auth.localhost` | Zitadel; `/ui/v2/login` ke Login UI v2 |
+| `auth.localhost` | Zitadel; `/ui/v2/login` ke Login UI v2 (browser saja; di dalam Docker nama ini langsung ke Zitadel) |
 | `localhost` `/auth/` | Auth bridge (login, callback, sesi, refresh, logout) |
 | `localhost` `/api/` | Filter API (di bawah), lalu api-gateway |
 | `localhost` `/` | SPA |
@@ -17,6 +17,7 @@ melewati Auth bridge.
 
 ```
 browser ──cookie bnpb_access──► Envoy
+  0. bnpb.trace_headers (Lua)      buang header escape hatch; hapus header trace dari respons
   1. bnpb.cookie_to_bearer (Lua)   cookie → Authorization: Bearer, Origin/CSRF untuk mutasi
   2. bnpb.token_exchange (BOE)     RFC 8693 ke Zitadel: token opaque → JWT
   3. router                        api-gateway (HTTP/1.1, tanpa timeout route untuk SSE)
@@ -62,6 +63,7 @@ kosong. Nilai default ada di [`envoy.env.example`](envoy.env.example) dan anchor
 | Upstream | `ZITADEL_*`, `ZITADEL_LOGIN_*`, `AUTH_BRIDGE_*`, `SPA_*`, `API_GATEWAY_*` (`_ADDRESS`, `_PORT`) |
 | Token exchange | `TOKEN_EXCHANGE_URL`, `TOKEN_EXCHANGE_CLIENT_ID`, `TOKEN_EXCHANGE_CLIENT_SECRET` |
 | Lua | `AUTH_ACCESS_COOKIE`, `AUTH_COOKIE_PREFIX` |
+| Header trace | `TRACE_ESCAPE_HATCH_ENABLED` (`false`; hanya development), `TRACE_ESCAPE_HATCH_HEADER` |
 | Telemetri | `OTEL_COLLECTOR_ADDRESS`, `OTEL_COLLECTOR_GRPC_PORT` (OTLP/gRPC) |
 
 Envoy mengirim trace (`envoy.tracers.opentelemetry`) dan metrics (stats sink
@@ -69,6 +71,25 @@ OpenTelemetry) ke cluster `otel_collector`. Span mencatat URL lengkap, sehingga
 route `${AUTH_ROUTE_PREFIX}callback` (query berisi authorization code) memakai
 `overall_sampling` 0. Pada stack Auth mandiri host `otel-lgtm` tidak ada; ekspor
 dibuang tanpa memengaruhi routing.
+
+## Header trace
+
+Envoy adalah batas trace sistem:
+
+- Header trace dari klien dibuang oleh `early_header_mutation_extensions` sebelum
+  pemilihan route dan sebelum tracer membaca context, sehingga setiap trace dimulai di
+  Envoy. Service internal tidak terpengaruh karena memanggil Zitadel langsung
+  (split-horizon DNS; alias `auth.localhost` milik Zitadel di `bnpb_net`).
+- `templates/lua/trace_headers.lua` (filter pertama, aktif di semua route) menghapus
+  header trace dari setiap respons. Router memakai `suppress_envoy_headers`.
+- Escape hatch: bila `TRACE_ESCAPE_HATCH_ENABLED=true` dan request membawa header
+  `TRACE_ESCAPE_HATCH_HEADER` (`x-bnpb-trace-debug`), respons membawa `x-trace-id`
+  (`%TRACE_ID%`) dan header trace upstream tidak dihapus. Header escape hatch selalu
+  dibuang sebelum ke upstream.
+
+```bash
+curl -si -H 'x-bnpb-trace-debug: 1' http://localhost:8080/ | grep -i x-trace-id
+```
 
 Client ID/secret token exchange dibuat Zitadel saat provisioning. Entrypoint
 membacanya dari `/bootstrap/oidc.json` (volume `auth_client_config`, read-only),

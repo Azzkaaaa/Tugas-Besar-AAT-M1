@@ -13,7 +13,6 @@ import (
 	"time"
 
 	"github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/webhook-provider/internal/telemetry"
-	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/metric"
@@ -38,7 +37,7 @@ type Dispatcher struct {
 func New(timeout time.Duration, maxRetries int) *Dispatcher {
 	return &Dispatcher{
 		client: &http.Client{
-			Transport: otelhttp.NewTransport(http.DefaultTransport),
+			Transport: telemetry.ExternalTransport(http.DefaultTransport),
 			Timeout:   timeout,
 		},
 		maxRetries: maxRetries,

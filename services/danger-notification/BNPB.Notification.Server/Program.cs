@@ -51,11 +51,18 @@ builder.Logging.AddOpenTelemetry(options =>
 if (!string.IsNullOrWhiteSpace(builder.Configuration["OTEL_EXPORTER_OTLP_ENDPOINT"]))
   otel.UseOtlpExporter();
 
-// Push
+// Push. Firebase and Google OAuth are third parties: their HttpClients send no trace context.
 builder.Services.AddSingleton(_ =>
 {
   if (FirebaseApp.DefaultInstance == null)
-    FirebaseApp.Create(new AppOptions { Credential = GoogleCredential.GetApplicationDefault() });
+  {
+    var httpClientFactory = new ThirdPartyHttpClientFactory();
+    FirebaseApp.Create(new AppOptions
+    {
+      Credential = GoogleCredential.GetApplicationDefault().CreateWithHttpClientFactory(httpClientFactory),
+      HttpClientFactory = httpClientFactory,
+    });
+  }
 
   return FirebaseMessaging.DefaultInstance;
 });

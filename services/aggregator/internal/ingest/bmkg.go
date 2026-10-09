@@ -13,7 +13,6 @@ import (
 	"github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/aggregator/internal/store"
 	"github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/aggregator/internal/telemetry"
 	"github.com/google/uuid"
-	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
 	"go.opentelemetry.io/otel/trace"
@@ -30,7 +29,7 @@ func NewBMKGPoller(cfg *config.Config, db *store.DB) *BMKGPoller {
 		cfg: cfg,
 		db:  db,
 		client: &http.Client{
-			Transport: otelhttp.NewTransport(http.DefaultTransport),
+			Transport: telemetry.ExternalTransport(http.DefaultTransport),
 			Timeout:   cfg.BMKGRequestTimeout,
 		},
 	}

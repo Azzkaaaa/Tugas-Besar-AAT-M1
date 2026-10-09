@@ -6,6 +6,7 @@ use bnpb_common::bnpb::common::v1::View;
 use bnpb_feed::bnpb::feed::v1::event_feed_service_server::EventFeedService;
 use bnpb_feed::bnpb::feed::v1::{FeedEvent, SubscribeEventsRequest, SubscribeEventsResponse};
 use futures_util::Stream;
+use opentelemetry::trace::{SpanContext, TraceContextExt};
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 use tonic::metadata::MetadataMap;
@@ -115,6 +116,8 @@ impl Forward {
         events: mpsc::Sender<SubscribeEventsResponse>,
         end: mpsc::Sender<Status>,
     ) {
+        // The SubscribeEvents span this task is instrumented with.
+        let stream = tracing::Span::current().context().span().span_context().clone();
         loop {
             let entry = match subscription.next().await {
                 Ok(entry) => entry,
@@ -126,10 +129,30 @@ impl Forward {
             if !self.filter.matches(&entry.publication.hazard) {
                 continue;
             }
-            if events.send(self.response(&entry)).await.is_err() {
+            if events.send(self.response(&entry)).instrument(self.deliver_span(&entry, &stream)).await.is_err() {
                 return;
             }
         }
+    }
+
+    /// A child of the event's rabbitmq.consume span, linked to this subscriber's stream: the
+    /// hazard's trace shows its fan-out, and an hour-long stream trace doesn't collect every
+    /// delivery. It covers the hand-off into the stream buffer (backpressure from a slow client).
+    fn deliver_span(&self, entry: &FeedEntry, stream: &SpanContext) -> tracing::Span {
+        let span = tracing::info_span!(
+            parent: None,
+            "feed.deliver",
+            feed.sequence = entry.sequence,
+            feed.view = self.view.as_str_name(),
+            feed.lag_ms = u64::try_from(entry.stored_at.elapsed().as_millis()).unwrap_or(u64::MAX),
+            event.id = %entry.publication.event_id,
+            hazard.id = %entry.publication.hazard.hazard_id,
+        );
+        let _ = span.set_parent(telemetry::carrier_parent(&entry.publication.trace));
+        if stream.is_valid() {
+            span.add_link(stream.clone());
+        }
+        span
     }
 
     fn response(&self, entry: &FeedEntry) -> SubscribeEventsResponse {
@@ -245,6 +268,7 @@ mod tests {
                 latitude: Some(1.0),
                 ..Default::default()
             },
+            trace: Vec::new(),
         }
     }
 
@@ -307,5 +331,43 @@ mod tests {
         let status = stream.next().await.unwrap().unwrap_err();
         assert_eq!(status.code(), Code::Unauthenticated);
         assert!(stream.next().await.is_none());
+    }
+
+    /// Each delivered event gets a feed.deliver span in the event's trace, linked to the stream;
+    /// filtered-out events get none.
+    #[tokio::test]
+    async fn delivery_joins_the_event_trace_and_links_the_stream() {
+        let capture = crate::telemetry::testing::capture();
+        let (grpc, feed) = service();
+        let seismic = SubscribeEventsRequest {
+            filter: Some(HazardFilter { hazard_type: HazardType::Seismic as i32, ..Default::default() }),
+            ..Default::default()
+        };
+        let mut stream = grpc.subscribe_events(request("media", seismic)).await.unwrap().into_inner();
+
+        let consume = tracing::info_span!("rabbitmq.consume");
+        let trace_id = consume.context().span().span_context().trace_id();
+        let mut matching = publication("s1", Source::Bmkg, HazardType::Seismic);
+        matching.trace = crate::telemetry::carrier(&consume);
+        let mut filtered = publication("v1", Source::Pvmbg, HazardType::Volcanic);
+        filtered.trace = matching.trace.clone();
+        feed.ingest(filtered);
+        feed.ingest(matching);
+        assert_eq!(stream.next().await.unwrap().unwrap().event.unwrap().event_id, "s1");
+        drop(stream);
+        drop(consume);
+        tokio::task::yield_now().await;
+
+        let spans = capture.finished_spans();
+        let consume = spans.iter().find(|span| span.span_context.trace_id() == trace_id && span.name == "rabbitmq.consume").unwrap();
+        let deliveries: Vec<_> =
+            spans.iter().filter(|span| span.span_context.trace_id() == trace_id && span.name == "feed.deliver").collect();
+        assert_eq!(deliveries.len(), 1, "one delivery span, none for the filtered event");
+        let delivery = deliveries[0];
+        assert_eq!(delivery.parent_span_id, consume.span_context.span_id());
+        assert_eq!(delivery.links.len(), 1);
+        let linked = delivery.links.iter().next().unwrap().span_context.span_id();
+        let stream = spans.iter().find(|span| span.span_context.span_id() == linked).unwrap();
+        assert_eq!(stream.name, "bnpb.feed.v1.EventFeedService/SubscribeEvents");
     }
 }

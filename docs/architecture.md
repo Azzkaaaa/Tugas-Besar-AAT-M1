@@ -58,6 +58,12 @@ PostgreSQL 17. Browser membuka
 `http://auth.localhost:8080`. Kedua alamat harus konsisten dengan konfigurasi
 OIDC. Cookie aplikasi bersifat host-only dan tidak dibagikan ke host Zitadel.
 
+Nama `auth.localhost` memakai split-horizon DNS. Browser memetakannya ke loopback,
+yaitu port publik Envoy. Di dalam `bnpb_net` nama itu adalah alias jaringan Zitadel,
+sehingga Auth bridge dan service backend mengambil discovery, JWKS, dan token langsung
+dari Zitadel tanpa hairpin melalui Envoy. Issuer tetap satu URL, jadi port Zitadel
+harus sama dengan port publik Envoy (8080).
+
 1. Tombol masuk mengarahkan browser ke `GET /auth/login`. Bridge membuat
    `state`, `nonce`, dan PKCE, lalu mengarahkan browser ke Zitadel.
 2. Pengguna memasukkan kredensial di halaman Zitadel. Callback

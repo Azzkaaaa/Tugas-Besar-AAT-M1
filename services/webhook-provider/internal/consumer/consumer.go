@@ -152,18 +152,23 @@ func (c *Consumer) handleMessage(ctx context.Context, msg amqp.Delivery) {
 
 	var span trace.Span
 	if telemetry.Tracer != nil {
-		ctxMsg, span = telemetry.Tracer.Start(ctxMsg, "rabbitmq.consume")
+		// Child of the aggregator's rabbitmq.publish span; malformed headers start a new trace.
+		ctxMsg, span = telemetry.Tracer.Start(ctxMsg, "rabbitmq.consume", trace.WithSpanKind(trace.SpanKindConsumer))
 		defer span.End()
 		span.SetAttributes(
 			attribute.String("messaging.system", "rabbitmq"),
+			attribute.String("messaging.operation.type", "process"),
+			attribute.String("messaging.destination.name", c.cfg.ConsumerQueue),
+			attribute.String("messaging.message.id", msg.MessageId),
 			attribute.String("messaging.source", c.cfg.ConsumerQueue),
 			attribute.String("messaging.message_id", msg.MessageId),
 		)
 	}
+	logf := telemetry.Logf(ctxMsg)
 
 	var ev eventv1.HazardEventPublished
 	if err := proto.Unmarshal(msg.Body, &ev); err != nil {
-		log.Printf("[Consumer] Failed to unmarshal message: %v — dead-lettering", err)
+		logf("[Consumer] Failed to unmarshal message: %v — dead-lettering", err)
 		if span != nil {
 			span.RecordError(err)
 			span.SetStatus(codes.Error, "unmarshal failure")
@@ -184,7 +189,7 @@ func (c *Consumer) handleMessage(ctx context.Context, msg amqp.Delivery) {
 	}
 
 	if ev.SchemaVersion != 1 {
-		log.Printf("[Consumer] Unknown schema_version=%d for event %s — dead-lettering", ev.SchemaVersion, ev.EventId)
+		logf("[Consumer] Unknown schema_version=%d for event %s — dead-lettering", ev.SchemaVersion, ev.EventId)
 		if telemetry.ConsumerErrorsCounter != nil {
 			telemetry.ConsumerErrorsCounter.Add(ctxMsg, 1)
 		}
@@ -201,7 +206,7 @@ func (c *Consumer) handleMessage(ctx context.Context, msg amqp.Delivery) {
 
 	subs, err := c.db.ListActiveSubscriptions(ctxMsg)
 	if err != nil {
-		log.Printf("[Consumer] Failed to list subscriptions for event %s: %v — requeuing", ev.EventId, err)
+		logf("[Consumer] Failed to list subscriptions for event %s: %v — requeuing", ev.EventId, err)
 		if span != nil {
 			span.RecordError(err)
 			span.SetStatus(codes.Error, err.Error())
@@ -222,19 +227,19 @@ func (c *Consumer) handleMessage(ctx context.Context, msg amqp.Delivery) {
 		// Idempotency: skip if already successfully delivered.
 		delivered, err := c.db.IsDelivered(ctxMsg, ev.EventId, sub.WebhookID)
 		if err != nil {
-			log.Printf("[Consumer] Dedup check failed for event %s / webhook %s: %v", ev.EventId, sub.WebhookID, err)
+			logf("[Consumer] Dedup check failed for event %s / webhook %s: %v", ev.EventId, sub.WebhookID, err)
 			allOK = false
 			continue
 		}
 		if delivered {
-			log.Printf("[Consumer] Event %s already delivered to webhook %s — skipping", ev.EventId, sub.WebhookID)
+			logf("[Consumer] Event %s already delivered to webhook %s — skipping", ev.EventId, sub.WebhookID)
 			continue
 		}
 
 		view := commonv1.View(sub.View)
 		payload, err := dispatcher.BuildPayload(&ev, view)
 		if err != nil {
-			log.Printf("[Consumer] Failed building payload for event %s / webhook %s: %v", ev.EventId, sub.WebhookID, err)
+			logf("[Consumer] Failed building payload for event %s / webhook %s: %v", ev.EventId, sub.WebhookID, err)
 			allOK = false
 			continue
 		}
@@ -265,17 +270,17 @@ func (c *Consumer) handleMessage(ctx context.Context, msg amqp.Delivery) {
 		}
 
 		if err := c.db.InsertDelivery(ctxMsg, d); err != nil {
-			log.Printf("[Consumer] Failed inserting delivery log for event %s / webhook %s: %v", ev.EventId, sub.WebhookID, err)
+			logf("[Consumer] Failed inserting delivery log for event %s / webhook %s: %v", ev.EventId, sub.WebhookID, err)
 			allOK = false
 			continue
 		}
 
 		if status == "SUCCESS" {
 			if err := c.db.MarkDelivered(ctxMsg, ev.EventId, sub.WebhookID); err != nil {
-				log.Printf("[Consumer] Failed marking delivered for event %s / webhook %s: %v", ev.EventId, sub.WebhookID, err)
+				logf("[Consumer] Failed marking delivered for event %s / webhook %s: %v", ev.EventId, sub.WebhookID, err)
 			}
 		} else {
-			log.Printf("[Consumer] Delivery failed for event %s to webhook %s (url=%s): status=%d err=%v",
+			logf("[Consumer] Delivery failed for event %s to webhook %s (url=%s): status=%d err=%v",
 				ev.EventId, sub.WebhookID, sub.URL, result.StatusCode, result.Err)
 			allOK = false
 		}
@@ -285,7 +290,7 @@ func (c *Consumer) handleMessage(ctx context.Context, msg amqp.Delivery) {
 	// If any side-effect failed (DB write error), we nack with requeue so we retry.
 	// Dispatch failures alone do not block the ack — they are recorded in the delivery log.
 	if !allOK {
-		log.Printf("[Consumer] Partial failure processing event %s — nacking with requeue", ev.EventId)
+		logf("[Consumer] Partial failure processing event %s — nacking with requeue", ev.EventId)
 		_ = msg.Nack(false, true)
 	} else {
 		_ = msg.Ack(false)

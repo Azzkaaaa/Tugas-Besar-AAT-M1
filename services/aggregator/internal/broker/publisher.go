@@ -159,10 +159,16 @@ func (p *OutboxPublisher) publishOne(ctx context.Context, rec *store.OutboxRecor
 	var ctxPub context.Context
 	var span trace.Span
 	if telemetry.Tracer != nil {
-		ctxPub, span = telemetry.Tracer.Start(ctx, "rabbitmq.publish")
+		// Continue the ingest poll's trace (stored with the row) rather than the poll loop's
+		// empty context, so consumers join the trace that found the hazard.
+		parent := telemetry.ContextFromCarrier(ctx, rec.TraceContext)
+		ctxPub, span = telemetry.Tracer.Start(parent, "rabbitmq.publish", trace.WithSpanKind(trace.SpanKindProducer))
 		defer span.End()
 		span.SetAttributes(
 			attribute.String("messaging.system", "rabbitmq"),
+			attribute.String("messaging.operation.type", "publish"),
+			attribute.String("messaging.destination.name", p.cfg.RabbitMQExchange),
+			attribute.String("messaging.message.id", rec.EventID),
 			attribute.String("messaging.destination", p.cfg.RabbitMQExchange),
 			attribute.String("messaging.message_id", rec.EventID),
 			attribute.String("hazard.id", rec.HazardID),

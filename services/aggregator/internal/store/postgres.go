@@ -91,6 +91,9 @@ func (db *DB) Migrate(ctx context.Context) error {
 	ALTER TABLE outbox_events ADD COLUMN IF NOT EXISTS failed_at TIMESTAMPTZ NULL;
 	ALTER TABLE outbox_events ADD COLUMN IF NOT EXISTS last_error TEXT NULL;
 
+	-- W3C trace context of the ingest poll that enqueued the event (see EnqueueOutbox).
+	ALTER TABLE outbox_events ADD COLUMN IF NOT EXISTS trace_context JSONB NULL;
+
 	CREATE INDEX IF NOT EXISTS idx_outbox_unpublished ON outbox_events (created_at ASC) WHERE published_at IS NULL AND failed_at IS NULL;
 
 	CREATE TABLE IF NOT EXISTS outbox_dead_letters (
@@ -102,6 +105,8 @@ func (db *DB) Migrate(ctx context.Context) error {
 		failed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 		last_error TEXT
 	);
+
+	ALTER TABLE outbox_dead_letters ADD COLUMN IF NOT EXISTS trace_context JSONB NULL;
 
 	CREATE TABLE IF NOT EXISTS ingest_watermarks (
 		source_key VARCHAR(64) PRIMARY KEY,

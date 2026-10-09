@@ -15,7 +15,10 @@ docker compose --env-file .env.auth -f compose.auth.yaml ps -a
 Buka **http://localhost:8080**. Issuer dan halaman login ada di
 **http://auth.localhost:8080**. Gunakan URL ini persis agar issuer dan callback
 sesuai; port 8080 tidak boleh sedang dipakai stack Compose lain. Browser modern
-memetakan `*.localhost` ke loopback, sedangkan jaringan Docker memakai alias Envoy.
+memetakan `*.localhost` ke loopback (lalu Envoy). Di jaringan Docker nama yang sama
+adalah alias Zitadel sendiri (split-horizon DNS), sehingga service memanggil Zitadel
+langsung tanpa melewati Envoy. Karena kedua sisi memakai URL yang sama, port Zitadel
+harus sama dengan port publik Envoy (8080).
 
 | Akun Zitadel | Role project | Password awal di `.env.auth` |
 | --- | --- | --- |

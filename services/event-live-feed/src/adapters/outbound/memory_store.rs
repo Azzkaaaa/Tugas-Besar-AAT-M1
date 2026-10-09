@@ -115,6 +115,7 @@ mod tests {
             event_id: id.into(),
             published_at: None,
             hazard: HazardEvent { hazard_id: format!("hazard-{id}"), ..Default::default() },
+            trace: Vec::new(),
         }
     }
 

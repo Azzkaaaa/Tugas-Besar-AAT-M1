@@ -67,7 +67,9 @@ atau isi volume. Teman satu tim menjalankan setup yang sama untuk memperoleh
 konfigurasi lokalnya sendiri. Setup ini terpisah dari `setup_mock_env.py`.
 
 SPA di `http://localhost:8080` mengarahkan login ke Zitadel pada
-`http://auth.localhost:8080`. Client OIDC bersifat confidential dan berada di
+`http://auth.localhost:8080`. Di dalam jaringan Docker nama itu adalah alias Zitadel
+(split-horizon DNS, lihat `compose.auth.yaml`), sehingga bridge dan service backend
+memanggil Zitadel langsung, bukan melalui Envoy. Client OIDC bersifat confidential dan berada di
 Auth bridge, bukan di JavaScript SPA. Callback adalah
 `http://localhost:8080/auth/callback`. Login menggunakan Authorization Code +
 PKCE; cookie mengirim access token kepada bridge. Konfigurasi tidak memakai
@@ -309,6 +311,7 @@ deployment; variabel di atas belum menjalankan broker.
 | `NGINX_OTEL_TRACE`, `NGINX_OTEL_ENDPOINT` | `off`, `localhost:4317` (image); `on`, `otel-lgtm:4317` (`compose.yaml`) | spa-server (`ngx_otel_module`, gRPC saja) |
 | `ZITADEL_INSTRUMENTATION_*` | `auto` (`compose.yaml`) | Zitadel; `auto` membaca variabel `OTEL_*` standar |
 | `ENVOY_HEALTH_PATH` | `/healthz` | Envoy; route health tanpa trace untuk probe |
+| `TRACE_ESCAPE_HATCH_ENABLED` | `false` | Envoy; **hanya development**. Bila `true`, request dengan header `x-bnpb-trace-debug` menerima `x-trace-id` dan header trace upstream di respons |
 
 `compose.yaml` menjalankan `grafana/otel-lgtm` (Grafana `:3000`, OTLP `:4317`/`:4318`,
 Prometheus `:9090`). Sinyal yang dikirim:
@@ -356,6 +359,32 @@ waktu scrape. Nama service tetap di-resolve oleh DNS internal Docker.
 Request health tidak di-trace (api-gateway, auth-bridge, zitadel-claims, health
 gRPC pada aggregator dan webhook-provider, route health Envoy) agar trace dan
 span metrics Tempo tidak tertutup probe yang berjalan setiap beberapa detik.
+
+### Batas trace
+
+- **Masuk di Envoy.** Header trace dari klien (`traceparent`, `tracestate`, `baggage`,
+  B3, Jaeger, Datadog, X-Ray, `x-request-id`, dan sejenisnya) dibuang sebelum routing
+  (`early_header_mutation_extensions`), sehingga setiap trace dimulai di Envoy dan klien
+  tidak dapat menyambung atau memalsukan trace. `X-Correlation-ID` tetap diteruskan.
+  Header bernama dengan underscore ditolak 400.
+- **Keluar di Envoy.** `trace_headers.lua` menghapus header trace dan `x-envoy-*` dari
+  setiap respons, termasuk respons lokal Envoy.
+- **Escape hatch (development).** Dengan `TRACE_ESCAPE_HATCH_ENABLED=true`, request yang
+  membawa `x-bnpb-trace-debug` (nilai apa pun) menerima `x-trace-id` (trace ID Envoy untuk
+  dicari di Grafana) dan header trace dari upstream tidak dihapus. Header itu sendiri
+  tidak pernah diteruskan ke upstream. Jangan aktifkan di luar stack lokal.
+- **Pihak ketiga.** Panggilan ke BMKG/PVMBG (aggregator), URL subscriber webhook, serta
+  FCM dan Google OAuth (danger-notification) tetap memiliki span klien tetapi tidak
+  membawa trace context. Hop internal (gRPC, RabbitMQ, Zitadel) tetap mempropagasikan
+  W3C trace context dan baggage.
+- **Event asinkron.** Aggregator menyimpan trace context poll ingest di
+  `outbox_events.trace_context`. Publisher melanjutkan trace itu (`rabbitmq.publish`,
+  span producer) dan menyuntikkannya ke header AMQP. Ketiga consumer membuat span
+  `rabbitmq.consume` (consumer) sebagai anak span itu, termasuk baggage. Header yang
+  rusak hanya memulai trace baru; pesan tetap diproses. Event Live Feed menambahkan
+  `feed.deliver` per subscriber yang menerima event, sebagai anak `rabbitmq.consume`
+  dengan link ke span stream `SubscribeEvents`. Trace berhenti di sana: penulisan SSE
+  di api-gateway tidak memiliki span per event.
 
 ### Latensi panggilan keluar
 

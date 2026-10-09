@@ -23,6 +23,35 @@ static_resources:
                 stat_prefix: gateway
                 codec_type: AUTO
                 use_remote_address: true
+                # Header names with underscores can alias dashed names in some upstreams.
+                common_http_protocol_options:
+                  headers_with_underscores_action: REJECT_REQUEST
+                # Clients never choose the trace: their trace context is dropped before route
+                # selection and before the tracer reads it, so every trace starts here. Internal
+                # callers reach Zitadel directly (split-horizon DNS), never through this listener.
+                early_header_mutation_extensions:
+                  - name: bnpb.strip_inbound_trace_headers
+                    typed_config:
+                      "@type": type.googleapis.com/envoy.extensions.http.early_header_mutation.header_mutation.v3.HeaderMutation
+                      mutations:
+                        - remove: traceparent
+                        - remove: tracestate
+                        - remove: baggage
+                        - remove: b3
+                        - remove: x-b3-traceid
+                        - remove: x-b3-spanid
+                        - remove: x-b3-parentspanid
+                        - remove: x-b3-sampled
+                        - remove: x-b3-flags
+                        - remove: uber-trace-id
+                        - remove: x-ot-span-context
+                        - remove: grpc-trace-bin
+                        - remove: x-cloud-trace-context
+                        - remove: x-amzn-trace-id
+                        - remove: x-datadog-trace-id
+                        - remove: x-datadog-parent-id
+                        - remove: x-datadog-sampling-priority
+                        - remove: x-request-id
                 # Access logs are omitted: OIDC callbacks contain single-use codes.
                 # Spans record the full URL too, so the callback route below is never sampled.
                 tracing:
@@ -37,6 +66,10 @@ static_resources:
                       service_name: envoy
                 route_config:
                   name: gateway_routes
+                  # trace_headers.lua removes this unless the development escape hatch is on.
+                  response_headers_to_add:
+                    - header: { key: x-trace-id, value: "%TRACE_ID%" }
+                      append_action: OVERWRITE_IF_EXISTS_OR_ADD
                   virtual_hosts:
                     - name: zitadel
                       domains: ["${AUTH_HOST}", "${AUTH_HOST}:*"]
@@ -104,6 +137,15 @@ static_resources:
                           detail: "%LOCAL_REPLY_BODY%"
 
                 http_filters:
+                  # 0. Trace-header boundary: removes the escape-hatch header from requests and
+                  #    trace identifiers from responses. First, and never disabled per route, so
+                  #    it sees every response, including local replies from the filters below.
+                  - name: bnpb.trace_headers
+                    typed_config:
+                      "@type": type.googleapis.com/envoy.extensions.filters.http.lua.v3.Lua
+                      default_source_code:
+                        filename: ${ENVOY_RENDER_DIR}/lua/trace_headers.lua
+
                   # 1. Browser cookie → Authorization: Bearer, plus Origin/CSRF for mutations.
                   - name: bnpb.cookie_to_bearer
                     typed_config:
@@ -135,6 +177,8 @@ static_resources:
                   - name: envoy.filters.http.router
                     typed_config:
                       "@type": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
+                      # No x-envoy-* timing or routing details in responses.
+                      suppress_envoy_headers: true
 
   clusters:
     # --- Platform ---
