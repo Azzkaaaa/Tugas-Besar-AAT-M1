@@ -1,12 +1,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Activity, ArrowDown, ArrowRight, ArrowUpRight, Bell, BellOff, BellRing, Check, ChevronLeft, ChevronRight, Clock3, Database, Info, LayoutDashboard, LoaderCircle, LogOut, MapPin, Mountain, Radio, RefreshCw, Search, ShieldCheck, SlidersHorizontal, TriangleAlert, Waves, X } from 'lucide-react';
+import { Activity, ArrowDown, ArrowRight, ArrowUpRight, Bell, BellOff, BellRing, Check, ChevronLeft, ChevronRight, Clock3, Database, Info, LayoutDashboard, LoaderCircle, LogOut, MapPin, Mountain, Radio, RefreshCw, Search, ShieldCheck, SlidersHorizontal, TriangleAlert, Waves, Webhook, X } from 'lucide-react';
 import { createGatewayClient } from '../api';
 import { isMockDataMode } from '../config';
 import { canReadFull, roleLabels } from '../auth/demo';
 import { isNotificationWorthy, matchesFilters, upsertHazard } from '../live/merge';
 import type { PushState } from '../push/client';
 import { loadPush } from '../push/lazy';
+import { WebhookPage } from './WebhookPage';
 import type { AuthSession, DemoScenario, FeedStatus, Freshness, GatewayClient, Hazard, HazardFeedEvent, HazardFilters, HazardPage, HazardResult, Notification, NotificationPage, Severity, Source } from '../types';
+
 
 const severityLabels: Record<Severity, string> = { NORMAL: 'Normal', WASPADA: 'Waspada', SIAGA: 'Siaga', AWAS: 'Awas' };
 const timeFormatter = new Intl.DateTimeFormat('id-ID', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Jakarta' });
@@ -111,7 +113,7 @@ function PushToggle({ client }: { client: GatewayClient }) {
   </>;
 }
 
-export function DashboardPage({ session, onLogout, activePage, focusHazardId, loggingOut = false }: { session: AuthSession; onLogout: () => void; activePage: 'dashboard' | 'notifications'; focusHazardId?: string; loggingOut?: boolean }) {
+export function DashboardPage({ session, onLogout, activePage, focusHazardId, loggingOut = false }: { session: AuthSession; onLogout: () => void; activePage: 'dashboard' | 'notifications' | 'webhooks'; focusHazardId?: string; loggingOut?: boolean }) {
   const client = useMemo(() => createGatewayClient(session), [session]);
   const full = canReadFull(session);
   const [source, setSource] = useState<Source | ''>('');
@@ -253,7 +255,9 @@ export function DashboardPage({ session, onLogout, activePage, focusHazardId, lo
     client.setScenario(value); setScenario(value); setDetailId(undefined); setData(undefined); setNotifications(undefined); refresh();
   }
   function changeFilter(callback: () => void) { callback(); setSearch(''); refresh(); }
-  function navigate(page: 'dashboard' | 'notifications') { window.location.hash = page === 'dashboard' ? '/dashboard' : '/notifications'; }
+  function navigate(page: 'dashboard' | 'notifications' | 'webhooks') {
+    window.location.hash = page === 'dashboard' ? '/dashboard' : page === 'notifications' ? '/notifications' : '/webhooks';
+  }
   const items = data?.items ?? [];
   const visibleItems = items.filter(item => item.area_name.toLocaleLowerCase('id').includes(search.toLocaleLowerCase('id')));
   const attention = items.filter(item => item.severity === 'SIAGA' || item.severity === 'AWAS').length;
@@ -269,6 +273,7 @@ export function DashboardPage({ session, onLogout, activePage, focusHazardId, lo
         <nav aria-label="Menu utama">
           <button className={`nav-item ${activePage === 'dashboard' ? 'active' : ''}`} onClick={() => navigate('dashboard')} aria-current={activePage === 'dashboard' ? 'page' : undefined}><LayoutDashboard size={17} />Dashboard</button>
           <button className={`nav-item ${activePage === 'notifications' ? 'active' : ''}`} onClick={() => navigate('notifications')} aria-current={activePage === 'notifications' ? 'page' : undefined}><Bell size={17} />Notifikasi<span className="nav-count">{alerts.length}</span></button>
+          <button className={`nav-item ${activePage === 'webhooks' ? 'active' : ''}`} onClick={() => navigate('webhooks')} aria-current={activePage === 'webhooks' ? 'page' : undefined}><Webhook size={17} />Webhook</button>
         </nav>
         <div className="user-area">
           {session.mode === 'demo' && <span className="demo-chip">Akun simulasi</span>}
@@ -280,7 +285,10 @@ export function DashboardPage({ session, onLogout, activePage, focusHazardId, lo
 
       <main id="main-content" className="dashboard-main" tabIndex={-1}>
         <div className="page-heading">
-          <div><h1>{activePage === 'dashboard' ? 'Dashboard Kebencanaan' : 'Notifikasi'}</h1><p>{activePage === 'dashboard' ? 'Daftar kejadian dan status pembaruan sumber BMKG / PVMBG.' : 'Kejadian dengan tingkat bahaya Siaga dan Awas.'}</p></div>
+          <div>
+            <h1>{activePage === 'dashboard' ? 'Dashboard Kebencanaan' : activePage === 'notifications' ? 'Notifikasi' : 'Koneksi Webhook'}</h1>
+            <p>{activePage === 'dashboard' ? 'Daftar kejadian dan status pembaruan sumber BMKG / PVMBG.' : activePage === 'notifications' ? 'Kejadian dengan tingkat bahaya Siaga dan Awas.' : 'Manajemen langganan callback HTTP dan uji coba pengiriman payload bencana.'}</p>
+          </div>
           <div className="heading-actions"><span className={`live-status ${feedStatus === 'connected' ? 'connected' : ''}`}><span />{feedStatus === 'connected' ? isMockDataMode ? 'Feed simulasi aktif' : 'Feed aktif' : feedStatus === 'connecting' ? 'Menghubungkan feed' : 'Feed terputus'}</span><button className="button" onClick={refresh} disabled={loading}><RefreshCw size={15} className={loading ? 'spinning' : ''} />Perbarui</button></div>
         </div>
 
@@ -290,9 +298,13 @@ export function DashboardPage({ session, onLogout, activePage, focusHazardId, lo
         {hasUpdates && <button className="update-banner" onClick={refresh}><Radio size={16} /><span>Ada pembaruan baru. Muat kejadian terbaru</span><ArrowRight size={16} /></button>}
         {error && <div className="error-panel" role="alert"><TriangleAlert size={22} /><div><strong>Informasi belum dapat dimuat</strong><p>{error}</p>{data && <small>Data sebelumnya disimpan. Perbarui untuk memastikan kebaruannya.</small>}</div><button className="button" onClick={refresh} disabled={loading}>Coba lagi</button></div>}
 
-        <section className="sources-grid" aria-label="Status sumber informasi"><SourceCard source="BMKG" status={freshness.find(item => item.source === 'BMKG')} loading={loading} /><SourceCard source="PVMBG" status={freshness.find(item => item.source === 'PVMBG')} loading={loading} /></section>
+        {activePage !== 'webhooks' && (
+          <section className="sources-grid" aria-label="Status sumber informasi"><SourceCard source="BMKG" status={freshness.find(item => item.source === 'BMKG')} loading={loading} /><SourceCard source="PVMBG" status={freshness.find(item => item.source === 'PVMBG')} loading={loading} /></section>
+        )}
 
-        {activePage === 'dashboard' ? <>
+        {activePage === 'webhooks' ? (
+          <WebhookPage session={session} client={client} />
+        ) : activePage === 'dashboard' ? <>
           <section className="stats-grid" aria-label="Ringkasan halaman yang dimuat"><article className="stat-card"><span className="stat-icon"><Database size={19} /></span><div><p>Kejadian dimuat</p><strong>{initialLoading ? '—' : items.length}</strong><small>Pada halaman ini</small></div></article><article className="stat-card attention"><span className="stat-icon"><TriangleAlert size={19} /></span><div><p>Perlu perhatian</p><strong>{initialLoading ? '—' : attention}</strong><small>Siaga & Awas pada halaman ini</small></div></article><article className="stat-card"><span className="stat-icon"><Activity size={19} /></span><div><p>Jenis kejadian</p><strong className="stat-split">{initialLoading ? '—' : seismic}<span>seismik</span><i />{initialLoading ? '—' : items.length - seismic}<span>vulkanik</span></strong><small>Pada halaman ini</small></div></article></section>
 
           <div className="dashboard-columns"><section className="events-panel panel" aria-labelledby="events-heading"><div className="panel-heading"><div><h2 id="events-heading">Daftar kejadian<span className="count-pill">{visibleItems.length}</span></h2><p>Urutan waktu kejadian terbaru</p></div><span className="view-label"><ShieldCheck size={13} />{full ? 'Akses lengkap' : 'Ringkasan publik'}</span></div>
@@ -311,3 +323,4 @@ export function DashboardPage({ session, onLogout, activePage, focusHazardId, lo
     {detailId && <HazardDetail key={detailId} client={client} id={detailId} full={full} onClose={closeDetail} />}
   </div>;
 }
+

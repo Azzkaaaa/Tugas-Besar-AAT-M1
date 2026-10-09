@@ -9,10 +9,11 @@ import threading
 GRPC_HOST = "localhost:9094"
 BEARER_TOKEN = input("Enter auth token: ")
 
-LOCAL_PORT = 9090
+LOCAL_PORT = 9098
 # Use host.docker.internal so Docker container can send HTTP requests back to host.
-# (If on Linux native Docker without host-gateway enabled, use http://172.17.0.1:9090/webhook)
+# (If on Linux native Docker without host-gateway enabled, use http://172.17.0.1:9098/webhook)
 CALLBACK_URL = f"http://host.docker.internal:{LOCAL_PORT}/webhook"
+
 # =====================================================================
 
 webhook_id = None

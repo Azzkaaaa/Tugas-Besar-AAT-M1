@@ -37,10 +37,12 @@ export function createHttpGatewayClient(baseUrl = apiBaseUrl): GatewayClient {
     throw new ApiError(400, 'Alamat Gateway harus berada pada origin yang sama dengan frontend.');
   }
   const basePath = resolved.pathname.replace(/\/+$/, '');
-  async function authorizedFetch(path: string, options: RequestOptions = {}, extraHeaders: Record<string, string> = {}, body?: unknown): Promise<Response> {
+  async function authorizedFetch(path: string, options: RequestOptions = {}, extraHeaders: Record<string, string> = {}, body?: unknown, method?: string): Promise<Response> {
     try {
+      const httpMethod = method ?? (body !== undefined ? 'POST' : 'GET');
       const init: RequestInit = {
-        ...(body !== undefined && { method: 'POST', body: JSON.stringify(body) }),
+        ...(httpMethod !== 'GET' && { method: httpMethod }),
+        ...(body !== undefined && { body: JSON.stringify(body) }),
         headers: { Accept: 'application/json', ...(body !== undefined && { 'Content-Type': 'application/json' }), ...extraHeaders },
         signal: options.signal,
         cache: 'no-store',
@@ -68,10 +70,17 @@ export function createHttpGatewayClient(baseUrl = apiBaseUrl): GatewayClient {
   }
 
   /** The CSRF nonce survives a refresh, so the single retry may reuse it. */
-  async function mutate(path: string, body: unknown, options?: RequestOptions): Promise<void> {
-    const response = await authorizedFetch(path, options, { 'X-CSRF-Token': await getCsrfToken() }, body);
+  async function mutate(path: string, body?: unknown, options?: RequestOptions, method = 'POST'): Promise<void> {
+    const response = await authorizedFetch(path, options, { 'X-CSRF-Token': await getCsrfToken() }, body, method);
     if (!response.ok) throw await readProblem(response);
     await response.body?.cancel();
+  }
+
+  async function mutateWithResponse<T>(path: string, method = 'POST', body?: unknown, options?: RequestOptions): Promise<T> {
+    const response = await authorizedFetch(path, options, { 'X-CSRF-Token': await getCsrfToken() }, body, method);
+    if (!response.ok) throw await readProblem(response);
+    try { return await response.json() as T; }
+    catch { throw new ApiError(502, 'Format respons Gateway belum sesuai kontrak.'); }
   }
 
   return {
@@ -81,6 +90,13 @@ export function createHttpGatewayClient(baseUrl = apiBaseUrl): GatewayClient {
     getSourceStatuses: (options) => request('/hazards/sources/statuses', options),
     registerPushToken: (token, options) => mutate('/notifications/push/register', { fcm_token: token }, options),
     unregisterPushToken: (token, options) => mutate('/notifications/push/unregister', { fcm_token: token }, options),
+    listWebhooks: (options) => request('/webhooks', options),
+    createWebhook: (payload, options) => mutateWithResponse('/webhooks', 'POST', payload, options),
+    getWebhook: (id, options) => request(`/webhooks/${encodeURIComponent(id)}`, options),
+    deleteWebhook: (id, options) => mutate(`/webhooks/${encodeURIComponent(id)}`, undefined, options, 'DELETE'),
+    listWebhookDeliveries: (id, options) => request(`/webhooks/${encodeURIComponent(id)}/deliveries`, options),
+    pingWebhook: (id, options) => mutateWithResponse(`/webhooks/${encodeURIComponent(id)}/test`, 'POST', {}, options),
+
     subscribe(onEvent, onStatus, onReset) {
       let stopped = false;
       let cursor = '';

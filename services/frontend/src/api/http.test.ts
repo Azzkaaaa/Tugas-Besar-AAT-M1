@@ -88,4 +88,79 @@ describe('Gateway HTTP adapter', () => {
     vi.mocked(getCsrfToken).mockResolvedValue('csrf-test');
     await expect(createHttpGatewayClient().unregisterPushToken('fcm-test')).rejects.toMatchObject({ status: 403 });
   });
+
+  it('performs webhook operations with proper paths, methods, and CSRF token', async () => {
+    const webhookItem = {
+      webhook_id: 'wh-123',
+      url: 'http://host.docker.internal:9090/webhook',
+      view: 'full',
+      is_active: true,
+      owner_client_id: 'user-1',
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    };
+    const deliveriesItem = {
+      items: [{
+        delivery_id: 'del-1',
+        webhook_id: 'wh-123',
+        event_id: 'evt-1',
+        hazard_id: 'haz-1',
+        status_code: 200,
+        status: 'SUCCESS',
+        attempt: 1,
+        duration_ms: 25,
+        delivered_at: new Date().toISOString(),
+      }],
+    };
+    const pingResult = { status_code: 200, duration_ms: 30, success: true, message: 'ok' };
+
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ items: [webhookItem] }), { headers: { 'Content-Type': 'application/json' } }))
+      .mockResolvedValueOnce(new Response(JSON.stringify(webhookItem), { status: 201, headers: { 'Content-Type': 'application/json' } }))
+      .mockResolvedValueOnce(new Response(JSON.stringify(webhookItem), { headers: { 'Content-Type': 'application/json' } }))
+      .mockResolvedValueOnce(new Response(null, { status: 204 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify(deliveriesItem), { headers: { 'Content-Type': 'application/json' } }))
+      .mockResolvedValueOnce(new Response(JSON.stringify(pingResult), { headers: { 'Content-Type': 'application/json' } }));
+
+    vi.stubGlobal('fetch', fetchMock);
+    vi.mocked(getCsrfToken).mockResolvedValue('csrf-token-xyz');
+
+    const client = createHttpGatewayClient();
+
+    // 1. List
+    const list = await client.listWebhooks();
+    expect(list.items).toHaveLength(1);
+    expect(fetchMock.mock.calls[0][0]).toContain('/webhooks');
+
+    // 2. Create
+    const created = await client.createWebhook({ url: 'http://host.docker.internal:9090/webhook', view: 'full' });
+    expect(created.webhook_id).toBe('wh-123');
+    expect(fetchMock.mock.calls[1][0]).toContain('/webhooks');
+    expect(fetchMock.mock.calls[1][1].method).toBe('POST');
+    expect(fetchMock.mock.calls[1][1].headers['X-CSRF-Token']).toBe('csrf-token-xyz');
+
+    // 3. Get
+    const get = await client.getWebhook('wh-123');
+    expect(get.webhook_id).toBe('wh-123');
+    expect(fetchMock.mock.calls[2][0]).toContain('/webhooks/wh-123');
+
+    // 4. Delete
+    await client.deleteWebhook('wh-123');
+    expect(fetchMock.mock.calls[3][0]).toContain('/webhooks/wh-123');
+    expect(fetchMock.mock.calls[3][1].method).toBe('DELETE');
+    expect(fetchMock.mock.calls[3][1].headers['X-CSRF-Token']).toBe('csrf-token-xyz');
+
+    // 5. Deliveries
+    const deliveries = await client.listWebhookDeliveries('wh-123');
+    expect(deliveries.items).toHaveLength(1);
+    expect(fetchMock.mock.calls[4][0]).toContain('/webhooks/wh-123/deliveries');
+
+    // 6. Ping / Test
+    const ping = await client.pingWebhook('wh-123');
+    expect(ping.success).toBe(true);
+    expect(fetchMock.mock.calls[5][0]).toContain('/webhooks/wh-123/test');
+    expect(fetchMock.mock.calls[5][1].method).toBe('POST');
+    expect(fetchMock.mock.calls[5][1].headers['X-CSRF-Token']).toBe('csrf-token-xyz');
+  });
 });
+

@@ -1,5 +1,5 @@
 import { isDemoMode } from '../config';
-import type { AuthSession, Role } from '../types';
+import type { AuthSession, Role, WebhookView } from '../types';
 
 export const roleLabels: Record<Role, string> = {
   MEDIA: 'Media',
@@ -8,9 +8,9 @@ export const roleLabels: Record<Role, string> = {
 };
 
 const accounts: AuthSession[] = [
-  { id: 'demo-media', name: 'Ruang Media', role: 'MEDIA', scopes: ['hazards:read:summary', 'notifications:read'], mode: 'demo' },
-  { id: 'demo-field', name: 'Tim Lapangan', role: 'FIELD_TEAM', scopes: ['hazards:read:summary', 'hazards:read:full', 'notifications:read'], mode: 'demo' },
-  { id: 'demo-bnpb', name: 'Pusat Kendali BNPB', role: 'BNPB_INTERNAL', scopes: ['hazards:read:summary', 'hazards:read:full', 'notifications:read'], mode: 'demo' },
+  { id: 'demo-media', name: 'Ruang Media', role: 'MEDIA', scopes: ['hazards:read:summary', 'notifications:read', 'webhooks:read'], mode: 'demo' },
+  { id: 'demo-field', name: 'Tim Lapangan', role: 'FIELD_TEAM', scopes: ['hazards:read:summary', 'hazards:read:full', 'notifications:read', 'webhooks:read', 'webhooks:write'], mode: 'demo' },
+  { id: 'demo-bnpb', name: 'Pusat Kendali BNPB', role: 'BNPB_INTERNAL', scopes: ['hazards:read:summary', 'hazards:read:full', 'notifications:read', 'webhooks:read', 'webhooks:write'], mode: 'demo' },
 ];
 
 /** These are fixture identities, never credentials or bearer tokens. */
@@ -30,3 +30,22 @@ export function getDemoSession(role: Role): AuthSession {
 export function canReadFull(session: Pick<AuthSession, 'scopes'>): boolean {
   return session.scopes.includes('hazards:read:summary') && session.scopes.includes('hazards:read:full');
 }
+
+export function canManageWebhooks(session: Pick<AuthSession, 'role' | 'scopes'>): boolean {
+  return session.role === 'FIELD_TEAM' || session.role === 'BNPB_INTERNAL' || session.scopes.includes('webhooks:write');
+}
+
+export function getAllowedWebhookViews(session: Pick<AuthSession, 'role' | 'scopes'>): WebhookView[] {
+  if (session.role === 'FIELD_TEAM' || session.role === 'BNPB_INTERNAL' || canReadFull(session)) {
+    return ['summary', 'full'];
+  }
+  return ['summary'];
+}
+
+export function getDefaultWebhookView(session: Pick<AuthSession, 'role' | 'scopes'>): WebhookView {
+  if (session.role === 'FIELD_TEAM' || session.role === 'BNPB_INTERNAL' || canReadFull(session)) {
+    return 'full';
+  }
+  return 'summary';
+}
+

@@ -91,6 +91,76 @@ export interface RequestOptions {
   signal?: AbortSignal;
 }
 
+export interface Problem {
+  type: string;
+  title: string;
+  status: number;
+  detail: string;
+  instance: string;
+  correlation_id: string;
+}
+
+export type WebhookView = 'summary' | 'full';
+export type WebhookDeliveryStatus = 'SUCCESS' | 'FAILED' | 'RETRYING';
+
+export interface WebhookFilter {
+  source?: Source;
+  hazard_type?: HazardType;
+  severity?: Severity;
+  since?: string;
+  until?: string;
+}
+
+export interface WebhookSubscription {
+  webhook_id: string;
+  url: string;
+  filter?: WebhookFilter;
+  view: WebhookView;
+  is_active: boolean;
+  description?: string;
+  owner_client_id: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface WebhookDelivery {
+  delivery_id: string;
+  webhook_id: string;
+  event_id: string;
+  hazard_id: string;
+  status_code: number;
+  status: WebhookDeliveryStatus;
+  attempt: number;
+  duration_ms: number;
+  error_message?: string;
+  delivered_at: string;
+}
+
+export interface WebhookPage {
+  items: WebhookSubscription[];
+  next_page_token?: string;
+}
+
+export interface WebhookDeliveryPage {
+  items: WebhookDelivery[];
+  next_page_token?: string;
+}
+
+export interface CreateWebhookPayload {
+  url: string;
+  secret?: string;
+  description?: string;
+  view?: WebhookView;
+  filter?: WebhookFilter;
+}
+
+export interface PingWebhookResult {
+  status_code: number;
+  duration_ms: number;
+  success: boolean;
+  message?: string;
+}
+
 export interface GatewayClient {
   listHazards(filters?: HazardFilters, options?: RequestOptions): Promise<HazardPage>;
   getHazard(id: string, view?: HazardView, options?: RequestOptions): Promise<HazardResult>;
@@ -106,13 +176,13 @@ export interface GatewayClient {
   unregisterPushToken(token: string, options?: RequestOptions): Promise<void>;
   /** Only the development fixture adapter supports scenario controls. */
   setScenario(scenario: DemoScenario): void;
+
+  /** Webhook operations */
+  listWebhooks(options?: RequestOptions): Promise<WebhookPage>;
+  createWebhook(payload: CreateWebhookPayload, options?: RequestOptions): Promise<WebhookSubscription>;
+  getWebhook(id: string, options?: RequestOptions): Promise<WebhookSubscription>;
+  deleteWebhook(id: string, options?: RequestOptions): Promise<void>;
+  listWebhookDeliveries(id: string, options?: RequestOptions): Promise<WebhookDeliveryPage>;
+  pingWebhook(id: string, options?: RequestOptions): Promise<PingWebhookResult>;
 }
 
-export interface Problem {
-  type: string;
-  title: string;
-  status: number;
-  detail: string;
-  instance: string;
-  correlation_id: string;
-}

@@ -3,8 +3,10 @@ import { ApiError } from '../api/errors';
 import type {
   AuthSession, DemoScenario, FeedStatus, Freshness, GatewayClient, Hazard, HazardFeedEvent,
   HazardFilters, HazardFull, HazardView, Notification, RequestOptions, Source,
+  WebhookDelivery, WebhookSubscription,
 } from '../types';
 import { createFixture, createFixtures } from './fixtures';
+
 
 const sources: Source[] = ['BMKG', 'PVMBG'];
 const severities = ['NORMAL', 'WASPADA', 'SIAGA', 'AWAS'];
@@ -150,6 +152,36 @@ export function createMockGatewayClient(session: AuthSession, latencyMs = 350): 
     for (const listener of listeners) listener.event(structuredClone(event));
   }
 
+  const mockWebhooks: WebhookSubscription[] = [
+    {
+      webhook_id: 'wh-demo-local-01',
+      url: 'http://host.docker.internal:9090/webhook',
+      description: 'Local Docker Webhook Listener',
+      view: canReadFull(identity) ? 'full' : 'summary',
+      is_active: true,
+      owner_client_id: identity.id,
+      created_at: new Date(Date.now() - 3600_000).toISOString(),
+      updated_at: new Date(Date.now() - 3600_000).toISOString(),
+      filter: {},
+    },
+  ];
+
+  const mockDeliveries = new Map<string, WebhookDelivery[]>([
+    ['wh-demo-local-01', [
+      {
+        delivery_id: 'del-demo-01',
+        webhook_id: 'wh-demo-local-01',
+        event_id: 'evt-demo-1',
+        hazard_id: 'haz-bmkg-1',
+        status_code: 200,
+        status: 'SUCCESS',
+        attempt: 1,
+        duration_ms: 45,
+        delivered_at: new Date(Date.now() - 1800_000).toISOString(),
+      },
+    ]],
+  ]);
+
   return {
     async listHazards(filters = {}, options) {
       const selected = selection(filters);
@@ -193,6 +225,72 @@ export function createMockGatewayClient(session: AuthSession, latencyMs = 350): 
       await wait(latencyMs, options?.signal);
       return { freshness: freshness() };
     },
+    async listWebhooks(options) {
+      if (!identity.scopes.includes('webhooks:read')) throw new ApiError(403, 'Akun ini tidak memiliki akses ke webhooks.');
+      await beforeRead(options);
+      return { items: structuredClone(mockWebhooks) };
+    },
+    async createWebhook(payload, options) {
+      if (!identity.scopes.includes('webhooks:write')) throw new ApiError(403, 'Akun ini tidak memiliki akses untuk membuat webhook.');
+      if (payload.view === 'full' && !canReadFull(identity)) throw new ApiError(403, 'Tampilan data lengkap memerlukan hak akses full view.');
+      if (!payload.url || (!payload.url.startsWith('http://') && !payload.url.startsWith('https://'))) {
+        throw new ApiError(400, 'Alamat URL webhook harus diawali dengan http:// atau https://.');
+      }
+      await beforeRead(options);
+      const sub: WebhookSubscription = {
+        webhook_id: `wh-demo-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`,
+        url: payload.url.trim(),
+        description: payload.description?.trim(),
+        view: payload.view ?? (canReadFull(identity) ? 'full' : 'summary'),
+        filter: payload.filter,
+        is_active: true,
+        owner_client_id: identity.id,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      };
+      mockWebhooks.unshift(sub);
+      return structuredClone(sub);
+    },
+    async getWebhook(id, options) {
+      if (!identity.scopes.includes('webhooks:read')) throw new ApiError(403, 'Akun ini tidak memiliki akses ke webhooks.');
+      await beforeRead(options);
+      const item = mockWebhooks.find((w) => w.webhook_id === id);
+      if (!item) throw new ApiError(404, 'Webhook tidak ditemukan.');
+      return structuredClone(item);
+    },
+    async deleteWebhook(id, options) {
+      if (!identity.scopes.includes('webhooks:write')) throw new ApiError(403, 'Akun ini tidak memiliki akses untuk menghapus webhook.');
+      await beforeRead(options);
+      const idx = mockWebhooks.findIndex((w) => w.webhook_id === id);
+      if (idx < 0) throw new ApiError(404, 'Webhook tidak ditemukan.');
+      mockWebhooks.splice(idx, 1);
+    },
+    async listWebhookDeliveries(id, options) {
+      if (!identity.scopes.includes('webhooks:read')) throw new ApiError(403, 'Akun ini tidak memiliki akses ke pengiriman webhook.');
+      await beforeRead(options);
+      return { items: structuredClone(mockDeliveries.get(id) ?? []) };
+    },
+    async pingWebhook(id, options) {
+      if (!identity.scopes.includes('webhooks:write')) throw new ApiError(403, 'Akun ini tidak memiliki akses untuk menguji webhook.');
+      await beforeRead(options);
+      const item = mockWebhooks.find((w) => w.webhook_id === id);
+      if (!item) throw new ApiError(404, 'Webhook tidak ditemukan.');
+      const del: WebhookDelivery = {
+        delivery_id: `del-demo-${Date.now().toString(36)}`,
+        webhook_id: id,
+        event_id: `ping-${Date.now()}`,
+        hazard_id: 'test-ping',
+        status_code: 200,
+        status: 'SUCCESS',
+        attempt: 1,
+        duration_ms: 32 + Math.floor(Math.random() * 20),
+        delivered_at: new Date().toISOString(),
+      };
+      const current = mockDeliveries.get(id) ?? [];
+      current.unshift(del);
+      mockDeliveries.set(id, current);
+      return { status_code: 200, duration_ms: del.duration_ms, success: true, message: 'Endpoint HTTP 200 OK' };
+    },
     subscribe(onEvent, onStatus) {
       requireView('summary');
       const listener = { event: onEvent, status: onStatus };
@@ -218,3 +316,4 @@ export function createMockGatewayClient(session: AuthSession, latencyMs = 350): 
     },
   };
 }
+

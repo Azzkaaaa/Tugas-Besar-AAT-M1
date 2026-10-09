@@ -83,7 +83,7 @@ export default function App() {
   useEffect(() => {
     if (loading || error && !session) return;
     const path = route.split('?')[0];
-    const allowed = session ? ['#/dashboard', '#/notifications'] : ['#/login'];
+    const allowed = session ? ['#/dashboard', '#/notifications', '#/webhooks'] : ['#/login'];
     if (!allowed.includes(path)) window.location.replace(allowed[0]);
   }, [route, session, loading, error]);
 
@@ -128,6 +128,13 @@ export default function App() {
   </>;
   return <>
     {error && <div className="auth-status" role="alert"><p>{error}</p></div>}
-    <DashboardPage session={session} onLogout={() => { void logout(); }} loggingOut={loggingOut} activePage={path === '#/notifications' ? 'notifications' : 'dashboard'} focusHazardId={path === '#/notifications' ? new URLSearchParams(query).get('hazard') ?? undefined : undefined} />
+    <DashboardPage
+      session={session}
+      onLogout={() => { void logout(); }}
+      loggingOut={loggingOut}
+      activePage={path === '#/notifications' ? 'notifications' : path === '#/webhooks' ? 'webhooks' : 'dashboard'}
+      focusHazardId={path === '#/notifications' ? new URLSearchParams(query).get('hazard') ?? undefined : undefined}
+    />
   </>;
 }
+
