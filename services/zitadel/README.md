@@ -58,7 +58,7 @@ provisioning selesai. Script membuat:
   terdaftar adalah `http://localhost:8080/auth/callback`;
 - application API untuk introspection;
 - application OIDC `BNPB gateway token exchange` dengan grant type token exchange
-  dan access token JWT, dipakai filter token exchange Envoy. Aplikasi ini berada di
+  dan access token JWT, dipakai service `token-exchange` (ext_authz Envoy). Aplikasi ini berada di
   project yang sama karena Zitadel hanya menukar token yang audiensnya memuat
   project tersebut;
 - application OIDC `BNPB event feed token exchange` dengan grant yang sama. Event Live

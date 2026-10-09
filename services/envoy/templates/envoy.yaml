@@ -110,7 +110,7 @@ static_resources:
                           route: { cluster: auth_bridge, timeout: 30s }
                           typed_per_filter_config: *api_filters_disabled
 
-                        # Authenticated and exchanged above; api-gateway implements the REST
+                        # Authenticated and exchanged above (bnpb.token_exchange); api-gateway implements the REST
                         # contract. No route timeout: feeds are long-lived SSE responses kept
                         # alive by the gateway's heartbeat comments.
                         - match: { prefix: "${API_ROUTE_PREFIX}" }
@@ -153,26 +153,24 @@ static_resources:
                       default_source_code:
                         filename: ${ENVOY_RENDER_DIR}/lua/cookie_to_bearer.lua
 
-                  # 2. RFC 8693: exchange the opaque Zitadel access token for a JWT that
-                  #    carries the role/scopes claims appended by the Auth bridge action.
+                  # 2. RFC 8693: the token-exchange service swaps the opaque Zitadel access token
+                  #    for a JWT carrying the role/scopes claims appended by the claims action.
+                  #    Envoy traces the Check call and propagates its context to the service.
                   - name: bnpb.token_exchange
                     typed_config:
-                      "@type": type.googleapis.com/envoy.extensions.filters.http.dynamic_modules.v3.DynamicModuleFilter
-                      dynamic_module_config:
-                        name: composer
-                        load_globally: true
-                        metrics_namespace: builtonenvoy
-                      filter_name: token-exchange
-                      filter_config:
-                        "@type": type.googleapis.com/google.protobuf.StringValue
-                        value: |
-                          {
-                            "cluster": "zitadel",
-                            "token_exchange_url": "${TOKEN_EXCHANGE_URL}",
-                            "client_id": "${TOKEN_EXCHANGE_CLIENT_ID}",
-                            "client_secret": "${TOKEN_EXCHANGE_CLIENT_SECRET}",
-                            "requested_token_type": "urn:ietf:params:oauth:token-type:jwt"
-                          }
+                      "@type": type.googleapis.com/envoy.extensions.filters.http.ext_authz.v3.ExtAuthz
+                      transport_api_version: V3
+                      grpc_service:
+                        envoy_grpc: { cluster_name: token_exchange }
+                        # Longer than the service's own Zitadel timeout, so its 502 wins.
+                        timeout: ${TOKEN_EXCHANGE_TIMEOUT}
+                      # Unreachable service: fail closed with the same status as an unreachable Zitadel.
+                      failure_mode_allow: false
+                      status_on_error: { code: BadGateway }
+                      # Only the bearer token leaves Envoy; no cookies, paths or client addresses.
+                      allowed_headers:
+                        patterns: [{ exact: authorization }]
+                      include_peer_certificate: false
 
                   - name: envoy.filters.http.router
                     typed_config:
@@ -221,6 +219,16 @@ static_resources:
         endpoints:
           - lb_endpoints:
               - endpoint: { address: { socket_address: { address: ${SPA_ADDRESS}, port_value: ${SPA_PORT} } } }
+
+    - name: token_exchange
+      type: STRICT_DNS
+      connect_timeout: 5s
+      typed_extension_protocol_options: *http2
+      load_assignment:
+        cluster_name: token_exchange
+        endpoints:
+          - lb_endpoints:
+              - endpoint: { address: { socket_address: { address: ${TOKEN_EXCHANGE_ADDRESS}, port_value: ${TOKEN_EXCHANGE_PORT} } } }
 
     # --- Business API (backends absent in the standalone Auth stack → 503 problem) ---
     - name: api_gateway

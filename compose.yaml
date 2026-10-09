@@ -53,6 +53,18 @@ services:
       otel-lgtm:
         condition: service_started
 
+  token-exchange:
+    extends:
+      file: compose.auth.yaml
+      service: token-exchange
+    environment:
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-lgtm:4318
+      OTEL_EXPORTER_OTLP_PROTOCOL: http/protobuf
+      OTEL_SERVICE_NAME: token-exchange
+    depends_on:
+      otel-lgtm:
+        condition: service_started
+
   api-gateway:
     extends:
       file: compose.auth.yaml

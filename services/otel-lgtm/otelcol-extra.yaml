@@ -36,6 +36,7 @@ receivers:
             - { targets: ["feed-service:9093"], labels: { service: feed-service } }
             - { targets: ["webhook-provider:9094"], labels: { service: webhook-provider } }
             - { targets: ["notification-service:9095"], labels: { service: notification-service } }
+            - { targets: ["token-exchange:9000"], labels: { service: token-exchange } }
           relabel_configs: &probe_relabel
             - { source_labels: [__address__], target_label: __param_target }
             - { source_labels: [__param_target], target_label: instance }

@@ -27,7 +27,10 @@ x-envoy-env: &envoy-env
   # OTLP/gRPC collector (otel-lgtm in compose.yaml; absent here, so traces are dropped).
   OTEL_COLLECTOR_ADDRESS: otel-lgtm
   OTEL_COLLECTOR_GRPC_PORT: "4317"
-  TOKEN_EXCHANGE_URL: auth.localhost:8080/oauth/v2/token
+  # ext_authz gRPC service that performs the RFC 8693 exchange (see token-exchange below).
+  TOKEN_EXCHANGE_ADDRESS: token-exchange
+  TOKEN_EXCHANGE_PORT: "9000"
+  TOKEN_EXCHANGE_TIMEOUT: 6s
   AUTH_ACCESS_COOKIE: bnpb_access
   AUTH_COOKIE_PREFIX: bnpb_
   # Development only: lets a request with TRACE_ESCAPE_HATCH_HEADER read its trace id from the
@@ -243,6 +246,32 @@ services:
       bnpb_net:
         aliases: [api-gateway.local]
 
+  # Envoy ext_authz target: exchanges the opaque access token for a JWT (RFC 8693) with the
+  # gateway client from oidc.json, in a traced call to Zitadel.
+  token-exchange:
+    build: ./services/token-exchange
+    environment:
+      TOKEN_EXCHANGE_GRPC_PORT: "9000"
+      # Split-horizon DNS: auth.localhost is Zitadel itself inside bnpb_net.
+      TOKEN_EXCHANGE_URL: http://auth.localhost:8080/oauth/v2/token
+      TOKEN_EXCHANGE_TIMEOUT_MS: "5000"
+      OIDC_CONFIG_FILE: /bootstrap/oidc.json
+    volumes:
+      # Gateway token-exchange client written by auth-bootstrap.
+      - auth_client_config:/bootstrap:ro
+    depends_on:
+      auth-bootstrap: {condition: service_completed_successfully}
+      zitadel: {condition: service_healthy}
+    healthcheck:
+      test: [CMD, /token-exchange, --healthcheck]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+    networks:
+      bnpb_net:
+        aliases: [token-exchange.local]
+
   # Edge proxy: SPA, Auth bridge, hosted login, and cookie → token exchange → api-gateway.
   envoy:
     build:
@@ -250,11 +279,8 @@ services:
       dockerfile: services/envoy/Dockerfile
     environment: *envoy-env
     ports: ["127.0.0.1:8080:8080"]
-    volumes:
-      # Gateway token-exchange client written by auth-bootstrap.
-      - auth_client_config:/bootstrap:ro
     depends_on:
-      auth-bootstrap: {condition: service_completed_successfully}
+      token-exchange: {condition: service_healthy}
       auth-bridge: {condition: service_healthy}
       zitadel-login: {condition: service_healthy}
       api-gateway: {condition: service_healthy}

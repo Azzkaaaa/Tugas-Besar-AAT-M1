@@ -17,10 +17,10 @@ melewati Auth bridge.
 
 ```
 browser ──cookie bnpb_access──► Envoy
-  0. bnpb.trace_headers (Lua)      buang header escape hatch; hapus header trace dari respons
-  1. bnpb.cookie_to_bearer (Lua)   cookie → Authorization: Bearer, Origin/CSRF untuk mutasi
-  2. bnpb.token_exchange (BOE)     RFC 8693 ke Zitadel: token opaque → JWT
-  3. router                        api-gateway (HTTP/1.1, tanpa timeout route untuk SSE)
+  0. bnpb.trace_headers (Lua)          buang header escape hatch; hapus header trace dari respons
+  1. bnpb.cookie_to_bearer (Lua)       cookie → Authorization: Bearer, Origin/CSRF untuk mutasi
+  2. bnpb.token_exchange (ext_authz)   gRPC ke token-exchange: token opaque → JWT (RFC 8693)
+  3. router                            api-gateway (HTTP/1.1, tanpa timeout route untuk SSE)
 ```
 
 - **Cookie ke bearer.** Cookie tidak pernah diteruskan ke service. Request yang
@@ -28,12 +28,15 @@ browser ──cookie bnpb_access──► Envoy
   cookie wajib membawa `Origin` aplikasi dan header `X-CSRF-Token`; halaman lintas
   origin tidak dapat mengirim header khusus tanpa preflight CORS, dan CORS tidak
   diaktifkan.
-- **Token exchange.** Filter [`token-exchange`](https://builtonenvoy.io/extensions/token-exchange/)
-  dari Built On Envoy v0.6.2 (dynamic module `libcomposer.so`, Envoy 1.38) memakai
-  client `BNPB gateway token exchange` dan meminta
-  `urn:ietf:params:oauth:token-type:jwt`. Token kedaluwarsa atau dicabut
+- **Token exchange.** Filter `ext_authz` (gRPC v3) memanggil service
+  [`token-exchange`](../token-exchange/README.md), yang memakai client
+  `BNPB gateway token exchange` dan meminta `urn:ietf:params:oauth:token-type:jwt`.
+  Hanya header `authorization` yang dikirim dalam `CheckRequest`. Bila berhasil,
+  `authorization` upstream ditimpa dengan JWT. Token kedaluwarsa atau dicabut
   menghasilkan 401, sehingga SPA melakukan `/auth/refresh` lalu mengulang request.
-  Zitadel tidak dapat dihubungi menghasilkan 502.
+  Zitadel atau service `token-exchange` tidak dapat dihubungi menghasilkan 502
+  (`status_on_error`, fail closed). Panggilan `Check` di-trace Envoy, dan service
+  meneruskan `traceparent` ke Zitadel.
 - **Scope.** JWT hasil exchange membawa klaim `role` dan `scopes` yang ditambahkan
   Zitadel melalui Actions v2 target
   [`zitadel-claims`](../zitadel-claims/README.md). Envoy hanya mengautentikasi;
@@ -61,7 +64,7 @@ kosong. Nilai default ada di [`envoy.env.example`](envoy.env.example) dan anchor
 | Listener dan host | `ENVOY_LISTEN_PORT`, `ENVOY_HEALTH_PATH`, `APP_HOST`, `APP_ORIGIN`, `AUTH_HOST` |
 | Prefix route | `AUTH_ROUTE_PREFIX`, `API_ROUTE_PREFIX`, `LOGIN_UI_ROUTE_PREFIX` |
 | Upstream | `ZITADEL_*`, `ZITADEL_LOGIN_*`, `AUTH_BRIDGE_*`, `SPA_*`, `API_GATEWAY_*` (`_ADDRESS`, `_PORT`) |
-| Token exchange | `TOKEN_EXCHANGE_URL`, `TOKEN_EXCHANGE_CLIENT_ID`, `TOKEN_EXCHANGE_CLIENT_SECRET` |
+| Token exchange | `TOKEN_EXCHANGE_ADDRESS`, `TOKEN_EXCHANGE_PORT` (gRPC), `TOKEN_EXCHANGE_TIMEOUT` (timeout ext_authz, lebih panjang dari timeout Zitadel di service) |
 | Lua | `AUTH_ACCESS_COOKIE`, `AUTH_COOKIE_PREFIX` |
 | Header trace | `TRACE_ESCAPE_HATCH_ENABLED` (`false`; hanya development), `TRACE_ESCAPE_HATCH_HEADER` |
 | Telemetri | `OTEL_COLLECTOR_ADDRESS`, `OTEL_COLLECTOR_GRPC_PORT` (OTLP/gRPC) |
@@ -91,12 +94,12 @@ Envoy adalah batas trace sistem:
 curl -si -H 'x-bnpb-trace-debug: 1' http://localhost:8080/ | grep -i x-trace-id
 ```
 
-Client ID/secret token exchange dibuat Zitadel saat provisioning. Entrypoint
-membacanya dari `/bootstrap/oidc.json` (volume `auth_client_config`, read-only),
-sehingga Envoy baru mulai setelah `auth-bootstrap` selesai.
+Client ID/secret token exchange dibuat Zitadel saat provisioning dan dibaca
+service `token-exchange` dari `/bootstrap/oidc.json`; Envoy tidak memegang secret
+apa pun. Envoy baru mulai setelah `token-exchange` sehat.
 
-Image dibangun dari root repository: tahap pertama membangun `libcomposer.so` dari
-sumber BOE, tahap akhir memakai `envoyproxy/envoy:v1.38.6`.
+Image dibangun dari root repository di atas `envoyproxy/envoy:v1.38.6`, ditambah
+`envsubst` untuk merender template.
 
 ## Nx
 

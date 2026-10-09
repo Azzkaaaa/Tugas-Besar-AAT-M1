@@ -5,7 +5,6 @@
 set -eu
 
 TEMPLATE_DIR=${ENVOY_TEMPLATE_DIR:-/etc/envoy/templates}
-OIDC_CONFIG_FILE=${OIDC_CONFIG_FILE:-/bootstrap/oidc.json}
 export ENVOY_RENDER_DIR="${ENVOY_RENDER_DIR:-/tmp/envoy}"
 
 # Only these variables are substituted; any other `$` in the templates is kept.
@@ -14,20 +13,8 @@ VARS="ENVOY_LISTEN_PORT ENVOY_RENDER_DIR ENVOY_HEALTH_PATH
   ZITADEL_ADDRESS ZITADEL_PORT ZITADEL_LOGIN_ADDRESS ZITADEL_LOGIN_PORT
   AUTH_BRIDGE_ADDRESS AUTH_BRIDGE_PORT SPA_ADDRESS SPA_PORT
   API_GATEWAY_ADDRESS API_GATEWAY_PORT OTEL_COLLECTOR_ADDRESS OTEL_COLLECTOR_GRPC_PORT
-  TOKEN_EXCHANGE_URL TOKEN_EXCHANGE_CLIENT_ID TOKEN_EXCHANGE_CLIENT_SECRET
+  TOKEN_EXCHANGE_ADDRESS TOKEN_EXCHANGE_PORT TOKEN_EXCHANGE_TIMEOUT
   AUTH_ACCESS_COOKIE AUTH_COOKIE_PREFIX TRACE_ESCAPE_HATCH_ENABLED TRACE_ESCAPE_HATCH_HEADER"
-
-# Reads a top-level string from the provisioned oidc.json (one key per line, no jq needed).
-oidc_value() {
-  sed -n "s/^[[:space:]]*\"$1\"[[:space:]]*:[[:space:]]*\"\([^\"]*\)\".*/\1/p" "$OIDC_CONFIG_FILE" | head -n 1
-}
-
-# The gateway client is created by auth-bootstrap; explicit env values win (render-only/validate).
-if [ -r "$OIDC_CONFIG_FILE" ]; then
-  : "${TOKEN_EXCHANGE_CLIENT_ID:=$(oidc_value gateway_client_id)}"
-  : "${TOKEN_EXCHANGE_CLIENT_SECRET:=$(oidc_value gateway_client_secret)}"
-  export TOKEN_EXCHANGE_CLIENT_ID TOKEN_EXCHANGE_CLIENT_SECRET
-fi
 
 missing=""
 for name in $VARS; do

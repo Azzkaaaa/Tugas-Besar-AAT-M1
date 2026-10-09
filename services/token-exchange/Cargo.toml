@@ -1,0 +1,29 @@
+[package]
+name = "token-exchange"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+envoy-types = "=0.7.6"
+http = "1"
+opentelemetry = "0.31"
+opentelemetry-otlp = { version = "0.31", default-features = false, features = ["http-proto", "reqwest-blocking-client", "trace"] }
+opentelemetry_sdk = { version = "0.31", features = ["rt-tokio"] }
+reqwest = { version = "0.12", default-features = false, features = ["json"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "signal", "sync", "time"] }
+tonic = "0.14"
+tonic-health = "0.14"
+tracing = "0.1"
+tracing-opentelemetry = "0.32"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+
+[dev-dependencies]
+opentelemetry_sdk = { version = "0.31", features = ["testing"] }
+tokio = { version = "1", features = ["io-util"] }
+
+[profile.release]
+strip = true
+lto = true

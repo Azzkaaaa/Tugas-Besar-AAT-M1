@@ -101,8 +101,8 @@ PKCE; cookie mengirim access token kepada bridge. Konfigurasi tidak memakai
 Bootstrap menyimpan `issuer`, `client_id`, `client_secret`, `project_id`,
 `organization_id`, `introspection_client_id`, `introspection_client_secret`,
 `gateway_client_id`, dan `gateway_client_secret` di `oidc.json` (volume
-`auth_client_config`). Nilai secret ini hanya untuk server (bridge dan gateway
-Envoy). `actions_target_id`, `actions_signing_key`, `client_ids`, `project_id`, dan
+`auth_client_config`). Nilai secret ini hanya untuk server (bridge dan service
+`token-exchange`; Envoy sendiri tidak lagi membaca `oidc.json`). `actions_target_id`, `actions_signing_key`, `client_ids`, `project_id`, dan
 `organization_id` ditulis terpisah ke `actions.json` (volume `auth_actions_config`,
 variabel `ACTIONS_CONFIG_FILE`) yang hanya dibaca `zitadel-claims`. SPA tidak
 menerima file tersebut dan tidak boleh memakai variabel `VITE_*` untuk secret.
@@ -304,7 +304,7 @@ deployment; variabel di atas belum menjalankan broker.
 
 | Variabel | Default contoh | Pemakai |
 | --- | --- | --- |
-| `OTEL_EXPORTER_OTLP_ENDPOINT` | `http://otel-lgtm:4318` | Service aplikasi, auth-bridge, zitadel-claims, Zitadel, Login UI |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | `http://otel-lgtm:4318` | Service aplikasi, auth-bridge, zitadel-claims, token-exchange, Zitadel, Login UI |
 | `OTEL_EXPORTER_OTLP_PROTOCOL` | `http/protobuf` | Idem |
 | `OTEL_SERVICE_NAME` | `REPLACE_WITH_SERVICE_NAME` | Override menjadi nama unik tiap service |
 | `OTEL_COLLECTOR_ADDRESS`, `OTEL_COLLECTOR_GRPC_PORT` | `otel-lgtm`, `4317` | Envoy (template; OTLP/gRPC) |
@@ -327,6 +327,7 @@ Prometheus `:9090`). Sinyal yang dikirim:
 | zitadel-login | ya | ya | — |
 | auth-bridge | ya | ya (durasi panggilan ke Zitadel) | tidak |
 | zitadel-claims | ya | tidak | tidak |
+| token-exchange | ya | tidak (statistik ext_authz Envoy) | tidak |
 | spa-server | ya | tidak | tidak |
 | aggregator-db, auth-db, rabbitmq | — | di-scrape collector | — |
 
@@ -344,7 +345,7 @@ memeriksa setiap service; collector otel-lgtm men-scrape `/probe` per target
 
 | Probe | Target |
 | --- | --- |
-| gRPC `grpc.health.v1` | aggregator-service, feed-service, webhook-provider, notification-service |
+| gRPC `grpc.health.v1` | aggregator-service, feed-service, webhook-provider, notification-service, token-exchange |
 | HTTP | api-gateway `/healthz`, auth-bridge `/health`, zitadel-claims `/health`, zitadel `/debug/healthz`, zitadel-login `/ui/v2/login/healthy`, spa-server `/health`, envoy `/healthz` (Host `localhost`) |
 | TCP | aggregator-db, auth-db, rabbitmq |
 
@@ -391,17 +392,21 @@ span metrics Tempo tidak tertutup probe yang berjalan setiap beberapa detik.
 Span klien mencatat setiap panggilan keluar: Envoy ke upstream, api-gateway ke
 backend gRPC, aggregator ke mock, RabbitMQ, dan Postgres (`otelpgx`, hanya di dalam
 span pemanggil; polling outbox 200 ms tidak membuat trace), webhook-provider ke URL
-subscriber, danger-notification ke HTTP luar, auth-bridge ke Zitadel, dan
-event-live-feed ke Zitadel (discovery, JWKS, token exchange).
+subscriber, danger-notification ke HTTP luar, auth-bridge ke Zitadel,
+event-live-feed ke Zitadel (discovery, JWKS, token exchange), dan token-exchange ke
+Zitadel (`/oauth/v2/token`).
 
 api-gateway menamai span server menurut route (`GET /api/v1/hazards/{hazard_id}`)
 setelah chi mencocokkan request, sehingga latensi per endpoint terpisah. Klien gRPC-nya
 memakai `grpc.WithDisableServiceConfig()`: tanpa itu, lookup TXT `_grpc_config` yang
 lambat membuat semua request gagal 503 selama ~10 detik setelah gateway mulai.
 
-Token exchange Envoy (modul BOE) memanggil Zitadel tanpa span dan tanpa
-`traceparent`; panggilan itu muncul sebagai trace terpisah di Zitadel
-(`/oauth/v2/token`), dan latensinya termasuk waktu upstream cluster `zitadel` Envoy.
+Token exchange request API dijalankan service `token-exchange` yang dipanggil
+filter `ext_authz` Envoy (gRPC). Trace-nya bersambung: span ext_authz Envoy → span
+server `envoy.service.auth.v3.Authorization/Check` → span klien `POST /oauth/v2/token`
+(dengan `traceparent`) → Zitadel. Span Zitadel sendiri untuk endpoint HTTP-nya
+mungkin tetap memulai trace baru (lihat catatan Zitadel di atas). Hasil exchange
+dihitung statistik Envoy `http.gateway.ext_authz.{ok,denied,error}`.
 
 Tempo memakai `services/otel-lgtm/tempo-config.yaml` (salinan konfigurasi image
 `grafana/otel-lgtm:0.35.0`; sinkronkan ulang saat upgrade). Perubahannya:

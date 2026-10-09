@@ -101,8 +101,8 @@ dijadikan respons API server.
 
 Satu gateway Envoy melayani SPA, `/auth/*` (ke bridge), hosted login Zitadel, dan
 `/api/*`. Untuk API, Envoy memindahkan cookie `bnpb_access` ke header bearer,
-menukarnya menjadi JWT di Zitadel (RFC 8693, filter Built On Envoy
-`token-exchange`), lalu mentranskode REST ke gRPC. Envoy hanya mengautentikasi;
+menukarnya menjadi JWT di Zitadel (RFC 8693, filter `ext_authz` ke service
+[`token-exchange`](../services/token-exchange/README.md)), lalu mentranskode REST ke gRPC. Envoy hanya mengautentikasi;
 service memeriksa scope dari JWT. Penyesuaian shape REST/ProtoJSON, SSE, dan
 validasi JWT di service tetap pekerjaan integrasi service bisnis. Lihat
 [README Envoy](../services/envoy/README.md). Detail boundary ada di
