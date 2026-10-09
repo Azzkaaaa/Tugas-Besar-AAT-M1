@@ -197,25 +197,29 @@ class RabbitMQClient:
         return data if status == 200 and isinstance(data, list) else []
 
     def declare_queue(self, queue_name: str, durable: bool = False, auto_delete: bool = True) -> bool:
-        vhost_esc = "%2F" if self.vhost == "/" else self.vhost
+        import urllib.parse
+        vhost_esc = urllib.parse.quote(self.vhost, safe="")
         path = f"/api/queues/{vhost_esc}/{queue_name}"
-        status, _ = self._req("PUT", path, body={"auto_delete": auto_delete, "durable": durable})
-        return status in (201, 204)
+        status, _ = self._req("PUT", path, body={"auto_delete": auto_delete, "durable": durable, "arguments": {}})
+        return status in (200, 201, 204)
 
     def bind_queue(self, exchange_name: str, queue_name: str, routing_key: str = "#") -> bool:
-        vhost_esc = "%2F" if self.vhost == "/" else self.vhost
+        import urllib.parse
+        vhost_esc = urllib.parse.quote(self.vhost, safe="")
         path = f"/api/bindings/{vhost_esc}/e/{exchange_name}/q/{queue_name}"
-        status, _ = self._req("POST", path, body={"routing_key": routing_key})
-        return status in (201, 204)
+        status, _ = self._req("POST", path, body={"routing_key": routing_key, "arguments": {}})
+        return status in (200, 201, 204)
 
     def delete_queue(self, queue_name: str) -> bool:
-        vhost_esc = "%2F" if self.vhost == "/" else self.vhost
+        import urllib.parse
+        vhost_esc = urllib.parse.quote(self.vhost, safe="")
         path = f"/api/queues/{vhost_esc}/{queue_name}"
         status, _ = self._req("DELETE", path)
         return status in (200, 204)
 
     def get_messages_from_queue(self, queue_name: str, count: int = 5, ackmode: str = "ack_requeue_true") -> List[Dict[str, Any]]:
-        vhost_esc = "%2F" if self.vhost == "/" else self.vhost
+        import urllib.parse
+        vhost_esc = urllib.parse.quote(self.vhost, safe="")
         path = f"/api/queues/{vhost_esc}/{queue_name}/get"
         body = {"count": count, "ackmode": ackmode, "encoding": "auto", "truncate": 50000}
         status, data = self._req("POST", path, body=body)
@@ -254,10 +258,15 @@ def calculate_percentiles(durations_ms: List[float]) -> Dict[str, float]:
 # ---------------------------------------------------------------------------
 
 def docker_exec(cmd: List[str]) -> Tuple[int, str]:
-    """Execute docker command and return exit code and combined stdout/stderr."""
+    """Execute docker command with compose env-files."""
     try:
+        if cmd and cmd[0] == "compose":
+            full_cmd = ["docker", "compose", "--env-file", ".env", "--env-file", ".env.auth", *cmd[1:]]
+        else:
+            full_cmd = ["docker", *cmd]
+
         proc = subprocess.run(
-            ["docker", *cmd],
+            full_cmd,
             cwd=str(ROOT),
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,

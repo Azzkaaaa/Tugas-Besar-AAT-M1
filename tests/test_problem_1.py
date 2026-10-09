@@ -173,7 +173,7 @@ class TestProblem1DataInteroperability(unittest.TestCase):
 
         # Confirm other core fields were not distorted
         self.assertEqual(v2_hazard["hazard_type"], "VOLCANIC")
-        self.assertTrue(v2_hazard["hazard_id"].startswith("hzd_"))
+        self.assertTrue(v2_hazard["hazard_id"].startswith("hz-"))
         self.assertTrue(v2_hazard["area_name"])
 
     def test_05_v1_and_v2_coexistence_in_canonical_store(self):

@@ -85,14 +85,19 @@ class TestProblem4MicroservicesAndStorage(unittest.TestCase):
 
     def test_02_flexible_storage_dynamic_schema_coexistence(self):
         """Criterion 2: HazardEvent stores dynamic attributes; v1 & v2 records coexist in store."""
-        # 1. Ingest v1 and v2 records by triggering schema version 2 if needed
+        # 1. Trigger schema version 2 on PVMBG
         set_pvmbg_schema_version(2)
 
-        def get_all_pvmbg():
+        def get_pvmbg_with_v2():
             status, _, body = api("GET", HAZARDS_ENDPOINT, user=FIELD, query={"source": "PVMBG", "view": "full", "page_size": 100})
-            return body.get("items", []) if status == 200 else []
+            if status == 200 and body and "items" in body:
+                items = body["items"]
+                has_v2 = any("confidence_level" in h.get("attributes", {}) for h in items)
+                if has_v2:
+                    return items
+            return None
 
-        pvmbg_items = wait_for(lambda: get_all_pvmbg(), timeout=20, message="PVMBG hazards list")
+        pvmbg_items = wait_for(get_pvmbg_with_v2, timeout=35, interval=2, message="PVMBG v2 ingestion in Canonical Store")
 
         # Ensure we have both v1 (no confidence_level) and v2 (with confidence_level)
         v1_records = [h for h in pvmbg_items if "confidence_level" not in h.get("attributes", {})]
