@@ -10,19 +10,20 @@ import (
 
 // Config holds all runtime configuration for the webhook-provider service.
 type Config struct {
-	AppEnv             string
-	LogLevel           string
-	GRPCPort           string
-	StoreDSN           string
-	AMQPURL            string
-	RabbitMQExchange   string
-	ConsumerQueue      string
-	ConsumerDLQ        string
-	ServiceToken       string
-	AuthPublicKeyPEM   string
-	AuthPublicKeyPath  string
-	MaxDeliveryRetries int
-	HTTPTimeoutMS      time.Duration
+	AppEnv                 string
+	LogLevel               string
+	GRPCPort               string
+	StoreDSN               string
+	AMQPURL                string
+	RabbitMQExchange       string
+	ConsumerQueue          string
+	ConsumerDLQ            string
+	ServiceToken           string
+	AuthAuthority          string
+	AuthAudience           string
+	AuthInsecureSkipVerify bool
+	MaxDeliveryRetries     int
+	HTTPTimeoutMS          time.Duration
 }
 
 // Load reads configuration from environment variables.
@@ -61,24 +62,28 @@ func Load() (*Config, error) {
 		return i
 	}
 
+	insecureSkip := strings.EqualFold(os.Getenv("AUTH_INSECURE_SKIP_VERIFY"), "true")
+
 	cfg := &Config{
-		AppEnv:             requireEnv("APP_ENV"),
-		LogLevel:           requireEnv("LOG_LEVEL"),
-		GRPCPort:           optionalEnv("WEBHOOK_GRPC_PORT", "9094"),
-		StoreDSN:           requireEnv("WEBHOOK_STORE_DSN"),
-		AMQPURL:            requireEnv("WEBHOOK_AMQP_URL"),
-		RabbitMQExchange:   requireEnv("RABBITMQ_EXCHANGE"),
-		ConsumerQueue:      optionalEnv("WEBHOOK_CONSUMER_QUEUE", "bnpb.webhook-provider.v1"),
-		ConsumerDLQ:        optionalEnv("WEBHOOK_CONSUMER_DLQ", "bnpb.webhook-provider.dlq.v1"),
-		ServiceToken:       requireEnv("WEBHOOK_SERVICE_TOKEN"),
-		AuthPublicKeyPEM:   os.Getenv("AUTH_PUBLIC_KEY"),
-		AuthPublicKeyPath:  os.Getenv("AUTH_PUBLIC_KEY_PATH"),
-		MaxDeliveryRetries: optionalInt("WEBHOOK_MAX_RETRIES", 5),
-		HTTPTimeoutMS:      time.Duration(optionalInt("WEBHOOK_HTTP_TIMEOUT_MS", 10000)) * time.Millisecond,
+		AppEnv:                 requireEnv("APP_ENV"),
+		LogLevel:               requireEnv("LOG_LEVEL"),
+		GRPCPort:               optionalEnv("WEBHOOK_GRPC_PORT", "9094"),
+		StoreDSN:               requireEnv("WEBHOOK_STORE_DSN"),
+		AMQPURL:                requireEnv("WEBHOOK_AMQP_URL"),
+		RabbitMQExchange:       requireEnv("RABBITMQ_EXCHANGE"),
+		ConsumerQueue:          optionalEnv("WEBHOOK_CONSUMER_QUEUE", "bnpb.webhook-provider.v1"),
+		ConsumerDLQ:            optionalEnv("WEBHOOK_CONSUMER_DLQ", "bnpb.webhook-provider.dlq.v1"),
+		ServiceToken:           requireEnv("WEBHOOK_SERVICE_TOKEN"),
+		AuthAuthority:          os.Getenv("AUTH_AUTHORITY"),
+		AuthAudience:           os.Getenv("AUTH_AUDIENCE"),
+		AuthInsecureSkipVerify: insecureSkip,
+		MaxDeliveryRetries:     optionalInt("WEBHOOK_MAX_RETRIES", 5),
+		HTTPTimeoutMS:          time.Duration(optionalInt("WEBHOOK_HTTP_TIMEOUT_MS", 10000)) * time.Millisecond,
 	}
 
-	if cfg.AuthPublicKeyPEM == "" && cfg.AuthPublicKeyPath == "" {
-		fmt.Println("[WebhookProvider] WARNING: No AUTH_PUBLIC_KEY configured. Running in unverified token mode (dev only).")
+	// AUTH_AUTHORITY is required unless insecure mode is explicitly enabled.
+	if cfg.AuthAuthority == "" && !insecureSkip {
+		errs = append(errs, "AUTH_AUTHORITY is required (or set AUTH_INSECURE_SKIP_VERIFY=true for development)")
 	}
 
 	if len(errs) > 0 {
