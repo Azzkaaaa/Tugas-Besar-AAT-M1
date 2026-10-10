@@ -77,10 +77,15 @@ Setiap consumer menentukan titik acknowledgement sesuai pekerjaannya:
     Hasil dicatat ke SQLite dan delivery sukses ditandai untuk dedup.
     Default dispatcher melakukan lima percobaan dengan timeout 10 detik
     per request serta jeda 1, 2, 4, dan 8 detik.
-    \item \textbf{Danger Notification} memproses envelope, memilih severity
-    SIAGA/AWAS, kemudian mengirim melalui topic FCM. Ack dilakukan setelah
-    pemrosesan berhasil. Parse error Protobuf langsung ditolak; error
-    lain memperoleh satu redelivery sebelum ditolak menuju DLQ.
+    \item \textbf{Danger Notification} memproses envelope dan memilih severity
+    SIAGA/AWAS. Event yang memenuhi filter disimpan secara transaksional
+    pada SQLite sebagai notifikasi dan pekerjaan push pending, kemudian
+    pesan broker di-ack. Event di luar filter di-ack tanpa pekerjaan push.
+    \code{PushOutboxWorker} mengirim melalui FCM secara terpisah dan
+    menyimpan hasil pengiriman beserta jadwal retry. Parse error Protobuf
+    langsung ditolak; error pemrosesan consumer lainnya memperoleh satu
+    redelivery sebelum ditolak menuju DLQ. Ack broker tidak menunggu
+    keberhasilan FCM atau penerimaan pada perangkat.
 \end{itemize}
 
 Kode consumer berada pada
@@ -134,9 +139,15 @@ transaksi yang sama. Mekanisme dedup harus dinilai per consumer:
     subscription, tetapi crash setelah penerima menerima POST dan sebelum
     penandaan dedup masih dapat menghasilkan pengiriman ulang. Penerima
     juga perlu menangani duplikasi.
-    \item Notification belum menyimpan dedup publication atau riwayat
-    pengiriman. Redelivery setelah FCM menerima pesan masih dapat
-    menghasilkan push berulang.
+    \item Notification memakai ID publication sebagai primary key SQLite.
+    Pengiriman ulang ID yang sama tidak membuat notifikasi baru, dan
+    pembaruan status mempertahankan hasil push yang sudah delivered.
+    Revisi baru suatu hazard mempunyai ID publication berbeda dan
+    menandai revisi sebelumnya sebagai tidak current. Lease outbox
+    membantu koordinasi pengiriman, tetapi crash setelah FCM menerima
+    pesan dan sebelum hasil tersimpan tetap dapat menghasilkan push
+    berulang. Dedup penyimpanan tidak sama dengan exactly-once pada
+    perangkat pengguna.
 \end{enumerate}
 
 Retry webhook memiliki keterbatasan khusus: setelah seluruh percobaan HTTP
@@ -165,55 +176,130 @@ notification terutama bergantung pada parsing serta akses field yang dipakai.
 
 \section{Proof-of-Concept dan Keterlacakan}
 
-Pada snapshot 9 Oktober 2026 tersedia publisher, tiga consumer, kontrak
-event, serta skenario pengujian. Belum terdapat hasil pengujian fanout,
-redelivery, dan pemulihan menyeluruh terbaru yang dilampirkan. Bukti
-container mock historis tidak digunakan sebagai pengganti bukti
-RabbitMQ dan ketiga consumer.
+Bukti manual M5 pada \code{docs/tex/evidence/P5/} merekam distribusi event,
+penghentian consumer, pemulihan backlog, dan pengoperasian consumer
+tambahan tanggal 9 Oktober 2026. Ringkasan otomatis E4 mencatat empat tes
+P5 lulus tanpa failure atau skipped pada 10 Oktober 2026. Uraian berikut
+mengutamakan kondisi yang benar-benar terlihat pada artefak; screenshot
+beberapa sesi tidak diperlakukan sebagai satu rangkaian waktu yang utuh.
+
+\subsection{Publication dan Dua Consumer Independen}
+
+Trace pada M5 memperlihatkan polling PVMBG oleh Aggregator, transaksi
+penyimpanan, span \code{rabbitmq.publish}, serta span
+\code{rabbitmq.consume} pada Event Live Feed dan Danger Notification.
+Keterhubungan span dalam trace yang sama mendukung distribusi satu
+publication ke dua consumer, tanpa panggilan langsung producer ke
+endpoint masing-masing.
+
+\evidencefigure{evidence/P5/1.png}
+{M5: trace publication Aggregator dengan cabang konsumsi pada Feed dan Notification.}
+{fig:p5-fanout-trace}
+
+Screenshot \code{P5/2-1.png} menunjukkan exchange
+\code{bnpb.hazards.v1} bertipe fanout dan binding queue Feed serta
+Notification. Pada sesi tersebut Webhook Provider belum aktif.
+\code{P5/2-2.png} dan \code{P5/2-3.png} memperlihatkan dua queue utama
+beserta DLQ, consumer aktif, dan laju delivery/ack pada masing-masing
+queue. Bukti ini memenuhi demonstrasi minimal dua consumer; tidak
+mengklaim ketiga layanan telah memproses satu ID publication yang
+terlihat lengkap pada screenshot yang sama.
+
+Tes otomatis membuka SSE dan menerima \code{hazard.upsert}, lalu
+memeriksa keberadaan queue Notification. Ringkasan E4 menyebut Feed dan
+Webhook, sedangkan implementasi tes \code{test_02} menggunakan
+Notification. Pasangan yang dipakai pada pembahasan hasil ini adalah
+Feed--Notification, sesuai kode dan trace M5. Assertion queue tes tersebut
+belum mencocokkan ID publication; trace manual menjadi bukti tambahan
+untuk hubungan publish--consume.
+
+\subsection{Consumer Berhenti dan Pemulihan Backlog}
+
+Ketika Notification dihentikan, queue miliknya menunjukkan nol consumer
+dan 23 pesan ready, sementara queue Feed tetap mempunyai satu consumer
+serta laju delivery dan ack 0,80 pesan/detik. Broker masih menerima
+publication untuk kedua queue. Kondisi ini menunjukkan bahwa tidak
+aktifnya satu consumer tidak menghentikan distribusi ke consumer lainnya.
+
+\evidencefigure{evidence/P5/3-1.png}
+{M5: backlog Notification bertambah saat consumernya berhenti, sedangkan Feed tetap memproses event.}
+{fig:p5-consumer-offline}
+
+Setelah Notification kembali aktif, grafik queue memperlihatkan backlog
+yang sebelumnya mencapai lebih dari 100 pesan turun menjadi nol. Jumlah
+consumer kembali satu dan terdapat lonjakan delivery/ack saat pengurasan.
+Feed tetap aktif selama interval yang diperlihatkan.
+
+\evidencefigure{evidence/P5/3-2.png}
+{M5: backlog Notification terkuras setelah consumer kembali aktif.}
+{fig:p5-consumer-recovery}
+
+Event yang terbit ketika consumer berhenti tersimpan sebagai pesan ready
+pada queue yang sudah terikat. Ketika consumer kembali, pesan tersebut
+baru dikirim dan di-ack; mekanisme ini berbeda dari redelivery pesan yang
+sudah pernah dikirim tetapi belum di-ack. Pada screenshot laju redelivery
+bernilai nol, sehingga hasil tersebut tidak digunakan untuk mengklaim
+pengujian redelivery atau DLQ. Berkurangnya backlog membuktikan pemrosesan
+broker, bukan jumlah push FCM yang berhasil tampil pada perangkat.
+
+Tes otomatis P5 juga menghentikan Feed dan memeriksa pembacaan hazard
+serta kembalinya endpoint SSE. Tes itu belum mengassert kenaikan dan
+pengurasan backlog secara numerik. Bukti backlog pada laporan berasal
+dari gambar manual Notification di atas, bukan dari perluasan arti status
+PASS pada ringkasan otomatis.
+
+\subsection{Consumer Tambahan pada Exchange yang Sama}
+
+Pada sesi pengujian lainnya, Webhook Provider dijalankan ketika producer
+dan layanan lain sudah tersedia. Log \code{P5/4-1.png} memperlihatkan
+pembuatan container/volume webhook, inisialisasi SQLite, serta koneksi
+consumer ke queue \code{bnpb.webhook-provider.v1}. Tangkapan layar broker
+kemudian memperlihatkan queue webhook bersama Feed dan Notification;
+ketiga queue utama mempunyai laju incoming, delivery, dan ack.
+
+\evidencefigure{evidence/P5/4-4.png}
+{M5: tiga queue consumer aktif setelah Webhook Provider tersedia.}
+{fig:p5-webhook-queue}
+
+Callback HTTP yang diterima memuat \code{event_id}, \code{hazard_id},
+sumber PVMBG, dan snapshot hazard. Hal ini menunjukkan bahwa jalur consumer
+webhook menghasilkan callback data, bukan sekadar queue yang berhasil
+dibuat. Endpoint callback eksternal pada bukti hanya digunakan untuk demo.
+
+\evidencefigure{evidence/P5/4-5.png}
+{M5: payload hazard diterima pada endpoint callback Webhook Provider.}
+{fig:p5-webhook-callback}
+
+Bukti alternatif merekam penambahan queue baru dan binding ke exchange
+fanout melalui Management API. Screenshot binding sendiri belum
+menunjukkan pengambilan pesan oleh consumer. Tes otomatis
+\code{test_04_dynamic_new_consumer_addition_zero_touch} melengkapi bagian
+ini dengan membuat queue unik, mengikatnya ke exchange, menunggu serta
+mengambil satu pesan, lalu menghapus queue uji. Operasi itu tidak mengubah
+kode producer. Bukti yang tersedia tidak menyimpan perbandingan ID/start
+time container Aggregator pada seluruh sesi, sehingga tidak digunakan
+untuk menyimpulkan riwayat restart producer di luar interval observasi.
 
 \begin{table}[htbp]
     \centering
     \small
-    \caption{Artefak pengujian dan batas cakupannya}
+    \caption{Ringkasan bukti P5}
     \begin{tabularx}{\textwidth}{@{}P{0.28\textwidth}X@{}}
         \toprule
-        \textbf{Artefak} & \textbf{Cakupan yang dapat ditelusuri} \\
+        \textbf{Kriteria} & \textbf{Hasil yang didukung artefak} \\
         \midrule
-        \code{tests/test_e2e_feeds.py} & Penerimaan event SSE, filter seismic/volcanic, dan izin full view. \\
-        \code{tests/test_e2e_webhooks.py} & Lifecycle subscription, tanda tangan ping/event, serta pencatatan delivery. \\
-        \code{tests/test_e2e_notifications.py} & Pembacaan notification dan lifecycle token; tidak dengan sendirinya membuktikan dedup push. \\
-        Tes unit adapter consumer & Feed menguji validasi envelope; notification menguji keputusan requeue. Keberadaan tes bukan hasil eksekusi terbaru. \\
+        Publication melalui broker & Trace publish--consume dan exchange fanout diperlihatkan. \\
+        Dua consumer independen & Feed dan Notification menerima melalui queue masing-masing dan terhubung pada trace publication. \\
+        Consumer offline/pulih & Notification nol consumer dengan backlog 23; sesudah aktif, backlog yang sempat melebihi 100 turun menjadi nol; Feed tetap aktif. \\
+        Consumer tambahan & Webhook memiliki queue dan menerima callback; tes queue dinamis juga mengambil pesan tanpa perubahan kode producer. \\
         \bottomrule
     \end{tabularx}
 \end{table}
 
-Untuk pembuktian yang dapat diulang, ketiga consumer harus dinyalakan lebih
-dahulu hingga queue dan binding tersedia. Catat satu \code{event_id} yang
-dipublikasikan Aggregator, lalu cocokkan penerimaan pada feed, log delivery
-webhook, dan pemrosesan notification. Gunakan hazard SIAGA/AWAS apabila
-observasi mencakup pengiriman FCM. Simpan hasil publisher confirm, ack,
-queue depth, dan trace terkait tanpa menyalin token atau secret.
-
-Skenario berikutnya menghentikan satu consumer setelah binding terbentuk,
-memublikasikan event, dan memeriksa bahwa consumer lain tetap memproses
-salinannya. Setelah consumer dinyalakan kembali, periksa backlog dan
-redelivery pada queue miliknya. Uji pesan tidak valid secara terpisah untuk
-memastikan arah DLQ. Uji replay \code{event_id} yang sama harus dibedakan
-dari upsert baru dengan \code{event_id} berbeda, karena keduanya mempunyai
-makna deduplikasi yang berbeda.
-
-Eksekusi E2E mengikuti \code{docs/e2e-testing.md}, dengan stack aktif dan
-\code{BNPB_E2E=1}. Hasil yang perlu dilengkapi mencakup penerimaan di tiga
-consumer, jumlah pengiriman ulang, perilaku DLQ, dan kehilangan replay saat
-restart feed. Sampai hasil tersebut direkam, status pembuktian P5 adalah
-mekanisme dan skenario tersedia, sedangkan keberhasilan integrasi serta
-karakteristik pemulihan terbaru belum diukur.
-
-Untuk menunjukkan penambahan consumer tanpa perubahan producer, buat queue
-pengamat baru dengan nama unik dan bind ke exchange fanout yang sama melalui
-RabbitMQ Management atau consumer uji. Setelah binding aktif, tunggu publication
-baru dan cocokkan \code{event_id} dengan minimal dua queue layanan yang sudah
-ada. Rekam konfigurasi binding, payload yang telah disanitasi, dan identitas
-container Aggregator yang tetap berjalan. Consumer baru menerima publication
-sejak binding dibuat, bukan otomatis seluruh sejarah sebelum berlangganan.
-Skenario ini belum dieksekusi sebagai bagian bukti laporan.
+Pengujian DLQ, injeksi publication duplikat, pemulihan setelah broker
+dibuat ulang, dan keberhasilan push pada perangkat tidak direkam dalam
+rangkaian M5 ini. Batasan at-least-once, retensi replay Feed, volume broker,
+dan efek samping FCM yang dijelaskan sebelumnya tetap berlaku. Artefak
+E4 adalah ringkasan hasil tes; rincian klaim harus dibaca bersama assertion
+pada \code{tests/test_problem_5.py} dan gambar manual, sebagaimana
+inventaris pada Lampiran~\ref{app:bukti}.

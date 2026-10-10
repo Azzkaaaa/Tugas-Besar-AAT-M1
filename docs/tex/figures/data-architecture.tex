@@ -9,7 +9,7 @@ lab/.style={font=\tiny,fill=white,inner sep=1pt,align=center}]
 \node[box] (broker) at (2.5,-4) {RabbitMQ\\exchange fanout};
 \node[box] (feed) at (-1.5,-6) {Event Live Feed\\Rust / queue\\replay memori};
 \node[box] (webhook) at (2.5,-6) {Webhook Provider\\Go / queue\\SQLite privat};
-\node[box] (notif) at (6.5,-6) {Danger Notification\\C\# / queue\\detail via Aggregator};
+\node[box] (notif) at (6.5,-6) {Danger Notification\\C\# / queue\\SQLite + push outbox};
 \node[box] (api) at (-1.5,-8) {API Gateway (Go)\\REST/JSON dan SSE};
 \node[external] (callback) at (2.5,-8) {Endpoint webhook\\eksternal};
 \node[external] (fcm) at (6.5,-8) {Firebase Cloud Messaging};
@@ -26,7 +26,7 @@ lab/.style={font=\tiny,fill=white,inner sep=1pt,align=center}]
 \draw[arr] (api.north east) -- node[lab,below,sloped]{gRPC} (webhook.south west);
 \draw[arr] (api.west) -- ++(-.65,0) |- node[lab,pos=.25,rotate=90]{gRPC hazard} (agg.west);
 \draw[arr] (api.south east) -- ++(.25,-.35) -| node[lab,pos=.3,below]{gRPC notifikasi} (notif.south west);
-\draw[arr] (notif.east) -- (9.8,-6) -- node[lab,right]{gRPC\\detail} (9.8,-1) -- (4.5,-1) -- (agg.north east);
+\draw[arr] (notif.east) -- (9.8,-6) -- node[lab,right]{gRPC\\status sumber} (9.8,-1) -- (4.5,-1) -- (agg.north east);
 \draw[arr] (webhook) -- node[lab,right]{HTTP POST / HMAC} (callback);
 \draw[arr] (notif) -- node[lab,right]{HTTPS} (fcm);
 \draw[arr] (edge) -- node[lab,left]{HTTP / SSE} (api);

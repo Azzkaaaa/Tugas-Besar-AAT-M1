@@ -4,7 +4,7 @@
 
 Milestone ini berfokus pada interoperabilitas data (P1), isolasi kelambatan dan kegagalan sumber (P2), autentikasi dan otorisasi (P3), pemisahan layanan beserta penyimpanannya (P4), dan distribusi event melalui pub/sub (P5), sesuai spesifikasi tugas~\cite{spec}. Data bencana adalah simulasi untuk pengujian, bukan informasi operasional kebencanaan. Klien membaca data hazard; operasi tulis terbatas pada pengaturan langganan, sesi, dan kontrol mock untuk demo.
 
-Laporan merujuk kondisi kode pada 9 Oktober 2026, commit \code{64c03cf}. Penjelasan implementasi ditelusuri ke kode dan Compose terbaru. Beberapa uraian lama pada README masih menyebut layanan BNPB sebagai kerangka; keadaan tersebut tidak digunakan untuk menggambarkan implementasi saat ini. Keberadaan implementasi dan skrip tes dibedakan dari hasil eksekusi yang telah direkam. Tanggal serta batas cakupan bukti tersedia pada Lampiran~\ref{app:bukti}.
+Laporan diperbarui pada 10 Oktober 2026 berdasarkan snapshot repository \code{1c2856b}, termasuk bukti manual P1--P5, dua keluaran k6, dan laporan suite otomatis yang tersedia. Bukti historis tetap dicantumkan dengan tanggal aslinya. Penjelasan implementasi ditelusuri ke kode dan Compose pada snapshot tersebut; pembaruan dokumen tidak menjalankan ulang pengujian. Inventaris dan cakupan masing-masing artefak tersedia pada Lampiran~\ref{app:bukti}.
 
 \section{Arsitektur dan Batas Layanan}
 Gambar~\ref{fig:data-architecture} menunjukkan jalur data, sedangkan Gambar~\ref{fig:auth-architecture} melengkapi komponen identitas dan observabilitas. Setiap kotak bergaris utuh merupakan container terpisah, kecuali browser dan tujuan eksternal yang ditandai khusus. SQLite dan buffer memori yang ditulis di dalam kotak dimiliki layanan tersebut, bukan database bersama. Kotak PostgreSQL adalah container database terpisah dengan pemilik logis tunggal.
@@ -19,7 +19,7 @@ Gambar~\ref{fig:data-architecture} menunjukkan jalur data, sedangkan Gambar~\ref
 \begin{enumerate}
 \item Aggregator melakukan polling REST/JSON ke kedua mock dengan kredensial berbeda. Masing-masing mock membangkitkan data sendiri dan menyimpannya dalam SQLite privat. Tidak ada push langsung dari mock ke BNPB.
 \item Aggregator memetakan data menjadi format kanonik. Hazard dan outbox dimasukkan melalui transaksi PostgreSQL; publisher mengirim envelope Protobuf dari outbox ke RabbitMQ.
-\item RabbitMQ membagikan publikasi ke queue tiap consumer. Feed menyediakan replay dan stream, Webhook Provider mengirim HTTP callback, dan Danger Notification mengirim push melalui Firebase Cloud Messaging (FCM).
+\item RabbitMQ membagikan publikasi ke queue tiap consumer. Feed menyediakan replay dan stream, Webhook Provider mengirim HTTP callback, dan Danger Notification menyimpan notifikasi serta push outbox pada SQLite privat sebelum worker mengirim melalui Firebase Cloud Messaging (FCM).
 \item Browser mengakses satu origin melalui Envoy. API Gateway Go menerjemahkan REST/JSON dan SSE menjadi pemanggilan gRPC ke layanan bisnis. Pembacaan hazard mengambil canonical store melalui Aggregator, bukan memanggil mock secara sinkron.
 \end{enumerate}
 
@@ -41,7 +41,7 @@ Edge dan REST API & Envoy; Go, chi, oapi-codegen & Edge melakukan routing dan pe
 Aggregator & Go, gRPC, PostgreSQL 17 & Goroutine untuk polling independen; transaksi dan indeks relational untuk data inti, JSONB untuk atribut dinamis.\\
 Event Live Feed & Rust, Tokio, Tonic & Stream asinkron dan buffer replay berbatas; API Gateway mengubahnya menjadi SSE untuk browser.\\
 Webhook Provider & Go, SQLite WAL & Menyimpan subscription, hasil delivery, dan deduplikasi; worker mengirim HTTP callback bertanda tangan.\\
-Danger Notification & C\#, ASP.NET gRPC, Firebase Admin & Memfilter bahaya SIAGA/AWAS, mengelola topik perangkat, serta mengirim push FCM. Detail dibaca dari Aggregator.\\
+Danger Notification & C\#, ASP.NET gRPC, EF Core SQLite, Firebase Admin & Menyimpan notifikasi dan push outbox privat, menyediakan proyeksi summary/full, serta mengirim push FCM melalui worker. Status kesegaran sumber dibaca melalui Aggregator.\\
 Identitas & Zitadel, PostgreSQL, Node.js 24, Rust & Provider mengelola akun; bridge menjalankan OIDC dan sesi SQLite terenkripsi; Rust Actions memasok role/scope.\\
 Distribusi event & RabbitMQ 4, AMQP, Protobuf & Fanout dan queue independen memisahkan produsen dari consumer serta menyediakan acknowledgement.\\
 Observabilitas & OpenTelemetry, otel-lgtm, blackbox exporter & Pengiriman trace/metric/log dan probe HTTP/gRPC/TCP; dashboard serta alert diprovisikan melalui berkas repo.\\
@@ -54,7 +54,7 @@ Orkestrasi & Docker Compose & Batas proses, jaringan, volume, dan dependensi din
 \item Host \code{localhost} dan \code{auth.localhost} menunjuk mesin demo. HTTP diizinkan secara eksplisit untuk lingkungan lokal; ini bukan konfigurasi TLS produksi.
 \item Setiap mock menyiapkan minimal 20 record pada database baru. Interval event default 10 detik; polling contoh 3 detik. Semua nilai latensi konfigurasi merupakan parameter simulasi, bukan hasil benchmark.
 \item ID sumber dan timestamp menjadi dasar watermark polling inklusif. Tabel referensi gunung statis merupakan data milik BNPB. Penerimaan field tambahan tidak menjamin kompatibilitas perubahan tipe atau penggantian nama field wajib.
-\item Canonical store hanya diakses langsung oleh Aggregator untuk operasi bisnis. Layanan lain memakai gRPC atau event. Volume berisi data privat masing-masing; secret bukan bagian source code frontend.
+\item Aggregator adalah pemilik logis canonical store untuk operasi bisnis. Layanan lain memakai gRPC atau event; Notification membaca notifikasi dari SQLite miliknya. Collector juga mengakses PostgreSQL untuk metrik. Distribusi environment Compose belum membatasi kredensial database secara eksklusif pada Aggregator; batas isolasi ini dijelaskan pada P4.
 \item Akun pengguna di-seed pada Zitadel, bukan SQLite mock ataupun frontend. Tiga akun manusia memiliki role terpisah; service user untuk tes end-to-end memiliki kredensial tersendiri.
 \item Notifikasi push memerlukan proyek Firebase dan service-account JSON lokal; konfigurasi web publik diperlukan untuk push browser. Tanpa dependensi tersebut, demo push belum dapat dianggap terbukti.
 \item Restart mempertahankan volume bernama. Menghapus volume menghilangkan data persisten. Replay feed berada di memori, dan RabbitMQ belum memiliki mount data persisten eksplisit pada Compose saat ini.
@@ -75,4 +75,4 @@ Perintah terakhir merupakan satu perintah orkestrasi setelah prasyarat konfigura
 Panduan operasional tersedia di \code{README.md}, \code{docs/mock-testing.md}, \code{docs/auth-testing.md}, \code{docs/e2e-testing.md}, dan \code{docs/load-testing.md}. Untuk layanan BNPB yang sudah berkembang, gunakan Compose dan README layanan terbaru bila uraian status pada README root masih tertinggal. Stack parsial \code{compose.mocks.yaml}, \code{compose.auth.yaml}, serta \code{compose.frontend.yaml} tetap berguna untuk pengembangan, tetapi bukan pengganti pengujian integrasi stack utama.
 
 \section{Strategi Verifikasi}
-Bukti dipisahkan menjadi: (1) inspeksi kode dan konfigurasi, (2) hasil tes tersimpan yang memiliki tanggal dan cakupan tertentu, serta (3) skenario yang masih perlu dieksekusi. Hasil historis mock dan browser Auth dilampirkan tanpa token maupun password. Keberadaan skrip k6 tidak diperlakukan sebagai bukti bahwa batas p95, throughput, dan error sudah tercapai. Demikian pula, keberadaan tiga consumer belum membuktikan keberhasilan skenario penghentian consumer pada stack penuh. Setiap bab menyatakan batas kesimpulan tersebut.
+Bukti terdiri atas inspeksi implementasi, hasil tes otomatis tersimpan, tangkapan layar demo, dan pengukuran k6. Bab P1--P5 menyajikan hasil aktual beserta rujukan artefaknya. Hasil k6 mencatat beban 50 VU selama 60 detik dan isolasi latensi BMKG; screenshot RabbitMQ memperlihatkan fanout serta penumpukan dan pengurasan backlog consumer. Status PASS pada suite otomatis dilaporkan sebagai hasil suite dengan cakupan assertion yang dijalankan, bukan pengganti setiap observasi manual. Bukti browser Auth historis dibedakan dari pengujian token API terbaru. Gambar yang menampilkan nilai secret konfigurasi tidak direproduksi dalam PDF.

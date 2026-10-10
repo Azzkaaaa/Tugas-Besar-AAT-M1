@@ -1,42 +1,48 @@
 # Laporan Milestone 1
 
-Laporan mengikuti spesifikasi `IF4031 - Tugas Besar - M1.pdf` dan snapshot kode `64c03cf` (9 Oktober 2026). Nama sistem: **Sistem Koordinasi Kebencanaan**, kelompok **nasgor**.
+Revisi 10 Oktober 2026 mengikuti spesifikasi tugas dan snapshot repository `1c2856b`, menggunakan evidence yang sudah tersedia. Tidak ada pengujian ulang saat penyusunan revisi.
 
-- `main.tex`: susunan laporan.
-- `metadata.tex`: nama sistem, kelompok, tanggal, dan **kontribusi yang diisi manual**.
-- `contents/01-sistem.tex`: gambaran, arsitektur, teknologi, asumsi, cara menjalankan.
-- `contents/02-p1.tex` sampai `06-p5.tex`: solusi, alternatif, batasan, dan bukti tiap problem.
-- `contents/07-bukti.tex`: inventaris bukti, hasil aktual, perintah reproduksi, dan bukti yang masih diperlukan.
-- `figures/`: diagram TikZ yang dapat diedit.
-- `evidence/`: salinan hasil tes historis mock/Auth serta tes Aggregator aktual; tidak berisi secret.
-- `IF4031_M1_nasgor.pdf`: PDF hasil kompilasi untuk ditinjau.
+**PDF utama: [IF4031_M1_nasgor.pdf](IF4031_M1_nasgor.pdf).** `main.pdf` adalah hasil build editor terpisah.
+
+## Isi
+
+- `metadata.tex`: identitas, tanggal, dan kontribusi yang tetap diisi manual oleh anggota.
+- `contents/01-sistem.tex`: arsitektur, teknologi, asumsi, dan cara menjalankan.
+- `contents/02-p1.tex` sampai `06-p5.tex`: rancangan, alternatif, batasan, hasil aktual, dan screenshot demo.
+- `contents/07-bukti.tex`: inventaris, scorecard suite, hasil historis, reproduksi, dan cakupan kesimpulan.
+- `figures/`: diagram TikZ; Notification kini mencakup SQLite dan push outbox.
+- `evidence/manifest.json`: hash semua artefak dan daftar gambar yang dimuat di PDF.
+
+## Bukti yang digunakan
+
+| ID | Artefak | Cakupan |
+|---|---|---|
+| E1-E3 | JSON mock, JSON browser Auth, JSONL unit Aggregator | Bukti historis dengan tanggal asli |
+| E4 | `evidence/problem_set_report.md` | Scorecard 19 tes; 0 error/failure dan 0 skipped |
+| M1-M5 | Screenshot dalam `evidence/P1/` sampai `P5/` | Observasi demo pada tiap bab |
+| K1-K2 | Dua JSON k6 dalam `evidence/P2/` | Beban, isolasi, percentile, error, dan 429 |
+
+K1 mencatat 50 VU selama fase beban 60 detik, 17.546 request, throughput 292,43 request/detik, dan p95 243,96 ms. K2 mencatat p95 BMKG pada kontensi 87,09 ms. Throughput menggunakan durasi fase pengukuran, bukan durasi keseluruhan run termasuk pemanasan.
+
+Interpretasi mengikuti cakupan bukti. Penerbitan token service melalui client credentials dibedakan dari refresh sesi browser. Kepemilikan logis database dibedakan dari isolasi akses konfigurasi. Build yang menyertakan dependency tidak disebut build eksklusif satu layanan.
+
+`evidence/P5/4-3.png` dan `4-3-alternative.png` tidak dimasukkan ke PDF karena memperlihatkan nilai secret konfigurasi. Gambar expiry P3 dengan fragmen token juga tidak dimuat; hasilnya dijelaskan dalam teks. Bukti asli tetap dipertahankan dan perlu disanitasi tersendiri sebelum publikasi repository.
 
 ## Kompilasi
 
-Prasyarat: MiKTeX atau TeX Live dengan `pdflatex` dan paket yang disebut dalam `preamble.tex`.
-Dari root repository pada PowerShell:
+Prasyarat: MiKTeX atau TeX Live dengan `pdflatex` dan paket pada `preamble.tex`. Dari root repository pada PowerShell:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File docs/tex/build.ps1
 ```
 
-Atau dari `docs/tex` pada shell apa pun:
-
-```sh
-pdflatex -interaction=nonstopmode -halt-on-error -jobname=IF4031_M1_nasgor main.tex
-pdflatex -interaction=nonstopmode -halt-on-error -jobname=IF4031_M1_nasgor main.tex
-pdflatex -interaction=nonstopmode -halt-on-error -jobname=IF4031_M1_nasgor main.tex
-```
-
-Skrip PowerShell menyimpan berkas bantu dalam `build/` yang diabaikan Git lalu menyalin PDF ke folder ini. Gambar sampul lama tidak digunakan; sampul laporan dibuat sederhana dengan identitas akademik.
+Skrip menjalankan tiga putaran, menyimpan berkas bantu dalam `docs/tex/build/`, lalu memperbarui `IF4031_M1_nasgor.pdf`. Skrip tidak menimpa `main.pdf`.
 
 ## Sebelum pengumpulan
 
-1. Isi kontribusi di `metadata.tex` (perancangan, implementasi, penulisan).
-2. Lengkapi bukti runtime yang ditandai belum tersedia pada lampiran, terutama k6 P2, integrasi terbaru, dan skenario consumer P5. Angka target bukan hasil uji.
-3. Tinjau batasan kode pada P1?P5. Laporan tidak menyatakan seluruh spesifikasi telah lulus.
-4. Jika kode atau hasil uji berubah, perbarui tanggal/snapshot, isi bab dan evidence, kemudian build ulang.
+1. Isi kontribusi nyata setiap anggota di `metadata.tex`.
+2. Tinjau caption dan cakupan bukti pada tiap bab.
+3. Build kembali setelah mengubah LaTeX dan gunakan PDF utama di atas.
+4. Jika evidence diganti, perbarui hash manifest. Hash E1 sebelumnya tetap dicatat sebagai riwayat; revisi ini tidak mengubah artefak sumber tersebut.
 
-Artefak Auth 45 pemeriksaan berasal dari arsitektur terdahulu pada 6 Oktober, bukan bukti bahwa stack terbaru sudah lulus. Hasil mock berasal dari 30 September. Tes Aggregator 9 Oktober mencatat 7 tes ingest dan 15 tes auth lulus; paket domain tidak memiliki test case. Tes bridge lokal belum dimulai karena dependensi `@opentelemetry/api` belum terpasang; bukan kegagalan perilaku autentikasi. Berkas cache/env/database tidak perlu disalin ke laporan.
-
-Panduan testing untuk melengkapi bukti P1?P5: [docs/report-testing.md](../report-testing.md).
+Panduan: [mock](../mock-testing.md), [Auth](../auth-testing.md), [E2E](../e2e-testing.md), [load testing](../load-testing.md). Menu demo ada di `tests/test_menu.py`; suite memakai `tests/run_problem_set.py`.

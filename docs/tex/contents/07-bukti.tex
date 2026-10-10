@@ -1,15 +1,51 @@
 \chapter{Bukti dan Reproduksi Pengujian}\label{app:bukti}
 \section{Inventaris Bukti}
-Seluruh path pada laporan bersifat relatif terhadap root repository, kecuali path pada kolom berkas berikut yang relatif terhadap \code{docs/tex/evidence/}. Berkas hasil historis disalin apa adanya dari cache agar tidak hilang ketika cache lokal tidak diikutkan ke Git. Hash SHA-256 pada \code{evidence/manifest.json} dapat digunakan untuk memeriksa integritas salinan. Laporan ini tidak menyatakan bahwa semua kriteria penerimaan M1 telah lulus.
+Seluruh path pada laporan bersifat relatif terhadap root repository, kecuali path pada tabel berikut yang relatif terhadap \code{docs/tex/evidence/}. Revisi ini menggunakan artefak yang sudah tersimpan: hasil historis, laporan suite otomatis, screenshot demo, dan keluaran k6. Tidak ada pengujian baru yang dijalankan dalam proses penyusunan revisi. Hash SHA-256 pada \code{evidence/manifest.json} mencatat isi berkas saat revisi; waktu screenshot yang tidak tersedia tidak disimpulkan dari waktu modifikasi file.
 
 \begin{longtable}{@{}P{.6cm}P{2.5cm}P{6.3cm}P{5.4cm}@{}}
 \toprule \textbf{ID} & \textbf{Waktu} & \textbf{Berkas dan hasil} & \textbf{Cakupan}\\\midrule\endhead
 E1 & 30 September 2026, 20:13--20:14 WIB & \code{mock-container-2026-09-30.json}; 10 pemeriksaan lulus. & HTTP ke port Docker kedua mock; termasuk restart. Tidak melewati Aggregator/BNPB API.\\
 E2 & 6 Oktober 2026, 15:18 WIB & \code{auth-browser-2026-10-06.json}; 45 pemeriksaan lulus. & Browser dan provider Zitadel nyata pada arsitektur sebelumnya; hasil tidak mewakili integrasi Envoy/API Gateway terbaru.\\
-E3 & 9 Oktober 2026, 08:33 WIB & \code{aggregator-unit-2026-10-09.jsonl}; ingest 7 dan auth 15 tes utama lulus. & Unit dan HTTP/JWKS server tes. Paket domain tidak memiliki tes. Subtest tidak dihitung ulang sebagai tes utama.\\\bottomrule
+E3 & 9 Oktober 2026, 08:33 WIB & \code{aggregator-unit-2026-10-09.jsonl}; ingest 7 dan auth 15 tes utama lulus. & Unit dan HTTP/JWKS server tes. Paket domain tidak memiliki tes. Subtest tidak dihitung ulang sebagai tes utama.\\
+E4 & 10 Oktober 2026, 07:53 WIB & \code{problem_set_report.md}; 19 tes, 0 error/failure, 0 skipped. & Suite problem P1--P5; hasil sesuai scorecard dan cakupan assertion pada skrip pengujian.\\
+M1 & Waktu mengikuti screenshot & \code{P1/}; 5 screenshot. & Data kanonik BMKG/PVMBG, kontrol skema, dan atribut confidence pada hasil baru.\\
+M2 & Waktu mengikuti screenshot & \code{P2/}; 7 screenshot. & Ringkasan k6, outage PVMBG, status FRESH/STALE, serta pemulihan.\\
+M3 & Waktu mengikuti screenshot & \code{P3/}; 8 screenshot. & Request kredensial, proyeksi role, expiry token, penerbitan token baru, dan pemeriksaan konfigurasi.\\
+M4 & Waktu mengikuti screenshot & \code{P4/}; 8 screenshot. & Operasi container, keberlanjutan API, koeksistensi record, JSONB, dan pemeriksaan Compose.\\
+M5 & Waktu mengikuti screenshot & \code{P5/}; 14 screenshot. & Trace fanout, queue consumer, backlog/pemulihan, dan penambahan penerima. Gambar konfigurasi dengan secret tidak dimuat dalam PDF.\\
+K1 & 9 Oktober 2026, sesuai nama berkas & \code{P2/aggregator-2026-10-09T15-31-17-502Z.json}. & Ringkasan metrik k6 beban sustained; angka dilaporkan pada Bab P2.\\
+K2 & 9 Oktober 2026, sesuai nama berkas & \code{P2/aggregator-isolation-2026-10-09T15-37-25-357Z.json}. & Metrik baseline, kontensi, dan probe delay PVMBG.\\\bottomrule
 \end{longtable}
 
-Dokumen testing lama menyebut 48 pemeriksaan pada versi gateway yang lebih baru, tetapi artefak JSON yang tersedia berisi 45 pemeriksaan pada versi sebelumnya. Laporan menggunakan angka dari artefak yang dapat diperiksa dan tidak menaikkan cakupannya berdasarkan narasi saja. Percobaan tes Auth bridge lokal pada 9 Oktober berhenti sebelum test case berjalan akibat paket \code{@opentelemetry/api} belum terpasang; status ini dicatat pada manifest sebagai kendala lingkungan.
+E2 berisi 45 pemeriksaan pada arsitektur terdahulu; jumlah tersebut dipertahankan sesuai JSON. Percobaan tes Auth bridge lokal pada 9 Oktober berhenti sebelum test case berjalan akibat paket \code{@opentelemetry/api} belum terpasang dan tetap dicatat sebagai kendala lingkungan pada waktu itu. E4 serta screenshot baru merupakan bukti tambahan dengan jalur dan cakupan berbeda, sehingga tidak mengganti tanggal maupun hasil historis.
+
+\section{Hasil Suite Problem dan Demo Manual}
+\begin{table}[H]\small
+\centering
+\begin{tabular}{@{}lrrrrl@{}}
+\toprule \textbf{Problem} & \textbf{Tes} & \textbf{Error/failure} & \textbf{Skipped} & \textbf{Durasi (s)} & \textbf{Status}\\\midrule
+P1 & 5 & 0 & 0 & 2,42 & PASS\\
+P2 & 3 & 0 & 0 & 74,97 & PASS\\
+P3 & 4 & 0 & 0 & 61,37 & PASS\\
+P4 & 3 & 0 & 0 & 4,96 & PASS\\
+P5 & 4 & 0 & 0 & 12,79 & PASS\\\midrule
+Total & 19 & 0 & 0 & 156,51 & PASS\\\bottomrule
+\end{tabular}
+\caption{Scorecard tersimpan pada E4; durasi merupakan jumlah durasi suite yang dibulatkan.}
+\end{table}
+
+Angka di atas diambil dari artefak E4, bukan eksekusi ulang. Narasi rinci E4 dibuat oleh template \code{tests/run_problem_set.py}; interpretasi hasil pada laporan ini juga melihat assertion, screenshot, dan JSON pengukuran. Sebagai contoh, pengujian token API memakai \code{client_credentials}, sedangkan refresh sesi browser menggunakan refresh token pada Auth bridge. Demikian pula, keberadaan queue tidak sendiri membuktikan pemrosesan event; screenshot trace dan backlog memberi observasi tambahan untuk P5.
+
+\begin{longtable}{@{}P{1.3cm}P{5.9cm}P{7.6cm}@{}}
+\toprule \textbf{Demo} & \textbf{Artefak utama} & \textbf{Observasi yang digunakan}\\\midrule\endhead
+P1 & \code{P1/1-1.png}, \code{1-2.png}, \code{2.png}, \code{3-1.png}, \code{3-2.png}. & Detail dua sumber, perubahan versi PVMBG, dan munculnya \code{attributes.confidence_level} pada hazard baru.\\
+P2 & \code{P2/1.png}, \code{2.png}, \code{3-1.png} sampai \code{3-5.png}; K1--K2. & Beban 50 VU/60 detik; p95 BMKG 87,09 ms pada kontensi; API merespons selama PVMBG STALE dan kembali FRESH setelah pemulihan.\\
+P3 & \code{P3/2-1.png} sampai \code{2-3.png}; \code{3-1.png}, \code{3-2.png}; E1--E4. & Media summary HTTP 200 dan full HTTP 403; FIELD\_TEAM full HTTP 200; expiry alami token API diikuti token baru yang diterima. Bukti refresh browser tetap memiliki cakupan historis E2.\\
+P4 & \code{P4/1-1.png} sampai \code{1-5.png}; \code{2-1.png}, \code{2-2.png}, \code{3.png}. & Operasi Notification terpisah; 25 record tanpa confidence dan 75 dengan confidence; atribut tersimpan dalam JSONB.\\
+P5 & \code{P5/1.png}; \code{2-1.png} sampai \code{2-3.png}; \code{3-1.png}, \code{3-2.png}; \code{4-1.png}, \code{4-4.png}, \code{4-5.png}. & Fanout Feed/Notification; 23 pesan menunggu saat Notification berhenti lalu backlog 0 setelah aktif; queue dan callback penerima tambahan.\\\bottomrule
+\end{longtable}
+
+Nama file singkat pada baris yang sama mengikuti direktori problem yang disebut pertama. Bab P1--P5 memuat gambar terpilih dengan caption dan penjelasan; gambar lain tetap terinventarisasi dalam manifest. Nilai secret konfigurasi pada dua gambar M5 tidak direproduksi dalam PDF. Berkas sumber bukti dipertahankan agar hasil pengujian dapat ditelusuri.
 
 \section{Hasil Mock yang Direkam}
 \begin{table}[H]\small
@@ -51,7 +87,7 @@ Contoh baris hasil E2 yang dapat ditelusuri dalam JSON:
 {"name": "SQLite session survives container restart", "passed": true}
 \end{lstlisting}
 
-E3 adalah hasil eksekusi baru pada snapshot kode laporan. Ringkasan tes utama, tanpa menghitung ulang subtest:
+E3 adalah hasil unit test tersimpan pada 9 Oktober, sebelum penambahan bukti manual. Ringkasan tes utama, tanpa menghitung ulang subtest:
 \begin{table}[H]\small
 \begin{tabularx}{\textwidth}{@{}P{2cm}P{1.8cm}Y@{}}
 \toprule \textbf{Paket} & \textbf{Hasil} & \textbf{Perilaku yang diuji}\\\midrule
@@ -65,7 +101,7 @@ E3 adalah hasil eksekusi baru pada snapshot kode laporan. Ringkasan tes utama, t
 \section{Perintah Reproduksi}
 Jalankan dari root repository kecuali diberi keterangan lain. Siapkan dependensi dan stack sebagaimana Bab 1. Jangan menganggap hasil \emph{skipped} sebagai lulus.
 
-\textbf{Tes mock Docker.} Setelah kedua mock berjalan, skrip berikut memeriksa HTTP dan restart, lalu memulihkan kontrol PVMBG. Hasil baru menggantikan artefak cache, bukan salinan historis laporan.
+\textbf{Tes mock Docker.} Pada stack khusus mock, skrip berikut memeriksa HTTP dan restart, lalu memulihkan kontrol PVMBG. Pada stack utama, hilangkan \code{--restart-check} karena opsi tersebut memakai definisi Compose khusus mock. Hasil baru menggantikan artefak cache, bukan salinan historis laporan.
 \begin{lstlisting}
 python tools/test_mock_containers.py --restart-check
 \end{lstlisting}
@@ -75,7 +111,7 @@ python tools/test_mock_containers.py --restart-check
 go test -json ./internal/ingest ./internal/domain ./internal/auth
 \end{lstlisting}
 
-\textbf{Tes Auth lokal dan browser.} Tes lokal memerlukan dependensi Node workspace yang terpasang. Untuk browser gunakan stack Zitadel yang sesuai dan ikuti prasyarat pada panduan Auth.
+\textbf{Tes Auth lokal dan browser.} Tes lokal memerlukan dependensi Node workspace yang terpasang. Skrip browser memakai stack \code{compose.auth.yaml} dan memiliki ekspektasi API parsial; hasilnya tidak digunakan sebagai pengganti tes integrasi Compose utama. Ikuti prasyarat pada panduan Auth.
 \begin{lstlisting}
 npx nx run auth-bridge:test
 node tools/test_auth_browser.mjs
@@ -90,14 +126,20 @@ Remove-Item Env:BNPB_E2E
 
 Suite menguji jalur Envoy, token exchange, REST/gRPC, hazard dua sumber, SSE, webhook, serta notifikasi. Test tertentu dapat dilewati ketika data/prasyarat push belum tersedia; jumlah dan alasannya harus dicatat. Uji beban dan isolasi latensi mengikuti \code{docs/load-testing.md} dengan skrip \code{tests/load/aggregator.js} dan \code{tests/load/aggregator-isolation.js}.
 
-\section{Bukti yang Masih Harus Dilengkapi}
+\textbf{Suite problem dan menu demo.} Kedua alat memerlukan stack dan konfigurasi lokal yang sudah siap. Menu demo bersifat interaktif dan dapat mengubah kontrol mock atau keadaan container. Perintah berikut hanya petunjuk reproduksi; hasil E4 yang dipakai adalah berkas yang telah tersedia.
+\begin{lstlisting}
+python tests/run_problem_set.py --report
+python tests/test_menu.py
+\end{lstlisting}
+
+\section{Cakupan Kesimpulan}
 \begin{longtable}{@{}P{1.4cm}P{6.1cm}P{7.3cm}@{}}
-\toprule \textbf{Bagian} & \textbf{Pengukuran atau demonstrasi} & \textbf{Artefak yang perlu disimpan}\\\midrule\endhead
-P1 & Toggle v1 ke v2 dengan stack tetap hidup dan hazard baru terlihat melalui API BNPB. & Respons sebelum/sesudah, correlation ID, serta identitas/start time container.\\
-P2 & Minimal 50 koneksi selama minimal 60 detik; isolasi BMKG saat PVMBG 3 detik; outage dan pulih tanpa restart. & Output k6 aktual, p50/p95/p99, throughput, jumlah request, error tidak terkendali, 429 terpisah, serta log status stale/unavailable.\\
-P3 & Tiga role melalui gateway saat ini, Media ditolak saat meminta raw/full, expiry alami, refresh, dan token lama ditolak. & Respons dengan token disembunyikan, waktu expiry/refresh, status HTTP, role, dan hasil browser/E2E terbaru.\\
-P4 & Stop/rebuild satu layanan tanpa menjatuhkan jalur independen; record skema lama/baru tetap terbaca tanpa perubahan DDL. & ID container, hasil health/akses sebelum/saat/sesudah, respons data, serta skema tabel.\\
-P5 & Event sama diterima minimal dua consumer; satu consumer dihentikan dan dihidupkan; consumer baru ditambahkan tanpa perubahan producer. & Log dengan \code{event_id} dan correlation ID yang sama, kedalaman queue, ack/redelivery, serta konfigurasi binding consumer tambahan.\\\bottomrule
+\toprule \textbf{Bagian} & \textbf{Hasil yang didukung} & \textbf{Batas interpretasi}\\\midrule\endhead
+P1 & Perubahan aditif muncul pada data kanonik dan record lama/baru tersimpan. & Screenshot tidak memuat pasangan ID/start time seluruh container sebelum dan sesudah perubahan.\\
+P2 & Beban dan isolasi memiliki metrik aktual; outage dan pemulihan sumber terlihat. & Angka berlaku untuk run yang direkam; durasi outage tidak disamakan dengan pengujian 10--20 menit.\\
+P3 & Pemisahan proyeksi, penolakan Media full, dan expiry token API terlihat; E2 merekam refresh browser historis. & Penerbitan ulang client credentials berbeda dari refresh sesi pengguna; 401 setelah expiry tidak sendiri membuktikan revokasi sebelum expiry.\\
+P4 & Container terpisah, data JSONB, dan koeksistensi atribut teramati. & Build screenshot juga mencakup dependency; kepemilikan logis tidak disamakan dengan pembatasan kredensial/jaringan eksklusif.\\
+P5 & Dua consumer menerima fanout; backlog Notification terkumpul dan terkuras; callback tambahan diterima. & Hasil ini tidak menyatakan exactly-once, ketahanan saat broker dibuat ulang, atau pengiriman push ke perangkat untuk setiap event.\\\bottomrule
 \end{longtable}
 
-Bagian ini adalah daftar kelengkapan bukti, bukan pengganti hasil penerimaan. Setelah pengujian benar-benar dijalankan, tambahkan artefak yang disanitasi ke direktori evidence, perbarui hasil pada bab terkait dan manifest, lalu kompilasi ulang PDF. Kontribusi anggota diisi manual pada \code{docs/tex/metadata.tex} sebelum pengumpulan.
+Kesimpulan didasarkan pada bukti yang tersedia dengan batas pengamatan di atas. Kontribusi anggota tetap diisi manual pada \code{docs/tex/metadata.tex}, sesuai pembagian pekerjaan yang sebenarnya.

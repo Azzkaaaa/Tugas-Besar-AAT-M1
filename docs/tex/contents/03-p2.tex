@@ -111,10 +111,11 @@ menyebabkan data diambil kembali; kestabilan identitas hazard membantu menjaga
 baris kanonis, tetapi tidak membuktikan tidak ada publication berulang.
 
 Nilai timeout, kapasitas pool, serta semaphore merupakan konfigurasi atau
-mekanisme yang ditemukan pada kode. Nilai tersebut tidak membuktikan target
-p95, throughput, maupun tingkat availability tertentu tanpa pengukuran.
-Tidak ada hasil uji beban gateway terbaru yang dilampirkan untuk snapshot
-laporan 9 Oktober 2026.
+mekanisme yang ditemukan pada kode. Hasil beban yang dilampirkan di bawah
+mengukur satu lingkungan lokal dan satu jendela pengujian; hasil tersebut
+tidak merupakan jaminan kapasitas produksi atau availability jangka panjang.
+Skenario outage membuktikan degradasi dan pemulihan pada demonstrasi yang
+dicatat, bukan failover infrastruktur.
 
 \section{Proof-of-Concept dan Keterlacakan}
 
@@ -129,15 +130,15 @@ perilaku pada skenario mock yang dicatat, bukan p95 gateway atau hasil
 \begin{table}[htbp]
     \centering
     \small
-    \caption{Status pembuktian P2 pada snapshot laporan}
+    \caption{Status pembuktian P2 berdasarkan bukti yang dilampirkan}
     \begin{tabularx}{\textwidth}{@{}P{0.25\textwidth}X P{0.20\textwidth}@{}}
         \toprule
         \textbf{Skenario} & \textbf{Target atau cakupan} & \textbf{Hasil} \\
         \midrule
         Konkurensi mock & Request BMKG bersamaan dengan empat request PVMBG & Bukti historis tersedia. \\
-        Beban API lengkap & 50 VU, 60 detik; error tidak terkendali di bawah 1\%. Skrip juga menetapkan p95 di bawah 2 detik & Belum diukur. \\
-        Isolasi melalui gateway & PVMBG ditunda 3 detik; p95 grup BMKG di bawah 300 ms & Belum diukur. \\
-        Degradasi sumber & Data lama tetap terbaca dengan freshness yang sesuai & Mekanisme tersedia; hasil terbaru belum dilampirkan. \\
+        Beban API lengkap & 50 VU selama 60 detik; error tidak terkendali di bawah 1\% & Terpenuhi: error 0\%, p95 243,96 ms (K1, M2). \\
+        Isolasi melalui gateway & Target delay PVMBG 3 detik; p95 grup BMKG di bawah 300 ms & p95 87,09 ms; probe delay aktual sekitar 2,92 detik (K2, M2). \\
+        Degradasi sumber & Data tersimpan tetap dilayani dan status kembali fresh sesudah outage dinonaktifkan & HTTP 200, PVMBG stale, lalu pulih (M2, E4). \\
         \bottomrule
     \end{tabularx}
 \end{table}
@@ -145,7 +146,8 @@ perilaku pada skenario mock yang dicatat, bukan p95 gateway atau hasil
 Repositori menyediakan skenario yang dapat diulang pada
 \code{tests/load/aggregator.js} dan
 \code{tests/load/aggregator-isolation.js}, dengan petunjuk pada
-\code{docs/load-testing.md}. Prosedur pembuktian yang direncanakan adalah:
+\code{docs/load-testing.md}. Konfigurasi pengujian dan prosedur pengulangannya
+adalah:
 \begin{enumerate}
     \item Jalankan stack yang telah diprovisikan, pastikan akun layanan tersedia
     pada \code{.cache/auth/}, dan buat direktori \code{.cache/load/}.
@@ -168,9 +170,12 @@ Repositori menyediakan skenario yang dapat diulang pada
 \end{enumerate}
 
 Latensi yang diukur skrip tersebut mencakup Envoy, token exchange, gateway,
-RPC, dan pembacaan database. Hasilnya harus dilaporkan sebagai latensi jalur API
-lengkap. Keberadaan skrip, threshold, dan instrumen observabilitas merupakan
-keterlacakan rancangan pengujian; belum merupakan hasil eksekusi pengujian.
+RPC, dan pembacaan database. Angka yang dilaporkan merupakan latensi jalur API
+lengkap, bukan waktu eksekusi Aggregator saja. Bukti K1 berada pada
+\code{evidence/P2/aggregator-2026-10-09T15-31-17-502Z.json}; bukti K2 berada
+pada \code{evidence/P2/aggregator-isolation-2026-10-09T15-37-25-357Z.json},
+relatif terhadap direktori laporan. Tangkapan layar M2 memperlihatkan
+konfigurasi, fase, hasil, dan nama ringkasan JSON yang bersesuaian.
 
 Untuk menilai batas error spesifikasi, HTTP 429 yang merupakan backpressure
 terkendali dilaporkan terpisah dari error tidak terkendali. Pada fase beban,
@@ -181,21 +186,81 @@ angka dapat diperiksa. Threshold error bawaan skrip masih menghitung 429,
 sehingga lebih ketat daripada penghitungan penerimaan yang mengecualikannya.
 Hasil token endpoint tidak dicampur ke persentil request API.
 
+\subsection{Beban Berkelanjutan dan Isolasi Latensi}
+
+Pengujian K1 pada 9 Oktober 2026 menjalankan 50 VU selama 60 detik setelah
+pemanasan 10 detik. Fase beban mencatat 17.546 request API: 10.501 daftar,
+5.272 detail, dan 1.773 status sumber. Tidak ada kegagalan API, HTTP 429,
+atau kegagalan pengambilan token pada fase tersebut. Throughput fase beban
+adalah $17\,546/60 = 292{,}43$ request/detik. Nilai \code{rate} bawaan pada
+ringkasan JSON menggunakan durasi seluruh run, termasuk pemanasan, sehingga
+tidak digunakan sebagai throughput jendela beban 60 detik.
+
 \begin{table}[htbp]\centering\small
-\caption{Format hasil beban yang belum diisi dengan pengukuran}
-\begin{tabularx}{\textwidth}{@{}P{.36\textwidth}XX@{}}
-\toprule \textbf{Metrik} & \textbf{Beban 50 VU / 60 detik} & \textbf{BMKG saat PVMBG 3 detik}\\\midrule
-Jumlah request / throughput & Belum diukur & Belum diukur\\
-p50 / p95 / p99 & Belum diukur & Belum diukur\\
-Error tidak terkendali / 429 & Belum diukur & Belum diukur\\\bottomrule
+\caption{Hasil pengukuran P2; latensi dalam milidetik}
+\begin{tabularx}{\textwidth}{@{}P{.35\textwidth}XX@{}}
+\toprule \textbf{Metrik} & \textbf{Beban 50 VU / 60 detik (K1)} & \textbf{BMKG saat kontensi / 60 detik (K2)}\\\midrule
+Jumlah request & 17.546 & 9.407\\
+Throughput (request/detik) & 292,43 & 156,78\\
+p50 & 157,19 & 59,50\\
+p95 & 243,96 & 87,09\\
+p99 & 538,14 & 126,99\\
+Error tidak terkendali & 0 / 17.546 (0\%) & 0 / 9.407 (0\%)\\
+HTTP 429 & 0 & 0\\\bottomrule
 \end{tabularx}
 \end{table}
 
-Untuk demo outage, catat respons awal kedua jenis hazard, aktifkan
-\code{/admin/outage} PVMBG, lalu ulangi request BMKG-only dan volcanic.
-Data vulkanik terakhir harus tetap dapat dibaca dengan
-\code{stale_since}, atau status unavailable dinyatakan bila data belum ada.
-Pertahankan gangguan selama durasi demo yang dipilih, rekam log dan waktu
-percobaan, kemudian nonaktifkan outage dan tunggu poller pulih tanpa restart.
-Bukti mock historis hanya mencakup 10,64 detik, sehingga tidak membuktikan
-skenario outage panjang maupun perilaku fallback API BNPB.
+\evidencefigure{evidence/P2/2.png}
+{Hasil k6: pemanasan 10 detik diikuti 50 VU selama 60 detik; fase beban mencatat 17.546 request tanpa error (M2, K1).}
+{fig:p2-load}
+
+Pengujian K2 menggunakan 10 VU BMKG yang diukur dan 10 VU kelompok kedua.
+Pada baseline 30 detik, kelompok kedua juga meminta BMKG; pada fase kontensi
+60 detik, kelompok kedua meminta PVMBG. Probe langsung ke mock mencatat
+delay 2.921,29; 2.921,80; dan 2.928,30 ms. Nilai aktual ini memenuhi ambang
+validasi skrip 2.900 ms dan mendekati target konfigurasi 3.000 ms; hasil
+pengukuran tidak dinyatakan tepat 3.000 ms.
+
+Pada baseline, p95 kelompok BMKG adalah 100,87 ms. Pada fase kontensi,
+p95 BMKG menjadi 87,09 ms dari 9.407 request, memenuhi ambang 300 ms;
+kelompok PVMBG menjalankan 9.382 request tanpa error. Kedua fase melewati
+jalur API publik yang sama. Perbedaan p95 sebesar sekitar $-13{,}78$ ms
+merupakan hasil run ini dan tidak ditafsirkan sebagai jaminan bahwa tambahan
+beban PVMBG selalu mempercepat BMKG.
+
+\evidencefigure{evidence/P2/1.png}
+{Hasil isolasi: probe PVMBG sekitar 2,92 detik dan p95 BMKG 87,09 ms saat kontensi, di bawah target 300 ms (M2, K2).}
+{fig:p2-isolation}
+
+\subsection{Outage, Data Stale, dan Pemulihan}
+
+Urutan bukti M2 terdapat pada \code{evidence/P2/3-1.png} sampai
+\code{evidence/P2/3-5.png}. Outage PVMBG diaktifkan melalui kontrol admin,
+kemudian dashboard memperlihatkan BMKG tetap terkini dan PVMBG terlambat.
+Respons \code{GET /api/v1/hazards} melalui Envoy tetap HTTP 200 dengan
+metadata BMKG \code{FRESH} dan PVMBG \code{STALE}. Respons juga menampilkan
+\code{last_success_at} dan \code{stale_since} untuk PVMBG, sehingga gangguan
+sumber tidak ditampilkan sebagai tidak adanya kejadian. Setelah outage
+dinonaktifkan, dashboard kembali memperlihatkan kedua sumber terkini.
+
+\evidencefigure{evidence/P2/3-3.png}
+{Respons API HTTP 200 saat outage PVMBG: BMKG tetap fresh, sedangkan PVMBG ditandai stale beserta waktu kesegarannya (M2).}
+{fig:p2-outage}
+
+\evidencefigure{evidence/P2/3-5.png}
+{Dashboard sesudah outage dinonaktifkan memperlihatkan BMKG dan PVMBG kembali terkini (M2).}
+{fig:p2-recovery}
+
+Ringkasan otomatis E4, \code{evidence/problem_set_report.md}, mencatat tiga
+tes P2 berhasil dalam 74,97 detik. Tes outage pada
+\code{tests/test_problem_2.py} memeriksa data PVMBG tersimpan tetap tersedia,
+HTTP 200, status stale, serta pemulihan ke fresh setelah outage dinonaktifkan;
+prosedur tes tersebut tidak menjalankan restart. Namun, gambar manual tidak
+melampirkan identitas dan waktu mulai container sebelum/sesudah, sehingga
+gambar saja tidak membuktikan tidak terjadi restart di luar prosedur.
+
+Narasi kriteria pada E4 merupakan template ringkasan, bukan rekaman angka
+latensi atau konfigurasi efektif. Pengukuran 50 VU/60 detik dan validasi delay
+PVMBG karena itu dirujukkan ke K1 dan K2. Bukti ini mendukung skenario yang
+terekam, tanpa mengklaim ketahanan outage berkepanjangan atau availability
+di luar jendela pengujian.

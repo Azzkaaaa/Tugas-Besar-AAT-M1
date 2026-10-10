@@ -35,3 +35,9 @@
 \renewcommand{\bibname}{Daftar Pustaka}
 \renewcommand{\appendixname}{Lampiran}
 \graphicspath{{images/}}
+% Screenshot asli dipertahankan; ukuran dibatasi agar caption tetap satu halaman.
+\newcommand{\evidencefigure}[3]{%
+\begin{figure}[htbp]\centering
+\includegraphics[width=.97\linewidth,height=.66\textheight,keepaspectratio]{#1}
+\caption{#2}\label{#3}
+\end{figure}}

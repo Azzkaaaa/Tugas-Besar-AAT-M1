@@ -29,7 +29,7 @@ dipakai bersama.
         Aggregator & Go, gRPC 9091 & Normalisasi BMKG/PVMBG; hazard kanonis, watermark, dan outbox pada PostgreSQL. \\
         Event Live Feed & Rust, gRPC 9093 & Subscription event, filter/proyeksi, cursor, dan replay terbatas dalam memori proses. \\
         Webhook Provider & Go, gRPC 9094 & Subscription webhook, delivery log, serta deduplikasi pengiriman pada SQLite. \\
-        Danger Notification & C\#, gRPC 9095 & Filter SIAGA/AWAS, pembacaan melalui Aggregator, dan pengelolaan topic perangkat melalui FCM. \\
+        Danger Notification & C\#, gRPC 9095 & Filter SIAGA/AWAS; snapshot notifikasi, revisi, dan outbox push pada SQLite; pengiriman melalui FCM. \\
         API Gateway & Go, HTTP & Validasi kontrak, pemetaan HTTP--gRPC, dan SSE; tidak menjadi pemilik data hazard. \\
         \bottomrule
     \end{tabularx}
@@ -46,14 +46,25 @@ Tabel \code{ingest_watermarks} menyimpan kemajuan ingestion dan kesegaran,
 Schema yang diterapkan saat startup berada pada
 \code{services/aggregator/internal/store/postgres.go}.
 
-Kepemilikan database tetap pada Aggregator. Danger Notification memperoleh
-daftar/detail hazard melalui adapter gRPC, bukan dengan membaca tabel
-Aggregator secara langsung. Adapter tersebut berada pada
-\code{services/danger-notification/BNPB.Notification.Server/Adapters/Outbound/AggregatorClient.cs}.
-Pemisahan ini menjaga kontrak data antarlayanan, tetapi menjadikan pembacaan
-notification bergantung pada availability Aggregator. FCM mengelola
-subscription token ke topic; implementasi notification saat ini tidak
-mendaftarkan database lokal untuk inbox, riwayat pengiriman, atau deduplikasi.
+Kepemilikan logis Canonical Store berada pada Aggregator. Danger Notification
+menerima snapshot hazard dari event broker dan menyimpannya pada SQLite
+melalui \code{EfNotificationStore}. Daftar dan detail notifikasi dibaca dari
+penyimpanan lokal ini, sedangkan status kesegaran sumber tetap diperoleh
+melalui adapter gRPC Aggregator. FCM mengelola subscription token ke topic.
+Dengan demikian, data notifikasi tidak memerlukan query langsung ke tabel
+hazard milik Aggregator.
+
+Tabel \code{notifications} memakai ID publication sebagai primary key dan
+menyimpan snapshot Protobuf hazard, \code{hazard_id}, waktu publication,
+penanda \code{IsCurrent}, status push, jumlah kegagalan, jadwal retry, dan
+lease pekerjaan. Revisi baru menandai revisi lama hazard yang sama sebagai
+tidak current; API daftar/detail menampilkan revisi current. Upsert dan
+pembaruan revisi menggunakan transaksi SQLite. \code{PushOutboxWorker}
+mengambil pekerjaan yang waktunya sudah tiba, mengirim melalui FCM, lalu
+mencatat hasilnya. Compose memasang \code{notification_data} pada
+\code{/data}, dengan database \code{notifications.db}. Registrasi layanan
+dan migrasi berada pada \code{Program.cs} serta adapter
+\code{Adapters/Outbound/Persistence/} di layanan Danger Notification.
 
 Webhook Provider memiliki database SQLite tersendiri untuk
 \code{webhook_subscriptions}, \code{webhook_deliveries}, dan
@@ -125,10 +136,12 @@ Keterbatasan ini perlu diselesaikan sebelum menyatakan dukungan penskalaan
 horizontal yang transparan.
 
 Durability harus dibedakan per komponen. PostgreSQL menggunakan volume
-\code{aggregator_data}; SQLite menggunakan \code{webhook_data}.
+\code{aggregator_data}; SQLite menggunakan \code{webhook_data} dan
+\code{notification_data} untuk masing-masing layanan.
 Data tersebut tetap bergantung pada lifecycle volume dan prosedur backup.
-Feed tidak persisten setelah restart. Notification belum menyimpan bukti
-pengiriman dan dedup lokal. RabbitMQ mendeklarasikan queue durable, tetapi
+Feed tidak persisten setelah restart. Notification menyimpan status push
+dan identitas publication secara lokal; status diterima FCM belum merupakan
+bukti pesan telah tampil pada perangkat pengguna. RabbitMQ mendeklarasikan queue durable, tetapi
 \code{compose.yaml} belum memasang volume data broker secara eksplisit.
 Karena itu, ketahanan seluruh state setelah container dibuat ulang belum
 menjadi jaminan sistem.
@@ -141,70 +154,107 @@ dengan sendirinya menyediakan pemrosesan event tepat satu kali.
 
 \section{Proof-of-Concept dan Keterlacakan}
 
-Bukti implementasi dapat ditelusuri dari \code{compose.yaml}, Dockerfile
-layanan, kontrak pada \code{contracts/proto/}, dan adapter penyimpanan
-yang dijelaskan di atas. Untuk tiga consumer, titik masuk proses adalah
-\code{services/event-live-feed/src/main.rs},
-\code{services/webhook-provider/cmd/main.go}, dan
-\code{services/danger-notification/BNPB.Notification.Server/Program.cs}.
-Artefak tersebut menunjukkan bahwa batas layanan dan pilihan penyimpanan
-telah diwujudkan dalam kode pada snapshot 9 Oktober 2026.
+Bukti manual M4 pada \code{docs/tex/evidence/P4/} merekam pengujian tanggal
+9 Oktober 2026. Ringkasan eksekusi otomatis E4 pada
+\code{docs/tex/evidence/problem_set_report.md}, dibuat 10 Oktober 2026,
+mencatat tiga tes P4 lulus, tanpa failure maupun skipped. Cakupan kedua
+jenis bukti dijelaskan berikut; label lulus tes tidak memperluas observasi
+melampaui assertion dan screenshot yang tersedia.
 
-Bukti container historis pada
-\code{docs/tex/evidence/mock-container-2026-09-30.json}
-mencatat pemeriksaan persistensi mock dengan 165 record BMKG dan
-166 record PVMBG serta 14 respons health layanan lain pada setiap
-skenario restart. Bukti ini berlaku untuk mock dan volume yang diuji
-pada waktu tersebut. Bukti tersebut tidak digunakan sebagai hasil
-restart PostgreSQL kanonis, SQLite webhook, replay feed, atau pemulihan
-pengiriman notification pada implementasi terbaru.
+\subsection{Pemisahan Proses dan Pengoperasian Layanan}
+
+Pada M4, operator menghentikan \code{notification-service}. Halaman
+notifikasi kemudian menampilkan respons 503 untuk endpoint yang bergantung
+pada layanan tersebut, sementara feed tetap aktif dan status sumber tetap
+tersedia. Setelah layanan dibangun dan dijalankan kembali, halaman
+notifikasi kembali menampilkan data. Urutan ini direkam pada
+\code{P4/1-1.png} sampai \code{P4/1-4.png}.
+
+\evidencefigure{evidence/P4/1-1.png}
+{M4: penghentian container Danger Notification secara terpisah.}
+{fig:p4-stop-notification}
+
+Grafik health memperlihatkan interval notification tidak tersedia,
+sedangkan Aggregator, feed, gateway, dan database tetap terpantau aktif.
+Webhook memang sedang tidak aktif pada interval grafik tersebut; gambar
+ini tidak digunakan untuk menyatakan semua layanan hidup bersamaan.
+
+\evidencefigure{evidence/P4/1-5.png}
+{M4: observasi health ketika notification dihentikan dan dipulihkan.}
+{fig:p4-health-independence}
+
+Tes otomatis \code{tests/test_problem_4.py} melengkapi observasi dengan
+menghentikan satu layanan, meminta hazard BMKG melalui API, memeriksa
+respons 200 beserta data, lalu menjalankan kembali layanan. Ini mendukung
+ketersediaan jalur baca independen selama penghentian yang diuji.
+Perintah manual \code{up -d --build notification-service} juga menjalankan
+build dependency, sebagaimana terlihat pada \code{P4/1-3.png}. Karena tidak
+ada perbandingan ID/start time seluruh container, bukti ini dibatasi pada
+pemisahan proses dan ketersediaan yang teramati; belum membuktikan bahwa
+seluruh image dependency tidak dibangun ulang atau tidak ada restart
+singkat di antara interval probe.
+
+\subsection{Atribut Dinamis dan Koeksistensi Skema}
+
+Setelah kontrol PVMBG diubah ke versi 2 dan ditunggu 60 detik, pembacaan
+100 hazard PVMBG melalui Canonical Store menemukan 25 record tanpa
+\code{confidence_level} dan 75 record dengan atribut tersebut. Screenshot
+menampilkan contoh kedua bentuk atribut, termasuk nilai confidence 0,69.
+Pemeriksaan tabel memperlihatkan bahwa \code{attributes} bertipe JSONB;
+\code{confidence_level} tidak menjadi kolom terpisah.
+
+\evidencefigure{evidence/P4/2-1.png}
+{M4: record PVMBG sebelum dan sesudah penambahan atribut tersedia bersamaan melalui API.}
+{fig:p4-schema-coexistence}
+
+\evidencefigure{evidence/P4/2-2.png}
+{M4: struktur tabel hazard menggunakan JSONB untuk atribut sumber.}
+{fig:p4-jsonb-schema}
+
+Hasil ini mendukung rancangan penyimpanan fleksibel dan koeksistensi data
+v1/v2. Tes otomatis memeriksa keberadaan kedua kelompok record serta tipe
+numerik confidence. Screenshot DDL yang tersedia adalah satu snapshot
+struktur, bukan pasangan hasil sebelum/sesudah. Oleh sebab itu, tidak ada
+angka perubahan DDL atau hasil perbandingan hash schema yang diklaim.
+
+\subsection{Kepemilikan Data dan Batas Pengujian}
+
+M4 \code{P4/3.png} memperlihatkan inspeksi konfigurasi serta keberhasilan
+pembacaan status sumber melalui API. Pada kode aplikasi, operasi Canonical
+Store ditangani Aggregator; consumer memperoleh data lewat event atau API.
+Pemeriksaan otomatis mencari variabel \code{CANONICAL_STORE_DSN} secara
+literal dalam blok Compose layanan lain. Pemeriksaan ini menunjukkan
+konvensi konfigurasi yang diperiksa, tetapi tidak membuktikan pembatasan
+akses database pada tingkat jaringan atau hak pengguna.
+
+Konfigurasi saat ini masih memuat \code{env_file: .env} pada Webhook
+Provider, sehingga variabel Canonical Store dalam berkas tersebut ikut
+masuk ke lingkungan container. Database juga berada pada jaringan bersama
+dan port PostgreSQL diekspos ke host; collector observabilitas mempunyai
+koneksi PostgreSQL untuk metrik. Dengan demikian, istilah kepemilikan
+pada laporan ini berarti pemisahan tanggung jawab aplikasi. Pembatasan
+credential per layanan, role metrik khusus, dan jaringan database perlu
+diterapkan bila kriteria akses eksklusif hendak dijamin secara teknis.
 
 \begin{table}[htbp]
     \centering
     \small
-    \caption{Pemeriksaan penyimpanan yang dapat diulang}
-    \begin{tabularx}{\textwidth}{@{}P{0.25\textwidth}X P{0.18\textwidth}@{}}
+    \caption{Cakupan bukti P4 dan batas interpretasi}
+    \begin{tabularx}{\textwidth}{@{}P{0.25\textwidth}X@{}}
         \toprule
-        \textbf{Objek} & \textbf{Observasi yang diperlukan} & \textbf{Status bukti} \\
+        \textbf{Objek} & \textbf{Hasil dan batas bukti} \\
         \midrule
-        Hazard dan outbox & Identitas, jumlah record, serta publication pending sebelum dan sesudah restart dengan volume tetap. & Belum diukur ulang. \\
-        Subscription webhook & Subscription, log, dan pasangan dedup tetap tersedia setelah restart provider. & Belum diukur ulang. \\
-        Replay feed & Cursor lama ditolak setelah restart; event baru memperoleh epoch yang baru. & Kode dan tes tersedia. \\
-        Notification & Pembacaan melalui Aggregator dan lifecycle token FCM sesuai kontrak. & Skenario E2E tersedia. \\
+        Independensi proses & Stop, build/start, kegagalan endpoint notification, dan pemulihan diamati; health jalur lain tersedia. Identitas semua container belum dibandingkan. \\
+        Atribut dinamis & 25 record tanpa confidence dan 75 dengan confidence terbaca; kolom JSONB diperlihatkan. \\
+        Kepemilikan Canonical Store & Jalur aplikasi melalui Aggregator/event ditunjukkan; konfigurasi belum menjamin isolasi credential dan jaringan. \\
+        Persistensi lintas restart & Volume PostgreSQL, webhook, dan notification tersedia pada kode. Bukti M4 tidak membandingkan ID/jumlah data ketiganya sebelum dan sesudah restart. \\
         \bottomrule
     \end{tabularx}
 \end{table}
 
-Prosedur pembuktian persistence diawali dengan mencatat ID serta jumlah data
-melalui API atau query terkontrol, melakukan restart satu layanan dengan
-volume tetap, lalu membandingkan data dan health layanan lain. Pengujian
-restart proses perlu dibedakan dari penghapusan volume dan pemulihan backup.
-Untuk feed, hasil yang diharapkan justru invalidasi cursor lama sesuai
-kontrak penyimpanan sementara, bukan kelangsungan seluruh backlog.
-
-Hasil pengujian unit Aggregator pada 9 Oktober 2026 tersedia pada
-\code{docs/tex/evidence/aggregator-unit-2026-10-09.jsonl}: tujuh tes tingkat
-atas pada paket ingestion dan 15 pada paket autentikasi berhasil; paket
-domain tidak mempunyai berkas tes. Cakupan ingestion mencakup pemetaan,
-field tambahan, proyeksi, dan autentikasi HTTP upstream. Hasil ini mendukung
-kebenaran transformasi data yang diuji, bukan bukti ketahanan storage
-setelah restart.
-
-Suite \code{tests/test_e2e_hazards.py},
-\code{tests/test_e2e_webhooks.py}, dan
-\code{tests/test_e2e_notifications.py} menyediakan pemeriksaan lintas layanan.
-Menurut \code{docs/e2e-testing.md}, suite memerlukan stack aktif dan
-\code{BNPB_E2E=1}; tanpa variabel tersebut tes E2E dilewati. Oleh sebab itu,
-laporan hasil harus membedakan tes yang dieksekusi, dilewati, dan belum
-diukur. Daftar bukti beserta lingkupnya dirangkum pada
-Lampiran~\ref{app:bukti}.
-
-Dua kriteria tambahan memerlukan demo langsung. Pertama, hentikan satu
-consumer, build ulang image consumer tersebut, lalu hidupkan kembali tanpa
-menghentikan stack. Selama proses itu, rekam keberhasilan pembacaan hazard
-dan penerimaan pada consumer lain, serta bandingkan ID container lain
-sebelum/sesudah. Kedua, simpan record PVMBG v1 dan v2 pada canonical store,
-tampilkan keduanya melalui API, dan bandingkan definisi tabel sebelum/sesudah
-penambahan confidence. Perubahan hanya pada isi JSONB harus dibedakan dari
-migrasi DDL. Tes mapping E3 mendukung transformasi atribut, tetapi belum
-menggantikan bukti dua skenario container dan storage ini.
+Bukti historis E1 tetap hanya berlaku untuk persistensi database mock yang
+ketika itu diuji; tidak digunakan sebagai pengganti pengujian volume
+Canonical Store, webhook, atau notification. Pengujian unit Aggregator
+E3 mendukung transformasi atribut, sedangkan E4 dan M4 menambahkan
+pengamatan pada stack berjalan. Sumber bukti dan reproduksinya dicatat
+pada Lampiran~\ref{app:bukti}.
