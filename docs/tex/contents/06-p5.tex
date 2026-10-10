@@ -49,6 +49,11 @@ Alur penyimpanan dan publication menggunakan pola transactional outbox:
     transaksi PostgreSQL.
     \item Upsert hazard dan penyisipan envelope ke \code{outbox_events}
     menggunakan transaksi yang sama, kemudian transaksi di-commit.
+    Envelope hanya dibuat untuk hazard baru atau hazard yang kolom inti
+    maupun \code{attributes}-nya berubah; pengambilan ulang record yang
+    sama akibat watermark inklusif tidak menghasilkan publication baru.
+    Bila pembentukan atau penyisipan envelope gagal, putaran polling
+    dihentikan tanpa commit dan watermark tidak dimajukan.
     \item Publisher mengambil paling banyak 20 publication pending
     setiap 200 ms dan mengirim pesan persisten ke exchange.
     \item Publisher menunggu publisher confirm dari broker sebelum
@@ -76,7 +81,11 @@ Setiap consumer menentukan titik acknowledgement sesuai pekerjaannya:
     dengan tanda tangan HMAC-SHA256 pada \code{X-BNPB-Signature}.
     Hasil dicatat ke SQLite dan delivery sukses ditandai untuk dedup.
     Default dispatcher melakukan lima percobaan dengan timeout 10 detik
-    per request serta jeda 1, 2, 4, dan 8 detik.
+    per request serta jeda 1, 2, 4, dan 8 detik. Delivery yang tetap gagal
+    setelah seluruh percobaan dicatat sebagai \code{FAILED} dan pesan broker
+    tetap di-ack, sehingga endpoint yang mati tidak memicu requeue tanpa
+    akhir. Error internal, misalnya gagal membaca subscription atau menulis
+    log, memperoleh satu redelivery sebelum ditolak menuju DLQ.
     \item \textbf{Danger Notification} memproses envelope dan memilih severity
     SIAGA/AWAS. Event yang memenuhi filter disimpan secara transaksional
     pada SQLite sebagai notifikasi dan pekerjaan push pending, kemudian
@@ -122,7 +131,7 @@ dan tidak menghasilkan efek bisnis kedua.
         \textbf{Consumer} & \textbf{Kunci dan penyimpanan} & \textbf{Perilaku saat pesan diterima ulang} & \textbf{Titik ack} \\
         \midrule
         Event Live Feed & \code{event_id} dalam himpunan \code{seen} di memori, sepanjang jendela replay. & Event yang sudah ada tidak ditambahkan ke buffer dan tidak disiarkan ulang ke subscriber. & Setelah event masuk buffer replay. \\
-        Webhook Provider & Pasangan \code{(event_id, webhook_id)} pada tabel SQLite \code{delivery_dedup}. & Subscription yang sudah sukses dilewati; hanya subscription yang belum sukses dikirim ulang. Kegagalan pengiriman atau penulisan log menyebabkan nack dengan requeue. & Setelah semua pengiriman sukses dan log tercatat. \\
+        Webhook Provider & Pasangan \code{(event_id, webhook_id)} pada tabel SQLite \code{delivery_dedup}. & Subscription yang sudah sukses dilewati; hanya subscription yang belum sukses dikirim ulang. Kegagalan HTTP setelah retry dispatcher dicatat \code{FAILED} tanpa requeue; error penyimpanan internal memperoleh satu redelivery lalu menuju DLQ. & Setelah setiap percobaan delivery selesai dan log tercatat. \\
         Danger Notification & \code{event_id} sebagai primary key tabel \code{notifications} di SQLite. & Record yang sudah ada hanya digabung; status push hanya bergerak maju (Pending, Failed, Delivered), sehingga tidak ada pekerjaan push baru. Revisi lama yang datang terlambat tidak menggantikan revisi current. & Setelah transaksi SQLite commit. \\
         \bottomrule
     \end{tabularx}
@@ -187,7 +196,9 @@ transaksi yang sama. Mekanisme dedup harus dinilai per consumer:
     \item Webhook menyimpan dedup persisten per pasangan publication dan
     subscription, tetapi crash setelah penerima menerima POST dan sebelum
     penandaan dedup masih dapat menghasilkan pengiriman ulang. Penerima
-    juga perlu menangani duplikasi.
+    juga perlu menangani duplikasi. Sebaliknya, delivery yang berstatus
+    \code{FAILED} setelah retry dispatcher tidak dikirim ulang otomatis
+    karena pesan broker sudah di-ack.
     \item Notification memakai ID publication sebagai primary key SQLite.
     Pengiriman ulang ID yang sama tidak membuat notifikasi baru, dan
     pembaruan status mempertahankan hasil push yang sudah delivered.
