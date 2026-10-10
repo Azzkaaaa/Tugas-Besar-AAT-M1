@@ -1,4 +1,4 @@
-# IF4031 — Platform Koordinasi Kebencanaan, Milestone 1
+# IF4031 — Platform Koordinasi Kebencanaan, ARLOW
 
 Platform BNPB yang mengagregasi data bahaya dari mock **BMKG** (gempa/tsunami)
 dan **PVMBG** (vulkanik), menyimpannya dalam bentuk kanonik, lalu
