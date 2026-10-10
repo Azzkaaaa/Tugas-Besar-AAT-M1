@@ -11,7 +11,7 @@ Revisi 10 Oktober 2026 mengikuti spesifikasi tugas dan snapshot repository `4a19
 - `metadata.tex`: identitas, tanggal, dan kontribusi yang tetap diisi manual oleh anggota.
 - `contents/01-sistem.tex`: arsitektur, teknologi, asumsi, dan cara menjalankan.
 - `contents/02-p1.tex` sampai `06-p5.tex`: rancangan, alternatif, batasan, hasil aktual, dan screenshot demo.
-- `contents/07-bukti.tex`: inventaris, scorecard suite, hasil historis, reproduksi, dan cakupan kesimpulan.
+- `contents/07-bukti.tex`: arsip sumber lampiran lama; tidak dimasukkan ke PDF. Bukti dan pembahasannya tetap tersedia pada bab P1-P5 serta direktori `evidence/`.
 - `figures/`: diagram TikZ; Notification kini mencakup SQLite dan push outbox.
 - `evidence/manifest.json`: hash semua artefak dan daftar gambar yang dimuat di PDF.
 
