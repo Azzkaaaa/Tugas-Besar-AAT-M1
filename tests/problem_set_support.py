@@ -68,7 +68,7 @@ def get_config() -> Dict[str, str]:
     config.setdefault("PVMBG_HTTP_PORT", "8082")
     config.setdefault("RABBITMQ_DEFAULT_USER", "bnpb_app")
     config.setdefault("RABBITMQ_DEFAULT_PASS", "bnpb_app_password")
-    config.setdefault("RABBITMQ_DEFAULT_VHOST", "bnpb")
+    config.setdefault("RABBITMQ_DEFAULT_VHOST", "vhost")
     config.setdefault("RABBITMQ_MGMT_PORT", "15672")
     config.setdefault("AGGREGATOR_GRPC_PORT", "9091")
     config.setdefault("RABBITMQ_EXCHANGE", "bnpb.hazards.v1")
@@ -95,7 +95,7 @@ def mock_request(
     """Make direct HTTP request to BMKG (8081) or PVMBG (8082) mock."""
     source = source.lower()
     port = int(CONFIG.get(f"{source.upper()}_HTTP_PORT", "8081" if source == "bmkg" else "8082"))
-    
+
     headers = {"Host": f"localhost:{port}"}
     if custom_auth_header is not None:
         headers.update(custom_auth_header)
@@ -155,7 +155,7 @@ class RabbitMQClient:
         self.port = port
         self.user = user or CONFIG.get("RABBITMQ_DEFAULT_USER", "bnpb_app")
         self.password = password or CONFIG.get("RABBITMQ_DEFAULT_PASS", "bnpb_app_password")
-        self.vhost = vhost or CONFIG.get("RABBITMQ_DEFAULT_VHOST", "bnpb")
+        self.vhost = vhost or CONFIG.get("RABBITMQ_DEFAULT_VHOST", "vhost")
         basic = base64.b64encode(f"{self.user}:{self.password}".encode("utf-8")).decode("utf-8")
         self.auth_header = f"Basic {basic}"
 
@@ -196,11 +196,19 @@ class RabbitMQClient:
         status, data = self._req("GET", f"/api/bindings")
         return data if status == 200 and isinstance(data, list) else []
 
+   # def declare_queue(self, queue_name: str, durable: bool = False, auto_delete: bool = True) -> bool:
+   #     import urllib.parse
+   #     vhost_esc = urllib.parse.quote(self.vhost, safe="")
+   #     path = f"/api/queues/{vhost_esc}/{queue_name}"
+   #     status, _ = self._req("PUT", path, body={"auto_delete": auto_delete, "durable": durable, "arguments": {}})
+   #     return status in (200, 201, 204)
     def declare_queue(self, queue_name: str, durable: bool = False, auto_delete: bool = True) -> bool:
         import urllib.parse
         vhost_esc = urllib.parse.quote(self.vhost, safe="")
         path = f"/api/queues/{vhost_esc}/{queue_name}"
-        status, _ = self._req("PUT", path, body={"auto_delete": auto_delete, "durable": durable, "arguments": {}})
+        status, data = self._req("PUT", path, body={"auto_delete": auto_delete, "durable": durable, "arguments": {}})
+        if status not in (200, 201, 204):
+            print(f"\n[DEBUG] declare_queue failed: HTTP {status} -> {data}")
         return status in (200, 201, 204)
 
     def bind_queue(self, exchange_name: str, queue_name: str, routing_key: str = "#") -> bool:

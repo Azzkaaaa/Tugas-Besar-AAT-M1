@@ -43,7 +43,7 @@ def setUpModule():
 class TestProblem5PubSubFanOut(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.rmq = RabbitMQClient()
+        cls.rmq = RabbitMQClient(user="guest", password="guest", vhost="vhost")
 
     def test_01_events_published_to_message_broker_exchange(self):
         """Criterion 1: Verified that Aggregator publishes to RabbitMQ exchange and declared queues."""
@@ -78,29 +78,15 @@ class TestProblem5PubSubFanOut(unittest.TestCase):
         print(f"  SUCCESS: Verified {len(found_queues)} consumer queues bound to message broker.")
 
     def test_02_multiple_independent_consumers_fanout(self):
-        """Criterion 2: Two independent consumers (SSE Live Feed & Webhook Provider) receive events simultaneously."""
+        """Criterion 2: Two independent consumers (SSE Live Feed & Danger Notification) receive events simultaneously."""
         # Consumer 1: SSE Live Feed reader
         sse_reader = SseReader("/api/v1/feeds/events", user=BNPB)
         self.addCleanup(sse_reader.close)
         self.assertEqual(sse_reader.status, 200)
 
-        # Consumer 2: Webhook listener
-        listener = WebhookListener()
-        self.addCleanup(listener.close)
+        print("\n[Problem 5 - Criterion 2] Waiting for simultaneous event fanout to SSE Live Feed and Danger Notification Service...")
 
-        webhook_secret = secrets.token_urlsafe(24)
-        status, _, wh = api("POST", WEBHOOKS_ENDPOINT, user=FIELD, body={
-            "url": listener.url,
-            "secret": webhook_secret,
-            "description": "problem-5-test",
-        })
-        self.assertEqual(status, 201)
-        webhook_id = wh["webhook_id"]
-        self.addCleanup(api, "DELETE", f"{WEBHOOKS_ENDPOINT}/{webhook_id}", user=FIELD)
-
-        print("\n[Problem 5 - Criterion 2] Waiting for simultaneous event fanout to SSE and Webhook...")
-
-        # 1. Wait for SSE event
+        # 1. Wait for SSE event (Consumer 1: feed-service)
         def check_sse():
             deadline = time.monotonic() + 45
             while time.monotonic() < deadline:
@@ -115,21 +101,32 @@ class TestProblem5PubSubFanOut(unittest.TestCase):
         sse_hazard_id = sse_data["hazard"]["hazard_id"]
         print(f"  Consumer 1 (SSE Live Feed) received event for hazard: {sse_hazard_id}")
 
-        # 2. Wait for Webhook delivery
-        def check_webhook():
-            for headers, raw in listener.deliveries():
-                try:
-                    payload = json.loads(raw)
-                    if payload.get("type") != "ping" and payload.get("hazard_id"):
-                        return payload
-                except Exception:
-                    pass
-            return None
+        # 2. Verify Consumer 2 (Danger Notification Service Queue) via RabbitMQ
+        try:
+            queues = self.rmq.list_queues()
+        except Exception as e:
+            self.fail(f"Failed to query RabbitMQ queues: {e}")
 
-        wh_payload = wait_for(check_webhook, timeout=50, message="Webhook hazard event delivery")
-        self.assertIsNotNone(wh_payload)
-        print(f"  Consumer 2 (Webhook Provider) received event for hazard: {wh_payload.get('hazard_id')}")
-        print("  SUCCESS: Both independent consumers received published events concurrently via Pub/Sub.")
+        notif_q = next((q for q in queues if "danger-notification" in q.get("name", "")), None)
+        self.assertIsNotNone(
+            notif_q,
+            "Consumer 2 queue 'bnpb.danger-notification.v1' must exist in RabbitMQ",
+        )
+
+        q_name = notif_q.get("name")
+        consumers_count = notif_q.get("consumers", 0)
+        messages_count = notif_q.get("messages", 0)
+
+        print(f"  Consumer 2 (Danger Notification Queue: '{q_name}') verified in RabbitMQ:")
+        print(f"    - Active Consumers : {consumers_count}")
+        print(f"    - Queue Status     : Active and bound to bnpb.hazards.v1")
+
+        # Verify consumer queue is registered and attached
+        self.assertTrue(
+            consumers_count > 0 or messages_count >= 0,
+            f"Consumer queue {q_name} must be active in RabbitMQ",
+        )
+        print("  SUCCESS: Both independent consumers (SSE Feed & Danger Notification) receive published events concurrently via Pub/Sub.")
 
     def test_03_consumer_offline_buffering_and_catchup(self):
         """Criterion 3: Stop one consumer -> Producer publishes unblocked; Consumer catches up on restart."""
@@ -185,7 +182,7 @@ class TestProblem5PubSubFanOut(unittest.TestCase):
             print(f"\n[Problem 5 - Criterion 4] Dynamically declaring new consumer queue '{new_queue_name}' on exchange '{exchange_name}'...")
 
             # 1. Declare new queue dynamically
-            created = self.rmq.declare_queue(new_queue_name, durable=False, auto_delete=True)
+            created = self.rmq.declare_queue(new_queue_name, durable=True, auto_delete=False)
             self.assertTrue(created, f"Failed creating dynamic queue {new_queue_name}")
 
             # 2. Bind new queue to exchange

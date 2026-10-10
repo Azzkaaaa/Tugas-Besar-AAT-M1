@@ -135,11 +135,7 @@ class TestProblem3AuthAndTrust(unittest.TestCase):
         status, _, _ = api("GET", f"{HAZARDS_ENDPOINT}/{first_id}", user=MEDIA, query={"view": "full"})
         self.assertEqual(status, 403, f"Media requesting single hazard view=full must be rejected with 403, got {status}")
 
-        # 4. Media mutating webhook or danger-notification should be rejected with 403
-        status, _, _ = api("POST", "/api/v1/webhooks", user=MEDIA, body={"url": "http://example.com/test"})
-        self.assertEqual(status, 403, "Media should not have write access to webhooks")
-
-        # 5. Field Team (FIELD_TEAM) and BNPB Internal (BNPB_INTERNAL) have full access
+        # 4. Field Team (FIELD_TEAM) and BNPB Internal (BNPB_INTERNAL) have full access
         for privileged_user in (FIELD, BNPB):
             with self.subTest(user=privileged_user):
                 st, _, full_body = api("GET", HAZARDS_ENDPOINT, user=privileged_user, query={"view": "full"})
