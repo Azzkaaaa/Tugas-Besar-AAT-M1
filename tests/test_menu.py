@@ -302,7 +302,7 @@ def prove_credential_isolation() -> None:
 
     # 2. PVMBG Bearer Token to BMKG Service (Cross-use attempt)
     print(f"\n{CLR_BOLD}[Step 1.2] Cross-test: PVMBG Bearer Token -> BMKG upstream...{CLR_RESET}")
-    st, _, data = mock_request("bmkg", "/", custom_auth_header={"Authorization": f"Bearer {pvmbg_token}"})
+    st, _, data = mock_request("bmkg", "/seismic-events", custom_auth_header={"Authorization": f"Bearer {pvmbg_token}"})
     color = CLR_GREEN if st in (401, 403) else CLR_RED
     status_msg = "✔ REJECTED (401/403) as expected" if st in (401, 403) else f"✘ FAILED (Expected 401/403, got {st})"
     print(f"  Response: {color}HTTP {st}{CLR_RESET} -> {status_msg}")
