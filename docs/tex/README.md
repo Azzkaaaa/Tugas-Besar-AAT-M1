@@ -1,8 +1,10 @@
 # Laporan Milestone 1
 
-Revisi 10 Oktober 2026 mengikuti spesifikasi tugas dan snapshot repository `1c2856b`, menggunakan evidence yang sudah tersedia. Tidak ada pengujian ulang saat penyusunan revisi.
+Kelompok **nasigoreng**. Sistem **ARLOW: Agregasi Real-time Layanan Operasi Waspada**.
 
-**PDF utama: [IF4031_M1_nasgor.pdf](IF4031_M1_nasgor.pdf).** `main.pdf` adalah hasil build editor terpisah.
+Revisi 10 Oktober 2026 mengikuti spesifikasi tugas dan snapshot repository `4a1973b`, menggunakan evidence yang sudah tersedia. Tidak ada pengujian ulang saat penyusunan revisi.
+
+**PDF utama: [IF4031_M1_nasigoreng.pdf](IF4031_M1_nasigoreng.pdf).** `main.pdf` adalah hasil build editor terpisah.
 
 ## Isi
 
@@ -24,9 +26,17 @@ Revisi 10 Oktober 2026 mengikuti spesifikasi tugas dan snapshot repository `1c28
 
 K1 mencatat 50 VU selama fase beban 60 detik, 17.546 request, throughput 292,43 request/detik, dan p95 243,96 ms. K2 mencatat p95 BMKG pada kontensi 87,09 ms. Throughput menggunakan durasi fase pengukuran, bukan durasi keseluruhan run termasuk pemanasan.
 
-Interpretasi mengikuti cakupan bukti. Penerbitan token service melalui client credentials dibedakan dari refresh sesi browser. Kepemilikan logis database dibedakan dari isolasi akses konfigurasi. Build yang menyertakan dependency tidak disebut build eksklusif satu layanan.
+Interpretasi mengikuti cakupan bukti. Penerbitan token service melalui client credentials dibedakan dari refresh sesi browser. Kepemilikan logis database dibedakan dari isolasi akses konfigurasi. Bukti baru P4 memakai `--no-deps` dan hanya menampilkan build Notification; screenshot lama tetap menjadi riwayat.
 
-`evidence/P5/4-3.png` dan `4-3-alternative.png` tidak dimasukkan ke PDF karena memperlihatkan nilai secret konfigurasi. Gambar expiry P3 dengan fragmen token juga tidak dimuat; hasilnya dijelaskan dalam teks. Bukti asli tetap dipertahankan dan perlu disanitasi tersendiri sebelum publikasi repository.
+`evidence/P5/4-3.png` dan `4-3-alternative.png` tidak dimasukkan ke PDF karena memperlihatkan nilai secret konfigurasi. Gambar expiry P3 dengan fragmen token dan dua gambar refresh baru yang memuat CSRF token tidak dimuat; field relevannya ditranskripsi tanpa token. Bukti asli tetap dipertahankan dan perlu disanitasi tersendiri sebelum publikasi repository.
+
+## Proof tambahan pada commit 4a1973b
+
+- `P3/1-new.png`: dua request kredensial silang ditolak HTTP 401; menggantikan screenshot lama sebagai bukti penolakan. Kontrol positif 404/405 tetap dijelaskan sesuai gambar.
+- `P3/3-1-alternative.png` dan `P3/3-2-alternative.png`: sesi browser BNPB Pusat dengan mode OIDC dan expiry bertambah 55 detik; profil dan expiry disajikan sebagai transkripsi pada Bab P3.
+- `P4/1-3-new.png`: build Notification dengan `--no-deps`; hanya layanan target tampil pada output.
+
+Scorecard otomatis dan kedua hasil k6 tidak berubah pada commit ini. Manifest memuat semua 52 artefak beserta hash; bukti asli tidak diubah.
 
 ## Kompilasi
 
@@ -36,7 +46,7 @@ Prasyarat: MiKTeX atau TeX Live dengan `pdflatex` dan paket pada `preamble.tex`.
 powershell -ExecutionPolicy Bypass -File docs/tex/build.ps1
 ```
 
-Skrip menjalankan tiga putaran, menyimpan berkas bantu dalam `docs/tex/build/`, lalu memperbarui `IF4031_M1_nasgor.pdf`. Skrip tidak menimpa `main.pdf`.
+Skrip menjalankan tiga putaran, menyimpan berkas bantu dalam `docs/tex/build/`, lalu memperbarui `IF4031_M1_nasigoreng.pdf`. Skrip tidak menimpa `main.pdf`.
 
 ## Sebelum pengumpulan
 

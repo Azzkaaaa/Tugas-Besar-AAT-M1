@@ -10,8 +10,8 @@ E3 & 9 Oktober 2026, 08:33 WIB & \code{aggregator-unit-2026-10-09.jsonl}; ingest
 E4 & 10 Oktober 2026, 07:53 WIB & \code{problem_set_report.md}; 19 tes, 0 error/failure, 0 skipped. & Suite problem P1--P5; hasil sesuai scorecard dan cakupan assertion pada skrip pengujian.\\
 M1 & Waktu mengikuti screenshot & \code{P1/}; 5 screenshot. & Data kanonik BMKG/PVMBG, kontrol skema, dan atribut confidence pada hasil baru.\\
 M2 & Waktu mengikuti screenshot & \code{P2/}; 7 screenshot. & Ringkasan k6, outage PVMBG, status FRESH/STALE, serta pemulihan.\\
-M3 & Waktu mengikuti screenshot & \code{P3/}; 8 screenshot. & Request kredensial, proyeksi role, expiry token, penerbitan token baru, dan pemeriksaan konfigurasi.\\
-M4 & Waktu mengikuti screenshot & \code{P4/}; 8 screenshot. & Operasi container, keberlanjutan API, koeksistensi record, JSONB, dan pemeriksaan Compose.\\
+M3 & Waktu mengikuti screenshot & \code{P3/}; 11 screenshot, termasuk 3 tambahan dari commit \code{4a1973b}. & Penolakan kredensial silang HTTP 401, proyeksi role, expiry token API, refresh browser BNPB Pusat, dan pemeriksaan konfigurasi.\\
+M4 & Waktu mengikuti screenshot & \code{P4/}; 9 screenshot, termasuk \code{1-3-new.png}. & Operasi container, build target dengan \code{--no-deps}, keberlanjutan API, koeksistensi record, JSONB, dan pemeriksaan Compose.\\
 M5 & Waktu mengikuti screenshot & \code{P5/}; 14 screenshot. & Trace fanout, queue consumer, backlog/pemulihan, dan penambahan penerima. Gambar konfigurasi dengan secret tidak dimuat dalam PDF.\\
 K1 & 9 Oktober 2026, sesuai nama berkas & \code{P2/aggregator-2026-10-09T15-31-17-502Z.json}. & Ringkasan metrik k6 beban sustained; angka dilaporkan pada Bab P2.\\
 K2 & 9 Oktober 2026, sesuai nama berkas & \code{P2/aggregator-isolation-2026-10-09T15-37-25-357Z.json}. & Metrik baseline, kontensi, dan probe delay PVMBG.\\\bottomrule
@@ -40,12 +40,12 @@ Angka di atas diambil dari artefak E4, bukan eksekusi ulang. Narasi rinci E4 dib
 \toprule \textbf{Demo} & \textbf{Artefak utama} & \textbf{Observasi yang digunakan}\\\midrule\endhead
 P1 & \code{P1/1-1.png}, \code{1-2.png}, \code{2.png}, \code{3-1.png}, \code{3-2.png}. & Detail dua sumber, perubahan versi PVMBG, dan munculnya \code{attributes.confidence_level} pada hazard baru.\\
 P2 & \code{P2/1.png}, \code{2.png}, \code{3-1.png} sampai \code{3-5.png}; K1--K2. & Beban 50 VU/60 detik; p95 BMKG 87,09 ms pada kontensi; API merespons selama PVMBG STALE dan kembali FRESH setelah pemulihan.\\
-P3 & \code{P3/2-1.png} sampai \code{2-3.png}; \code{3-1.png}, \code{3-2.png}; E1--E4. & Media summary HTTP 200 dan full HTTP 403; FIELD\_TEAM full HTTP 200; expiry alami token API diikuti token baru yang diterima. Bukti refresh browser tetap memiliki cakupan historis E2.\\
-P4 & \code{P4/1-1.png} sampai \code{1-5.png}; \code{2-1.png}, \code{2-2.png}, \code{3.png}. & Operasi Notification terpisah; 25 record tanpa confidence dan 75 dengan confidence; atribut tersimpan dalam JSONB.\\
+P3 & \code{P3/1-new.png}; \code{2-1.png} sampai \code{2-3.png}; \code{3-1.png}, \code{3-2.png}; \code{3-1-alternative.png}, \code{3-2-alternative.png}; E1--E4. & Dua kredensial silang HTTP 401; Media summary 200/full 403; FIELD\_TEAM full 200; expiry token API. Bukti browser baru memperlihatkan role BNPB\_INTERNAL, mode OIDC, dan expiry berubah 03:30:33 menjadi 03:31:28 UTC pada 10 Oktober.\\
+P4 & \code{P4/1-1.png} sampai \code{1-5.png}; \code{1-3-new.png}; \code{2-1.png}, \code{2-2.png}, \code{3.png}. & Operasi Notification terpisah dan build baru memakai \code{--no-deps}; 25 record tanpa confidence dan 75 dengan confidence; atribut tersimpan dalam JSONB.\\
 P5 & \code{P5/1.png}; \code{2-1.png} sampai \code{2-3.png}; \code{3-1.png}, \code{3-2.png}; \code{4-1.png}, \code{4-4.png}, \code{4-5.png}. & Fanout Feed/Notification; 23 pesan menunggu saat Notification berhenti lalu backlog 0 setelah aktif; queue dan callback penerima tambahan.\\\bottomrule
 \end{longtable}
 
-Nama file singkat pada baris yang sama mengikuti direktori problem yang disebut pertama. Bab P1--P5 memuat gambar terpilih dengan caption dan penjelasan; gambar lain tetap terinventarisasi dalam manifest. Nilai secret konfigurasi pada dua gambar M5 tidak direproduksi dalam PDF. Berkas sumber bukti dipertahankan agar hasil pengujian dapat ditelusuri.
+Nama file singkat pada baris yang sama mengikuti direktori problem yang disebut pertama. Bab P1--P5 memuat gambar terpilih dengan caption dan penjelasan; gambar lain tetap terinventarisasi dalam manifest. Empat gambar tambahan berasal dari commit \code{4a1973b}; E4 dan keluaran k6 tidak berubah. Nilai secret konfigurasi pada dua gambar M5 tidak direproduksi dalam PDF. Dua gambar refresh browser terbaru memuat CSRF token, sehingga Bab P3 menyajikan transkripsi field profil dan expiry yang relevan. Berkas sumber bukti dipertahankan agar hasil pengujian dapat ditelusuri.
 
 \section{Hasil Mock yang Direkam}
 \begin{table}[H]\small
@@ -137,8 +137,8 @@ python tests/test_menu.py
 \toprule \textbf{Bagian} & \textbf{Hasil yang didukung} & \textbf{Batas interpretasi}\\\midrule\endhead
 P1 & Perubahan aditif muncul pada data kanonik dan record lama/baru tersimpan. & Screenshot tidak memuat pasangan ID/start time seluruh container sebelum dan sesudah perubahan.\\
 P2 & Beban dan isolasi memiliki metrik aktual; outage dan pemulihan sumber terlihat. & Angka berlaku untuk run yang direkam; durasi outage tidak disamakan dengan pengujian 10--20 menit.\\
-P3 & Pemisahan proyeksi, penolakan Media full, dan expiry token API terlihat; E2 merekam refresh browser historis. & Penerbitan ulang client credentials berbeda dari refresh sesi pengguna; 401 setelah expiry tidak sendiri membuktikan revokasi sebelum expiry.\\
-P4 & Container terpisah, data JSONB, dan koeksistensi atribut teramati. & Build screenshot juga mencakup dependency; kepemilikan logis tidak disamakan dengan pembatasan kredensial/jaringan eksklusif.\\
+P3 & Penolakan kredensial silang 401, proyeksi role, expiry token API, dan refresh browser BNPB Pusat terlihat; E2 menambah bukti browser historis. & Kontrol positif pada gambar isolasi masih 404/405. Refresh browser baru memperlihatkan BNPB\_INTERNAL; tidak sendiri membuktikan expiry alami Tim Lapangan dan penolakan token lamanya.\\
+P4 & Container terpisah, build Notification dengan \code{--no-deps}, JSONB, dan koeksistensi atribut teramati. & Bukti baru membatasi build pada target; tidak memuat semua ID/start time container. Kepemilikan logis tidak disamakan dengan pembatasan kredensial/jaringan eksklusif.\\
 P5 & Dua consumer menerima fanout; backlog Notification terkumpul dan terkuras; callback tambahan diterima. & Hasil ini tidak menyatakan exactly-once, ketahanan saat broker dibuat ulang, atau pengiriman push ke perangkat untuk setiap event.\\\bottomrule
 \end{longtable}
 

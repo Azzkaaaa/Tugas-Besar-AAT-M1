@@ -1,5 +1,5 @@
 {
-  "report_snapshot": "1c2856b",
+  "report_snapshot": "4a1973b",
   "report_date": "2026-10-10",
   "revision_method": "Documentation update using existing evidence; no live tests rerun.",
   "evidence": [
@@ -106,10 +106,18 @@
       "id": "K2"
     },
     {
+      "file": "P3/1-new.png",
+      "sha256": "29de0ef8dde0bacfb5a4256c510b3f3167ff6c500f1eb6e3a517580750315763",
+      "id": "M3/1-new",
+      "included_in_pdf": true,
+      "added_in_commit": "4a1973b"
+    },
+    {
       "file": "P3/1.png",
       "sha256": "8f9ea369f6b7f0ec9e480ec3cdd212694eb652d20821c8419f4c4b508fb70398",
       "id": "M3/1",
-      "included_in_pdf": false
+      "included_in_pdf": false,
+      "superseded_for_cross_credential_demo_by": "P3/1-new.png"
     },
     {
       "file": "P3/2-1.png",
@@ -130,10 +138,28 @@
       "included_in_pdf": true
     },
     {
+      "file": "P3/3-1-alternative.png",
+      "sha256": "03a904281505d7c92ccd561842c9a61a17af1cfb889faf1877d66c03a5aebfad",
+      "id": "M3/3-1-alternative",
+      "included_in_pdf": false,
+      "added_in_commit": "4a1973b",
+      "pdf_exclusion_reason": "Visible CSRF token; safe profile and expiry fields transcribed in P3.",
+      "discussed_in": "contents/04-p3.tex"
+    },
+    {
       "file": "P3/3-1.png",
       "sha256": "0434f4ead0a2ce006e558a9c44d4c9f945015a1ba00549601addffe9f61e97e5",
       "id": "M3/3-1",
       "included_in_pdf": false
+    },
+    {
+      "file": "P3/3-2-alternative.png",
+      "sha256": "e23ca9f2ba71edd0ecb8a71b86911b1e9ed341a84fefd4a9ebbb24e86541fbd3",
+      "id": "M3/3-2-alternative",
+      "included_in_pdf": false,
+      "added_in_commit": "4a1973b",
+      "pdf_exclusion_reason": "Visible CSRF token; safe profile and expiry fields transcribed in P3.",
+      "discussed_in": "contents/04-p3.tex"
     },
     {
       "file": "P3/3-2.png",
@@ -166,10 +192,18 @@
       "included_in_pdf": false
     },
     {
+      "file": "P4/1-3-new.png",
+      "sha256": "3835043e00dea0c1329cd961e8d7864431711fd9b420ce9ea2605f32ca1bb812",
+      "id": "M4/1-3-new",
+      "included_in_pdf": true,
+      "added_in_commit": "4a1973b"
+    },
+    {
       "file": "P4/1-3.png",
       "sha256": "07afb868a92e07b05a43b7f537097545f6cffd164353edc64fcb3a055cec9982",
       "id": "M4/1-3",
-      "included_in_pdf": false
+      "included_in_pdf": false,
+      "superseded_for_independent_build_demo_by": "P4/1-3-new.png"
     },
     {
       "file": "P4/1-4.png",
@@ -295,10 +329,12 @@
   ],
   "verification_limits": [
     "Historical browser Auth evidence uses the earlier bridge API path.",
-    "Latest token expiry test reissues client-credentials tokens; it is distinct from browser session refresh.",
-    "Manual screenshots do not capture all before/after container identities or DDL snapshots.",
-    "Automatic suite PASS is reported within implemented assertions; per-criterion observations use screenshots and k6 JSON.",
-    "Original evidence can contain configuration secrets; selected screenshots with visible secrets are excluded from the PDF."
+    "New screenshots show current OIDC browser refresh for BNPB_INTERNAL; they do not show natural FIELD_TEAM expiry or replay of its old token.",
+    "Latest service-token expiry test reissues client-credentials tokens and is distinct from browser session refresh.",
+    "New cross-credential screenshot records both HTTP 401 rejections; positive-control requests in the same image remain HTTP 404/405.",
+    "New P4 screenshot shows target-only build with --no-deps; full before/after container identities and DDL snapshots are not recorded.",
+    "Automatic suite PASS is reported within implemented assertions; observations also use screenshots and k6 JSON.",
+    "Original evidence can contain secrets or CSRF tokens; affected images are excluded from the PDF and relevant safe fields are described in text."
   ],
   "additional_attempts": [
     {
@@ -307,5 +343,18 @@
       "status": "test_cases_not_started",
       "reason": "ERR_MODULE_NOT_FOUND: @opentelemetry/api; local Node dependencies incomplete"
     }
-  ]
+  ],
+  "report_group": "nasigoreng",
+  "report_system": "ARLOW: Agregasi Real-time Layanan Operasi Waspada",
+  "report_pdf": "IF4031_M1_nasigoreng.pdf",
+  "latest_proof_update": {
+    "commit": "4a1973b",
+    "files": [
+      "P3/1-new.png",
+      "P3/3-1-alternative.png",
+      "P3/3-2-alternative.png",
+      "P4/1-3-new.png"
+    ],
+    "test_execution": "No tests rerun during this documentation update; existing automatic scorecard and k6 JSON unchanged."
+  }
 }

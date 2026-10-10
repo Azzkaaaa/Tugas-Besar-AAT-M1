@@ -1,6 +1,6 @@
 param(
     [ValidatePattern('^[A-Za-z0-9_-]+$')]
-    [string]$ReportName = 'IF4031_M1_nasgor'
+    [string]$ReportName = 'IF4031_M1_nasigoreng'
 )
 $ErrorActionPreference = 'Stop'
 Push-Location $PSScriptRoot
