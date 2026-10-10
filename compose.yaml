@@ -175,16 +175,26 @@ services:
     build:
       context: .
       dockerfile: services/webhook-provider/Dockerfile
-    env_file:
-      - .env
     profiles:
       - manual
     environment:
-      - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-lgtm:4318
-      - OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf
-      - OTEL_SERVICE_NAME=webhook-provider
-      - AUTH_AUTHORITY=${WEBHOOK_AUTH_AUTHORITY:-http://auth.localhost:8080}
-      - AUTH_INSECURE_SKIP_VERIFY=${AUTH_INSECURE_SKIP_VERIFY:-false}
+      APP_ENV: ${APP_ENV:-development}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      WEBHOOK_GRPC_PORT: ${WEBHOOK_GRPC_PORT:-9094}
+      WEBHOOK_STORE_DSN: ${WEBHOOK_STORE_DSN:-file:/data/webhook.db}
+      WEBHOOK_AMQP_URL: ${WEBHOOK_AMQP_URL}
+      RABBITMQ_EXCHANGE: ${RABBITMQ_EXCHANGE}
+      WEBHOOK_CONSUMER_QUEUE: ${WEBHOOK_CONSUMER_QUEUE:-bnpb.webhook-provider.v1}
+      WEBHOOK_CONSUMER_DLQ: ${WEBHOOK_CONSUMER_DLQ:-bnpb.webhook-provider.dlq.v1}
+      WEBHOOK_SERVICE_TOKEN: ${WEBHOOK_SERVICE_TOKEN}
+      WEBHOOK_MAX_RETRIES: ${WEBHOOK_MAX_RETRIES:-5}
+      WEBHOOK_HTTP_TIMEOUT_MS: ${WEBHOOK_HTTP_TIMEOUT_MS:-10000}
+      AUTH_AUTHORITY: ${WEBHOOK_AUTH_AUTHORITY:-http://auth.localhost:8080}
+      AUTH_AUDIENCE: ${AUTH_AUDIENCE:-}
+      AUTH_INSECURE_SKIP_VERIFY: ${AUTH_INSECURE_SKIP_VERIFY:-false}
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-lgtm:4318
+      OTEL_EXPORTER_OTLP_PROTOCOL: http/protobuf
+      OTEL_SERVICE_NAME: webhook-provider
     ports:
       - "9094:9094"
     # Lets e2e tests (tests/test_e2e_webhooks.py) receive deliveries on the host under Linux.
@@ -299,14 +309,30 @@ services:
     build:
       context: .
       dockerfile: services/aggregator/Dockerfile
-    env_file:
-      - .env
     environment:
-      - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-lgtm:4318
-      - OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf
-      - OTEL_SERVICE_NAME=aggregator-service
-      - AUTH_AUTHORITY=${AGGREGATOR_AUTH_AUTHORITY:-http://auth.localhost:8080}
-      - AUTH_INSECURE_SKIP_VERIFY=${AUTH_INSECURE_SKIP_VERIFY:-false}
+      APP_ENV: ${APP_ENV:-development}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      AGGREGATOR_GRPC_PORT: ${AGGREGATOR_GRPC_PORT:-9091}
+      BMKG_BASE_URL: ${BMKG_BASE_URL:-http://bmkg-mock:8080}
+      PVMBG_BASE_URL: ${PVMBG_BASE_URL:-http://pvmbg-mock:8080}
+      BMKG_API_KEY: ${BMKG_API_KEY}
+      PVMBG_BEARER_TOKEN: ${PVMBG_BEARER_TOKEN}
+      BMKG_POLL_INTERVAL_MS: ${BMKG_POLL_INTERVAL_MS:-3000}
+      PVMBG_POLL_INTERVAL_MS: ${PVMBG_POLL_INTERVAL_MS:-3000}
+      BMKG_REQUEST_TIMEOUT_MS: ${BMKG_REQUEST_TIMEOUT_MS:-1000}
+      PVMBG_REQUEST_TIMEOUT_MS: ${PVMBG_REQUEST_TIMEOUT_MS:-3500}
+      SOURCE_STALE_AFTER_MS: ${SOURCE_STALE_AFTER_MS:-10000}
+      CANONICAL_STORE_DSN: ${CANONICAL_STORE_DSN}
+      AGGREGATOR_AMQP_URL: ${AGGREGATOR_AMQP_URL}
+      RABBITMQ_EXCHANGE: ${RABBITMQ_EXCHANGE}
+      OUTBOX_MAX_RETRIES: ${OUTBOX_MAX_RETRIES:-5}
+      AGGREGATOR_SERVICE_TOKEN: ${AGGREGATOR_SERVICE_TOKEN}
+      AUTH_AUTHORITY: ${AGGREGATOR_AUTH_AUTHORITY:-http://auth.localhost:8080}
+      AUTH_AUDIENCE: ${AUTH_AUDIENCE:-}
+      AUTH_INSECURE_SKIP_VERIFY: ${AUTH_INSECURE_SKIP_VERIFY:-false}
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-lgtm:4318
+      OTEL_EXPORTER_OTLP_PROTOCOL: http/protobuf
+      OTEL_SERVICE_NAME: aggregator-service
     ports:
       - "9091:9091"
     depends_on:
