@@ -26,13 +26,15 @@ Rancangan lengkap ada di [arsitektur](docs/architecture.md),
 
 ## Prasyarat
 
-**Untuk menjalankan sistem** (semua service dibangun di dalam Docker, tanpa
-toolchain bahasa di host):
+**Untuk menjalankan sistem** (semua service dikompilasi di dalam Docker; satu
+langkah generasi kode .NET berjalan di host, lihat langkah 2):
 
 | Kebutuhan | Versi | Keterangan |
 | --- | --- | --- |
 | Docker Engine / Docker Desktop | terbaru | Dengan plugin **Docker Compose v2** (`docker compose`, mendukung `--wait`) |
 | Python | 3.12+ | Helper setup dan seluruh tes; hanya standard library, tanpa `pip install` |
+| Node.js + npm | 22.12+ | Opsional: menjalankan `buf` untuk generasi kode .NET (langkah 2); dapat diganti image Docker `bufbuild/buf` |
+| Akses internet ke `buf.build` | — | Plugin `buf` untuk C# bersifat remote; juga diperlukan saat build image |
 | Kredensial Firebase | — | File service account JSON di `.secrets/firebase-credentials.json`; `notification-service` gagal start tanpa file ini |
 | k6 | 1.x | Hanya untuk uji beban ([instalasi](https://grafana.com/docs/k6/latest/set-up/install-k6/)) |
 
@@ -76,7 +78,31 @@ Letakkan service account Firebase di `.secrets/firebase-credentials.json` (atau
 arahkan `FIREBASE_CREDENTIALS_PATH` ke lokasi lain). `.env`, `.env.auth`,
 `.secrets/`, dan `.cache/` tidak masuk Git.
 
-### 2. Build dan jalankan seluruh stack
+### 2. Generasi kode gRPC .NET
+
+Kode C# hasil generasi `contracts/proto` (`packages/bnpb-*-dotnet/*/codegen/`)
+tidak masuk Git, dan Dockerfile `notification-service` menyalinnya dari host.
+Tanpa langkah ini build `notification-service` gagal. Pilih salah satu:
+
+```bash
+# Dengan Node.js/npm
+npm ci
+npx nx run-many -t generate-proto -p 'bnpb-*-dotnet'
+```
+
+```bash
+# Hanya Docker
+for p in common event aggregator notification; do
+  docker run --rm -v "$PWD:/workspace" -w /workspace/packages/bnpb-$p-dotnet bufbuild/buf:1.73.0 generate
+done
+```
+
+Ulangi setelah mengubah file `.proto`. Kode lain tidak memerlukan langkah host:
+stub Go di `packages/bnpb-aggregator-go` sudah di-commit, server REST
+`packages/bnpb-gateway-go` dan stub Rust dibuat di dalam Dockerfile masing-masing.
+Go, Rust, dan .NET SDK tidak perlu terpasang di host.
+
+### 3. Build dan jalankan seluruh stack
 
 ```bash
 docker compose --env-file .env --env-file .env.auth up --build -d --wait
@@ -94,7 +120,7 @@ menjalankannya, yang diperlukan oleh tes webhook dan Problem 5:
 docker compose --env-file .env --env-file .env.auth --profile manual up --build -d --wait
 ```
 
-### 3. Akses
+### 4. Akses
 
 | URL | Isi |
 | --- | --- |
@@ -105,7 +131,7 @@ docker compose --env-file .env --env-file .env.auth --profile manual up --build 
 | `http://localhost:15672` | RabbitMQ management (`RABBITMQ_DEFAULT_USER`/`_PASS`) |
 | `http://localhost:3000` | Grafana, dashboard **BNPB Health & Traces** |
 
-### 4. Operasi sehari-hari
+### 5. Operasi sehari-hari
 
 ```bash
 docker compose --env-file .env --env-file .env.auth ps
@@ -267,7 +293,7 @@ npx nx run-many -t test                       # tes per service (butuh toolchain
 
 ### End-to-end (stack berjalan)
 
-Jalankan stack lengkap dengan profile `manual` (lihat langkah 2), lalu:
+Jalankan stack lengkap dengan profile `manual` (lihat langkah 3), lalu:
 
 ```bash
 BNPB_E2E=1 python -m unittest discover -s tests -p 'test_e2e_*.py' -v
