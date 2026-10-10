@@ -206,7 +206,8 @@ func (c *Consumer) handleMessage(ctx context.Context, msg amqp.Delivery) {
 
 	subs, err := c.db.ListActiveSubscriptions(ctxMsg)
 	if err != nil {
-		logf("[Consumer] Failed to list subscriptions for event %s: %v — requeuing", ev.EventId, err)
+		requeue := !msg.Redelivered
+		logf("[Consumer] Failed to list subscriptions for event %s: %v (requeue=%v)", ev.EventId, err, requeue)
 		if span != nil {
 			span.RecordError(err)
 			span.SetStatus(codes.Error, err.Error())
@@ -214,7 +215,7 @@ func (c *Consumer) handleMessage(ctx context.Context, msg amqp.Delivery) {
 		if telemetry.ConsumerErrorsCounter != nil {
 			telemetry.ConsumerErrorsCounter.Add(ctxMsg, 1)
 		}
-		_ = msg.Nack(false, true)
+		_ = msg.Nack(false, requeue)
 		return
 	}
 
@@ -282,17 +283,27 @@ func (c *Consumer) handleMessage(ctx context.Context, msg amqp.Delivery) {
 		} else {
 			logf("[Consumer] Delivery failed for event %s to webhook %s (url=%s): status=%d err=%v",
 				ev.EventId, sub.WebhookID, sub.URL, result.StatusCode, result.Err)
-			allOK = false
+			// Dispatch failures alone do not block the ack — they have already completed their own retries
+			// and are recorded in the delivery log.
 		}
 	}
 
 	// Ack after all side-effects have been stored (at-least-once semantics).
-	// If any side-effect failed (DB write error), we nack with requeue so we retry.
+	// If any internal side-effect failed (DB write error), we nack with requeue if not redelivered (one redelivery),
+	// so persistent failures reach the DLQ instead of looping forever.
 	// Dispatch failures alone do not block the ack — they are recorded in the delivery log.
 	if !allOK {
-		logf("[Consumer] Partial failure processing event %s — nacking with requeue", ev.EventId)
-		_ = msg.Nack(false, true)
+		requeue := !msg.Redelivered
+		logf("[Consumer] Partial failure processing event %s (requeue=%v) — nacking", ev.EventId, requeue)
+		if span != nil {
+			span.SetStatus(codes.Error, "partial failure storing side-effects")
+		}
+		if telemetry.ConsumerErrorsCounter != nil {
+			telemetry.ConsumerErrorsCounter.Add(ctxMsg, 1)
+		}
+		_ = msg.Nack(false, requeue)
 	} else {
 		_ = msg.Ack(false)
 	}
 }
+
