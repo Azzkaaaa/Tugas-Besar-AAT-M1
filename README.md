@@ -21,9 +21,6 @@ menampilkan dashboard.
 | `rabbitmq` | RabbitMQ 4 | Exchange fan-out `bnpb.hazards.v1` |
 | `otel-lgtm`, `blackbox` | Grafana LGTM | Trace, metrics, log, health probe |
 
-Rancangan lengkap ada di [arsitektur](docs/architecture.md),
-[pemetaan data](docs/data-mapping.md), dan [rencana M1](docs/milestone-plan.md).
-
 ## Prasyarat
 
 **Untuk menjalankan sistem** (semua service dikompilasi di dalam Docker; satu
@@ -149,8 +146,8 @@ reset Auth gunakan `down -v`. Provisioning ulang Zitadel:
 
 | Tujuan | Perintah | Panduan |
 | --- | --- | --- |
-| Hanya dua mock | `docker compose -f compose.mocks.yaml up --build -d` | [mock](docs/mock-services.md) |
-| Mock tanpa Docker | `python tools/run_mock.py bmkg` dan `python tools/run_mock.py pvmbg` (dua terminal) | [mock](docs/mock-services.md) |
+| Hanya dua mock | `docker compose -f compose.mocks.yaml up --build -d` | - |
+| Mock tanpa Docker | `python tools/run_mock.py bmkg` dan `python tools/run_mock.py pvmbg` (dua terminal) | - |
 | Auth + SPA dengan data fixture | `docker compose --env-file .env.auth -f compose.auth.yaml up --build -d --wait` | [Auth bridge](services/auth-bridge/README.md) |
 | SPA demo tanpa backend | `npm --prefix services/frontend ci && npm --prefix services/frontend run dev` → `http://localhost:5173` | [frontend](services/frontend/README.md) |
 
@@ -178,8 +175,6 @@ relevan disuntikkan ke tiap container.
 
 Variabel shell mengalahkan nilai dari `--env-file`. Variabel `VITE_*`/`FIREBASE_WEB_*`/
 `FRONTEND_*` dibaca saat build SPA, sehingga perubahannya memerlukan `--build`.
-Inventaris lengkap beserta pemakai dan batas tiap variabel ada di
-[docs/configuration.md](docs/configuration.md).
 
 ### `.env` — umum, port, dan alamat
 
@@ -330,9 +325,6 @@ Runner menyetel `BNPB_E2E=1` sendiri.
 | P4 — Microservice & storage | Restart satu container tanpa mengganggu endpoint lain, atribut JSONB, batas akses database |
 | P5 — Fan-out pub/sub | Outbox → exchange fan-out, consumer independen, buffering saat consumer mati, consumer baru tanpa restart |
 
-Bukti manual yang perlu ditangkap untuk laporan (screenshot Grafana, DevTools,
-RabbitMQ) dirangkum di [docs/problem-set-test.md](docs/problem-set-test.md).
-
 #### Skenario Manual Testing
 Untuk membantu jalannya testing manual, Anda perlu menjalankan test_menu (sebuah helper interaktif CLI) dari root dengan perintah berikut.
 ```bash
@@ -418,7 +410,6 @@ login browser, expiry, refresh, dan logout ada di [panduan testing Auth](docs/au
 
 ## Dokumentasi lain
 
-- [Konfigurasi lengkap](docs/configuration.md)
-- [Mock BMKG/PVMBG](docs/mock-services.md), [BMKG](services/bmkg-mock/README.md), [PVMBG](services/pvmbg-mock/README.md)
+- [BMKG](services/bmkg-mock/README.md), [PVMBG](services/pvmbg-mock/README.md)
 - [Kontrak gRPC](contracts/proto/README.md), [OpenAPI gateway](contracts/openapi/gateway.yaml)
 - [Envoy](services/envoy/README.md), [Event Live Feed](services/event-live-feed/README.md), [Zitadel](services/zitadel/README.md)
