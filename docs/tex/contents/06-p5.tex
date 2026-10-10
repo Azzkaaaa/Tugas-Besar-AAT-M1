@@ -150,29 +150,12 @@ transaksi yang sama. Mekanisme dedup harus dinilai per consumer:
     perangkat pengguna.
 \end{enumerate}
 
-Retry webhook memiliki keterbatasan khusus: setelah seluruh percobaan HTTP
-gagal, consumer mengatur kegagalan pemrosesan dan melakukan nack dengan
-requeue. Belum ada batas total redelivery pada jalur tersebut. Dengan
-demikian, lima kegagalan dispatcher tidak otomatis memindahkan event ke
-DLQ. Komentar kode yang menyebut dispatch failure tidak menghalangi ack
-tidak sesuai dengan alur kondisi aktual; uraian laporan mengikuti alur
-yang dieksekusi.
-
-Pola outbox juga belum menutup semua jalur kegagalan aplikasi. Poller
-mengabaikan error pembentukan envelope dan hasil pemanggilan
-\code{EnqueueOutbox}. Transaksi SQL yang sama mendukung konsistensi ketika
-operasinya berhasil, tetapi belum cukup untuk menjanjikan bahwa setiap
-hazard pasti mempunyai publication pada seluruh jalur error. Pembaruan
-watermark dan publikasi berulang perlu diuji secara terpisah.
-
 Publication memakai \code{mandatory=false}; apabila queue consumer belum
 pernah dibuat dan diikat ketika pesan dipublikasikan, publisher confirm
-tidak membuktikan consumer tersebut memperoleh salinannya. Compose belum
-memasang volume broker secara eksplisit. Karena itu, label durable pada
-queue dan persistent pada pesan tidak cukup untuk menjanjikan pemulihan
-setelah container broker dibuat ulang. Pemeriksaan schema juga tidak
-seragam: feed memvalidasi publisher, ID, sumber, dan payload, sedangkan
-notification terutama bergantung pada parsing serta akses field yang dipakai.
+tidak membuktikan consumer tersebut memperoleh salinannya. State broker
+disimpan pada volume \code{rabbitmq_data}, sehingga queue durable dan pesan
+persisten dapat bertahan ketika container broker dibuat ulang selama volume
+tersebut dipertahankan.
 
 \section{Proof-of-Concept dan Keterlacakan}
 
@@ -299,7 +282,7 @@ untuk menyimpulkan riwayat restart producer di luar interval observasi.
 
 Pengujian DLQ, injeksi publication duplikat, pemulihan setelah broker
 dibuat ulang, dan keberhasilan push pada perangkat tidak direkam dalam
-rangkaian pengujian distribusi event ini. Batasan at-least-once, retensi replay Feed, volume broker,
+rangkaian pengujian distribusi event ini. Batasan at-least-once, retensi replay Feed,
 dan efek samping FCM yang dijelaskan sebelumnya tetap berlaku. Ringkasan
 eksekusi otomatis memuat hasil tes; rincian klaim harus dibaca bersama assertion
 pada \code{tests/test_problem_5.py} dan gambar manual, sebagaimana

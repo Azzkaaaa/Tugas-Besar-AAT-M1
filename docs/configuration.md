@@ -10,7 +10,8 @@ dibaca oleh Compose atau oleh service yang memuat `.env`; variabel yang tidak
 dipakai tidak dicantumkan.
 
 Jalankan `python tools/setup_mock_env.py` dari root repo untuk membuat `.env`
-lokal dan mengisi placeholder kredensial kedua mock dengan nilai acak independen.
+lokal dan mengisi placeholder kredensial kedua mock serta `AGGREGATOR_DB_PASSWORD`
+dengan nilai acak independen.
 Jika `.env` sudah ada, nilai kredensial yang sudah diisi dipertahankan. Script
 tidak menyiapkan secret BNPB atau broker. Mock menolak secret kosong/placeholder.
 Jangan menyuntikkan seluruh `.env` ke semua container; pilih variabel sesuai
@@ -228,7 +229,7 @@ DSN mock harus berawalan `sqlite:///` dan menunjuk file persisten. Nilai kosong,
 | --- | --- | --- |
 | `BMKG_STORE_DSN` | `sqlite:///data/bmkg.sqlite3` | BMKG Mock; volume Compose `bmkg_data` |
 | `PVMBG_STORE_DSN` | `sqlite:///data/pvmbg.sqlite3` | PVMBG Mock; volume Compose `pvmbg_data` |
-| `CANONICAL_STORE_DSN` | `postgres://aggregator:postgres@aggregator-db.local:5432/bnpb_canonical?sslmode=disable` | Aggregator, termasuk state ingest/outbox; volume `aggregator_data` |
+| `CANONICAL_STORE_DSN` | dibentuk Compose: `postgres://aggregator:${AGGREGATOR_DB_PASSWORD}@aggregator-db.local:5432/bnpb_canonical?sslmode=disable` | Aggregator, termasuk state ingest/outbox; volume `aggregator_data`. `AGGREGATOR_DB_PASSWORD` dibuat oleh `setup_mock_env.py` |
 | `AUTH_DATABASE_PATH` | `/data/sessions.sqlite` | Auth bridge; volume `auth_sessions` |
 | PostgreSQL Zitadel | database `zitadel` | Zitadel; volume `auth_postgres`, tidak dibaca langsung oleh bridge |
 | `WEBHOOK_STORE_DSN` | `file:/data/webhook.db` | Webhook Provider; volume `webhook_data` |

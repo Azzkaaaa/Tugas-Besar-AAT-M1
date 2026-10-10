@@ -42,9 +42,7 @@ Polling mengikuti spesifikasi dan memudahkan pengujian sumber yang tidak menyedi
 \section{Batasan Solusi}
 \begin{itemize}
 \item Dukungan perubahan aditif tidak otomatis menangani rename, penghapusan field wajib, atau perubahan tipe, misalnya \code{magnitude} menjadi objek. Perubahan semantik tersebut memerlukan pembaruan adapter dan kontrak.
-\item Field yang tidak dikenal diteruskan, tetapi tidak otomatis dipahami secara bisnis. Penambahan nama yang bertabrakan dengan key atribut hasil normalisasi perlu kebijakan validasi yang lebih tegas.
-\item ID gunung yang tidak ditemukan menggunakan ID asli sebagai nama area dan koordinat 0,0. Nilai ini merupakan fallback implementasi, bukan koordinat valid yang sudah diverifikasi.
-\item Fetch warning BMKG dilakukan setelah fetch gempa. Error warning saat ini diabaikan, sehingga kejadian dapat dipetakan berdasarkan magnitudo tanpa pengayaan tsunami. Pembaruan warning untuk gempa yang sudah melewati watermark juga belum mempunyai alur pembaruan mandiri.
+\item Field yang tidak dikenal diteruskan, tetapi tidak otomatis dipahami secara bisnis.
 \item JSONB tidak menghilangkan kebutuhan validasi domain. Data tidak lengkap dan enum tidak dikenal belum memiliki karantina ingest yang menyeluruh.
 \end{itemize}
 

@@ -102,13 +102,10 @@ Kegagalan PostgreSQL tidak dapat ditutupi oleh fallback memori karena jalur
 baca kanonis masih membutuhkan database. Compose juga belum memberikan bukti
 failover beberapa replika Aggregator atau database.
 
-Status kesegaran BMKG terutama mengikuti keberhasilan seismic event. Error
-pengambilan peringatan tsunami saat ini diabaikan oleh poller, sehingga
-kegagalan pengayaan tsunami belum selalu muncul sebagai status stale.
-Selain itu, pembaruan watermark dilakukan sesudah transaksi data selesai,
-bukan di dalam transaksi yang sama. Restart pada sela kedua operasi dapat
-menyebabkan data diambil kembali; kestabilan identitas hazard membantu menjaga
-baris kanonis, tetapi tidak membuktikan tidak ada publication berulang.
+Pembaruan watermark dilakukan sesudah transaksi data selesai, bukan di dalam
+transaksi yang sama. Restart pada sela kedua operasi dapat menyebabkan data
+diambil kembali; kestabilan identitas hazard menjaga baris kanonis tetap satu
+per referensi sumber.
 
 Nilai timeout, kapasitas pool, serta semaphore merupakan konfigurasi atau
 mekanisme yang ditemukan pada kode. Hasil beban yang dilampirkan di bawah

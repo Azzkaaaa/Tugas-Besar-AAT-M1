@@ -7,37 +7,33 @@ Milestone ini berfokus pada interoperabilitas data (P1), isolasi kelambatan dan 
 Laporan diperbarui pada 10 Oktober 2026 berdasarkan snapshot repository \code{4a1973b}, termasuk bukti manual P1--P5, dua keluaran k6, laporan suite otomatis, serta empat screenshot tambahan P3/P4. Bukti baru memperlihatkan penolakan kredensial silang, refresh sesi OIDC pada browser, dan build Notification dengan \code{--no-deps}. Bukti historis tetap dicantumkan dengan tanggal aslinya. Penjelasan implementasi ditelusuri ke kode dan Compose pada snapshot tersebut; pembaruan dokumen tidak menjalankan ulang pengujian. Cakupan bukti dijelaskan pada bab terkait; inventaris berkas tersedia di \code{docs/tex/evidence/manifest.json}.
 
 \section{Arsitektur dan Batas Layanan}
-Gambar~\ref{fig:data-architecture} menunjukkan jalur data, sedangkan Gambar~\ref{fig:auth-architecture} melengkapi komponen identitas dan observabilitas. Setiap kotak bergaris utuh merupakan container terpisah, kecuali browser dan tujuan eksternal yang ditandai khusus. SQLite dan buffer memori yang ditulis di dalam kotak dimiliki layanan tersebut, bukan database bersama. Kotak PostgreSQL adalah container database terpisah dengan pemilik logis tunggal.
+Gambar~\ref{fig:architecture} menunjukkan seluruh container pada stack utama beserta arah komunikasinya. Kotak BMKG dan PVMBG di bagian atas adalah sistem sumber di luar BNPB; masing-masing hanya diwakili gateway mock. Kotak putus-putus di dalam BNPB mengelompokkan container yang diinstrumentasi dan dipantau, sedangkan Blackbox Exporter dan OTEL LGTM berada di luarnya sebagai komponen observabilitas. Tanda \emph{DB} menandakan penyimpanan milik container tersebut: SQLite privat pada mock, Webhook Provider, dan Danger Notification; PostgreSQL canonical store pada Aggregator; serta PostgreSQL Auth pada Zitadel. Kedua PostgreSQL berjalan sebagai container database terpisah dengan pemilik logis tunggal, bukan database bersama. Panah mengikuti arah pemanggil ke penerima, kecuali panah dari Message Broker yang mengikuti aliran publikasi.
 
 \begin{figure}[H]
 \centering
-\input{figures/data-architecture}
-\caption{Container dan aliran data. Panah REST/gRPC mengikuti pemanggil ke penerima; panah AMQP mengikuti aliran publikasi.}
-\label{fig:data-architecture}
+\includegraphics[width=.9\linewidth,height=.72\textheight,keepaspectratio]{architecture}
+\caption{Arsitektur container \NamaSistem{}. Panah REST/gRPC mengikuti pemanggil ke penerima; panah dari Message Broker mengikuti aliran publikasi AMQP; panah putus-putus menunjukkan probe dan telemetri.}
+\label{fig:architecture}
 \end{figure}
 
 \begin{enumerate}
-\item Aggregator melakukan polling REST/JSON ke kedua mock dengan kredensial berbeda. Masing-masing mock membangkitkan data sendiri dan menyimpannya dalam SQLite privat. Tidak ada push langsung dari mock ke BNPB.
-\item Aggregator memetakan data menjadi format kanonik. Hazard dan outbox dimasukkan melalui transaksi PostgreSQL; publisher mengirim envelope Protobuf dari outbox ke RabbitMQ.
-\item RabbitMQ membagikan publikasi ke queue tiap consumer. Feed menyediakan replay dan stream, Webhook Provider mengirim HTTP callback, dan Danger Notification menyimpan notifikasi serta push outbox pada SQLite privat sebelum worker mengirim melalui Firebase Cloud Messaging (FCM).
-\item Browser mengakses satu origin melalui Envoy. API Gateway Go menerjemahkan REST/JSON dan SSE menjadi pemanggilan gRPC ke layanan bisnis. Pembacaan hazard mengambil canonical store melalui Aggregator, bukan memanggil mock secara sinkron.
+\item Media, Tim Lapangan, dan BNPB Pusat mengakses satu origin melalui Envoy Edge Gateway. Envoy meneruskan \code{/} ke SPA Frontend (Nginx), \code{/auth/*} ke Auth Bridge, halaman login ke Zitadel Login, serta request OIDC ke Zitadel. Tidak ada jalur langsung dari pengguna ke container lain.
+\item Untuk setiap request \code{/api/}, Envoy memanggil Token Exchange Sidecar (Rust) melalui \code{ext_authz}. Sidecar menukar access token opaque milik pengguna dengan JWT ke Zitadel (RFC 8693), lalu Envoy meneruskan request beserta JWT tersebut ke API Gateway.
+\item API Gateway (Go) menerjemahkan REST/JSON dan SSE menjadi pemanggilan gRPC ke Aggregator, Danger Notification, Event Live Feed, dan Webhook Provider. Pembacaan hazard mengambil canonical store melalui Aggregator, bukan memanggil mock secara sinkron.
+\item Aggregator melakukan polling REST/JSON ke kedua mock dengan kredensial berbeda. Tidak ada push langsung dari mock ke BNPB. Hasil normalisasi dan outbox ditulis dalam satu transaksi PostgreSQL; publisher mengirim envelope Protobuf dari outbox ke Message Broker (RabbitMQ).
+\item Message Broker membagikan publikasi ke queue tiap consumer. Event Live Feed menyediakan replay dan stream, Webhook Provider mengirim HTTP callback ke endpoint eksternal, dan Danger Notification menyimpan notifikasi serta push outbox sebelum worker mengirim melalui Firebase Cloud Messaging (FCM). Danger Notification juga memanggil Aggregator untuk status kesegaran sumber. Endpoint webhook dan FCM berada di luar sistem sehingga tidak digambarkan.
+\item Aggregator, Danger Notification, Event Live Feed, dan Webhook Provider memverifikasi JWT secara mandiri memakai metadata dan kunci publik Zitadel. Role dan scope pada JWT dipasok Zitadel melalui Scopes Sidecar (\code{zitadel-claims}, target Actions v2).
+\item Seluruh container di dalam kotak putus-putus mengirim trace, metric, dan log melalui OpenTelemetry ke OTEL LGTM. Blackbox Exporter melakukan probe HTTP/gRPC/TCP ke container tersebut dan hasilnya di-scrape oleh OTEL LGTM.
 \end{enumerate}
 
-\begin{figure}[H]
-\centering
-\input{figures/auth-architecture}
-\caption{Container identitas, penyajian frontend, bootstrap, dan observabilitas. Komunikasi ke Zitadel mencakup OIDC, introspeksi, serta token exchange.}
-\label{fig:auth-architecture}
-\end{figure}
-
-Kelompok komponen \emph{Auth} pada rancangan awal direalisasikan oleh Zitadel, hosted Login UI, Auth bridge, dan target Actions \code{zitadel-claims}. Auth bridge hanya menangani \code{/auth/*}; permintaan API bisnis melewati Envoy dan API Gateway. Bootstrap adalah container sekali jalan untuk menyiapkan proyek, akun, grant, dan client OIDC. Konfigurasi observabilitas menggunakan container \code{otel-lgtm} serta \code{blackbox}, bukan container Prometheus dan Jaeger terpisah seperti sketsa awal. PostgreSQL Auth berbeda dari PostgreSQL canonical store. Kotak putus-putus layanan bisnis pada diagram kedua merujuk kelompok container pada diagram pertama, bukan container tambahan.
+Kelompok komponen \emph{Auth} pada rancangan awal direalisasikan oleh Zitadel, Zitadel Login, Auth Bridge, Token Exchange Sidecar, dan Scopes Sidecar. Auth Bridge hanya menangani \code{/auth/*} (OIDC dan sesi SQLite terenkripsi); permintaan API bisnis melewati Envoy dan API Gateway. Container sekali jalan \code{auth-bootstrap}, yang menyiapkan proyek, akun, grant, dan client OIDC sebelum layanan lain berjalan, tidak digambarkan karena tidak aktif saat runtime. Observabilitas menggunakan container \code{otel-lgtm} serta \code{blackbox}, bukan container Prometheus dan Jaeger terpisah seperti sketsa awal.
 
 \section{Teknologi dan Alasan Pemilihan}
 \begin{longtable}{@{}P{3cm}P{3.6cm}P{8.2cm}@{}}
 \toprule \textbf{Komponen} & \textbf{Teknologi} & \textbf{Alasan dan tanggung jawab}\\\midrule\endhead
 BMKG dan PVMBG & Python 3.12, HTTP standard library, SQLite & Dependensi ringan; thread request memungkinkan health/admin tetap merespons saat request data menunggu. File database mempertahankan seed dan event setelah restart.\\
 Frontend & React, TypeScript, Vite, Nginx & SPA dengan tampilan login, filter/daftar/detail hazard, status sumber, live feed, notifikasi, dan webhook; Nginx menyajikan hasil build statis.\\
-Edge dan REST API & Envoy; Go, chi, oapi-codegen & Edge melakukan routing dan pertukaran token. Go menjaga bentuk JSON, status HTTP, validasi OpenAPI, dan framing SSE yang berbeda dari ProtoJSON.\\
+Edge dan REST API & Envoy, Rust (Tonic); Go, chi, oapi-codegen & Envoy melakukan routing; sidecar Rust menukar token melalui \code{ext_authz}. Go menjaga bentuk JSON, status HTTP, validasi OpenAPI, dan framing SSE yang berbeda dari ProtoJSON.\\
 Aggregator & Go, gRPC, PostgreSQL 17 & Goroutine untuk polling independen; transaksi dan indeks relational untuk data inti, JSONB untuk atribut dinamis.\\
 Event Live Feed & Rust, Tokio, Tonic & Stream asinkron dan buffer replay berbatas; API Gateway mengubahnya menjadi SSE untuk browser.\\
 Webhook Provider & Go, SQLite WAL & Menyimpan subscription, hasil delivery, dan deduplikasi; worker mengirim HTTP callback bertanda tangan.\\

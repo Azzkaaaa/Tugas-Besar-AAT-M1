@@ -10,7 +10,7 @@ services:
       - ENABLE_OBI=false
       # Adds Postgres and RabbitMQ scraping to the built-in collector (services/otel-lgtm).
       - OTELCOL_EXTRA_ARGS=--config=file:./otelcol-extra.yaml
-      - AGGREGATOR_DB_PASSWORD=postgres
+      - AGGREGATOR_DB_PASSWORD=${AGGREGATOR_DB_PASSWORD}
       - AUTH_POSTGRES_PASSWORD=${AUTH_POSTGRES_PASSWORD}
       - RABBITMQ_DEFAULT_USER=${RABBITMQ_DEFAULT_USER}
       - RABBITMQ_DEFAULT_PASS=${RABBITMQ_DEFAULT_PASS}
@@ -322,7 +322,7 @@ services:
       BMKG_REQUEST_TIMEOUT_MS: ${BMKG_REQUEST_TIMEOUT_MS:-1000}
       PVMBG_REQUEST_TIMEOUT_MS: ${PVMBG_REQUEST_TIMEOUT_MS:-3500}
       SOURCE_STALE_AFTER_MS: ${SOURCE_STALE_AFTER_MS:-10000}
-      CANONICAL_STORE_DSN: ${CANONICAL_STORE_DSN}
+      CANONICAL_STORE_DSN: postgres://aggregator:${AGGREGATOR_DB_PASSWORD}@aggregator-db.local:5432/bnpb_canonical?sslmode=disable
       AGGREGATOR_AMQP_URL: ${AGGREGATOR_AMQP_URL}
       RABBITMQ_EXCHANGE: ${RABBITMQ_EXCHANGE}
       OUTBOX_MAX_RETRIES: ${OUTBOX_MAX_RETRIES:-5}
@@ -359,8 +359,11 @@ services:
     image: postgres:17
     environment:
       POSTGRES_USER: aggregator
-      POSTGRES_PASSWORD: postgres
+      POSTGRES_PASSWORD: ${AGGREGATOR_DB_PASSWORD}
       POSTGRES_DB: bnpb_canonical
+    # Local development only: lets host tools (psql, GUI clients) inspect the canonical store.
+    # No service needs it; the aggregator and the otel collector connect over bnpb_net.
+    # Remove this mapping outside local development.
     ports:
       - "5432:5432"
     volumes:
