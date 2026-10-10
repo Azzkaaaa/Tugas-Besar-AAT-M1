@@ -378,6 +378,7 @@ services:
 
   rabbitmq:
     image: rabbitmq:4-management
+    hostname: rabbitmq-node
     environment:
       RABBITMQ_DEFAULT_USER: ${RABBITMQ_DEFAULT_USER}
       RABBITMQ_DEFAULT_PASS: ${RABBITMQ_DEFAULT_PASS}
@@ -391,6 +392,8 @@ services:
       timeout: 5s
       retries: 5
     restart: unless-stopped
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
     networks:
       bnpb_net:
         aliases:
@@ -428,3 +431,4 @@ volumes:
   aggregator_data:
   webhook_data:
   notification_data:
+  rabbitmq_data:
