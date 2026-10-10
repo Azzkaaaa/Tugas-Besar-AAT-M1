@@ -108,7 +108,7 @@ diambil kembali; kestabilan identitas hazard menjaga baris kanonis tetap satu
 per referensi sumber.
 
 Nilai timeout, kapasitas pool, serta semaphore merupakan konfigurasi atau
-mekanisme yang ditemukan pada kode. Hasil beban yang dilampirkan di bawah
+mekanisme yang digunakan pada kode. Hasil beban yang dilampirkan di bawah
 mengukur satu lingkungan lokal dan satu jendela pengujian; hasil tersebut
 tidak merupakan jaminan kapasitas produksi atau availability jangka panjang.
 Skenario outage membuktikan degradasi dan pemulihan pada demonstrasi yang
@@ -325,13 +325,25 @@ metadata BMKG \code{FRESH} dan PVMBG \code{STALE}. Respons juga menampilkan
 sumber tidak ditampilkan sebagai tidak adanya kejadian. Setelah outage
 dinonaktifkan, dashboard kembali memperlihatkan kedua sumber terkini.
 
+\evidencefigure{evidence/P2/3-1.png}
+{Simulasi outage pada mock PVMBG dinyalakan (sumber: \code{P2/3-1.png}).}
+{fig:p2-outage}
+
+\evidencefigure{evidence/P2/3-2.png}
+{Dashboard setelah outage diaktifkan memperlihatkan status PVMBG sebagai terlambat (sumber: \code{P2/3-2.png}).}
+{fig:p2-outage-dashboard}
+
 \evidencefigure{evidence/P2/3-3.png}
 {Respons API HTTP 200 saat outage PVMBG: BMKG tetap fresh, sedangkan PVMBG ditandai stale beserta waktu kesegarannya (sumber: \code{P2/3-3.png}).}
-{fig:p2-outage}
+{fig:p2-outage-results}
+
+\evidencefigure{evidence/P2/3-4.png}
+{Simulasi outage pada mock PVMBG dimatikan (sumber: \code{P2/3-4.png}).}
+{fig:p2-recovery}
 
 \evidencefigure{evidence/P2/3-5.png}
 {Dashboard sesudah outage dinonaktifkan memperlihatkan BMKG dan PVMBG kembali terkini (sumber: \code{P2/3-5.png}).}
-{fig:p2-recovery}
+{fig:p2-recovery-dashboard}
 
 Ringkasan pengujian otomatis, \code{evidence/problem_set_report.md}, mencatat tiga
 tes P2 berhasil dalam 74,97 detik. Tes outage pada
