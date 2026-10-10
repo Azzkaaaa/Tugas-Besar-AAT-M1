@@ -194,7 +194,7 @@ class TestProblem3AuthAndTrust(unittest.TestCase):
             "BMKG_API_KEY",
             "PVMBG_BEARER_TOKEN",
             "AGGREGATOR_GRPC_PORT",
-            "CANONICAL_STORE_DSN",
+            "AGGREGATOR_DB_PASSWORD",
             "RABBITMQ_DEFAULT_USER",
             "RABBITMQ_DEFAULT_PASS",
             "RABBITMQ_DEFAULT_VHOST",
