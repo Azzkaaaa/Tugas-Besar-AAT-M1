@@ -141,15 +141,14 @@ Durability harus dibedakan per komponen. PostgreSQL menggunakan volume
 Data tersebut tetap bergantung pada lifecycle volume dan prosedur backup.
 Feed tidak persisten setelah restart. Notification menyimpan status push
 dan identitas publication secara lokal; status diterima FCM belum merupakan
-bukti pesan telah tampil pada perangkat pengguna. RabbitMQ mendeklarasikan queue durable, tetapi
-\code{compose.yaml} belum memasang volume data broker secara eksplisit.
-Karena itu, ketahanan seluruh state setelah container dibuat ulang belum
-menjadi jaminan sistem.
+bukti pesan telah tampil pada perangkat pengguna. RabbitMQ mendeklarasikan
+queue durable dan menyimpan datanya pada volume \code{rabbitmq_data} dengan
+hostname node yang tetap, sehingga state broker dapat dipakai kembali setelah
+container dibuat ulang. Seperti volume lainnya, ketahanan tersebut tetap
+bergantung pada lifecycle volume dan prosedur backup.
 
 Penyimpanan hazard mempertahankan satu identitas kanonis per referensi
-sumber, tetapi upsert tidak membandingkan seluruh isi untuk memastikan
-perubahan substantif. Publication baru tetap dapat dibentuk untuk data
-yang diambil ulang. Pemisahan database dan penggunaan constraint tidak
+sumber. Pemisahan database dan penggunaan constraint tidak
 dengan sendirinya menyediakan pemrosesan event tepat satu kali.
 
 \section{Proof-of-Concept dan Keterlacakan}
@@ -241,9 +240,9 @@ literal dalam blok Compose layanan lain. Pemeriksaan ini menunjukkan
 konvensi konfigurasi yang diperiksa, tetapi tidak membuktikan pembatasan
 akses database pada tingkat jaringan atau hak pengguna.
 
-Konfigurasi saat ini masih memuat \code{env_file: .env} pada Webhook
-Provider, sehingga variabel Canonical Store dalam berkas tersebut ikut
-masuk ke lingkungan container. Database juga berada pada jaringan bersama
+Compose tidak lagi menyuntikkan seluruh \code{.env} ke container; setiap
+layanan menerima variabel yang diperlukannya saja, dan DSN Canonical Store
+hanya diberikan kepada Aggregator. Namun, database berada pada jaringan bersama
 dan port PostgreSQL diekspos ke host; collector observabilitas mempunyai
 koneksi PostgreSQL untuk metrik. Dengan demikian, istilah kepemilikan
 pada laporan ini berarti pemisahan tanggung jawab aplikasi. Pembatasan
