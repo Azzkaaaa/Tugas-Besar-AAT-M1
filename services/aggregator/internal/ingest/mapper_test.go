@@ -223,3 +223,89 @@ func TestProjection_MediaVsFull(t *testing.T) {
 		t.Errorf("Attributes should contain depth_km in full view")
 	}
 }
+
+func TestRawFieldsCannotOverwriteNormalizedAttributes(t *testing.T) {
+	// 1. PVMBG: RawFields with conflicting normalized keys
+	rawPVMBG := &PVMBGVolcanicRaw{
+		ReportID:         "rep-test-01",
+		VolcanoID:        "merapi",
+		AlertLevel:       "Siaga",
+		EruptionCount24h: 7,
+		AshColumnHeightM: 1500.0,
+		ReportedAt:       time.Now().UTC(),
+		RawFields: map[string]any{
+			"volcano_id":          "attacker-overwrite",
+			"ash_column_height_m": 99999.0,
+			"eruption_count_24h":  -99,
+			"custom_extra_field":  "preserved",
+		},
+	}
+
+	hazardPVMBG := MapPVMBGToHazard(rawPVMBG)
+	if hazardPVMBG.Attributes["volcano_id"] != "merapi" {
+		t.Errorf("expected normalized volcano_id 'merapi', got %v", hazardPVMBG.Attributes["volcano_id"])
+	}
+	if hazardPVMBG.Attributes["ash_column_height_m"] != 1500.0 {
+		t.Errorf("expected normalized ash_column_height_m 1500.0, got %v", hazardPVMBG.Attributes["ash_column_height_m"])
+	}
+	if hazardPVMBG.Attributes["eruption_count_24h"] != 7 {
+		t.Errorf("expected normalized eruption_count_24h 7, got %v", hazardPVMBG.Attributes["eruption_count_24h"])
+	}
+	if hazardPVMBG.Attributes["custom_extra_field"] != "preserved" {
+		t.Errorf("expected non-conflicting field to be preserved, got %v", hazardPVMBG.Attributes["custom_extra_field"])
+	}
+
+	// 2. BMKG: RawFields with conflicting normalized keys
+	rawBMKG := &BMKGSeismicRaw{
+		EventID:          "eq-test-01",
+		Magnitude:        6.2,
+		DepthKM:          25.0,
+		EpicenterLat:     -6.0,
+		EpicenterLon:     106.0,
+		RegionName:       "Jawa",
+		OccurredAt:       time.Now().UTC(),
+		PotentialTsunami: false,
+		RawFields: map[string]any{
+			"magnitude":         1.1,
+			"depth_km":          999.0,
+			"potential_tsunami": true,
+			"extra_bmkg_prop":   "keep_me",
+		},
+	}
+
+	warnings := []*BMKGTsunamiWarningRaw{
+		{
+			WarningID:        "w-01",
+			RelatedEventID:   "eq-test-01",
+			ThreatLevel:      "Waspada",
+			AffectedZones:    []string{"Zone A"},
+			EstimatedArrival: time.Now().UTC(),
+			RawFields: map[string]any{
+				"warning_id":   "overwrite_warn",
+				"threat_level": "none",
+			},
+		},
+	}
+
+	hazardBMKG := MapBMKGToHazard(rawBMKG, warnings)
+	if hazardBMKG.Attributes["magnitude"] != 6.2 {
+		t.Errorf("expected normalized magnitude 6.2, got %v", hazardBMKG.Attributes["magnitude"])
+	}
+	if hazardBMKG.Attributes["depth_km"] != 25.0 {
+		t.Errorf("expected normalized depth_km 25.0, got %v", hazardBMKG.Attributes["depth_km"])
+	}
+	if hazardBMKG.Attributes["potential_tsunami"] != false {
+		t.Errorf("expected normalized potential_tsunami false, got %v", hazardBMKG.Attributes["potential_tsunami"])
+	}
+	if hazardBMKG.Attributes["extra_bmkg_prop"] != "keep_me" {
+		t.Errorf("expected extra_bmkg_prop to be preserved, got %v", hazardBMKG.Attributes["extra_bmkg_prop"])
+	}
+
+	warnsList := hazardBMKG.Attributes["tsunami_warnings"].([]map[string]any)
+	if warnsList[0]["warning_id"] != "w-01" {
+		t.Errorf("expected warning_id 'w-01', got %v", warnsList[0]["warning_id"])
+	}
+	if warnsList[0]["threat_level"] != "Waspada" {
+		t.Errorf("expected threat_level 'Waspada', got %v", warnsList[0]["threat_level"])
+	}
+}

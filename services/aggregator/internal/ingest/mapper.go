@@ -118,13 +118,12 @@ func (v *PVMBGVolcanicRaw) UnmarshalJSON(b []byte) error {
 // MapBMKGToHazard maps a SeismicEvent and optional related TsunamiWarnings to a canonical HazardRecord
 func MapBMKGToHazard(seismic *BMKGSeismicRaw, warnings []*BMKGTsunamiWarningRaw) *domain.HazardRecord {
 	attributes := make(map[string]any)
-	attributes["magnitude"] = seismic.Magnitude
-	attributes["depth_km"] = seismic.DepthKM
-	attributes["potential_tsunami"] = seismic.PotentialTsunami
-
 	for k, v := range seismic.RawFields {
 		attributes[k] = v
 	}
+	attributes["magnitude"] = seismic.Magnitude
+	attributes["depth_km"] = seismic.DepthKM
+	attributes["potential_tsunami"] = seismic.PotentialTsunami
 
 	// Calculate severity per spec:
 	// If TsunamiWarning with threat_level == Awas -> AWAS
@@ -142,16 +141,15 @@ func MapBMKGToHazard(seismic *BMKGSeismicRaw, warnings []*BMKGTsunamiWarningRaw)
 		highestWarningThreat := ""
 
 		for _, w := range warnings {
-			wMap := map[string]any{
-				"warning_id":        w.WarningID,
-				"related_event_id":  w.RelatedEventID,
-				"threat_level":      w.ThreatLevel,
-				"affected_zones":    w.AffectedZones,
-				"estimated_arrival": w.EstimatedArrival,
-			}
+			wMap := make(map[string]any)
 			for k, v := range w.RawFields {
 				wMap[k] = v
 			}
+			wMap["warning_id"] = w.WarningID
+			wMap["related_event_id"] = w.RelatedEventID
+			wMap["threat_level"] = w.ThreatLevel
+			wMap["affected_zones"] = w.AffectedZones
+			wMap["estimated_arrival"] = w.EstimatedArrival
 			warningList = append(warningList, wMap)
 
 			switch w.ThreatLevel {
@@ -190,13 +188,12 @@ func MapBMKGToHazard(seismic *BMKGSeismicRaw, warnings []*BMKGTsunamiWarningRaw)
 // MapPVMBGToHazard maps a VolcanicReport to a canonical HazardRecord using static volcano reference
 func MapPVMBGToHazard(volcanic *PVMBGVolcanicRaw) *domain.HazardRecord {
 	attributes := make(map[string]any)
-	attributes["eruption_count_24h"] = volcanic.EruptionCount24h
-	attributes["ash_column_height_m"] = volcanic.AshColumnHeightM
-	attributes["volcano_id"] = volcanic.VolcanoID
-
 	for k, v := range volcanic.RawFields {
 		attributes[k] = v
 	}
+	attributes["eruption_count_24h"] = volcanic.EruptionCount24h
+	attributes["ash_column_height_m"] = volcanic.AshColumnHeightM
+	attributes["volcano_id"] = volcanic.VolcanoID
 
 	ref, ok := domain.LookupVolcano(volcanic.VolcanoID)
 	areaName := volcanic.VolcanoID

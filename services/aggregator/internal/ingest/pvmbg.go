@@ -114,8 +114,15 @@ func (p *PVMBGPoller) poll(ctx context.Context) {
 		if isNewOrUpdated {
 			newCount++
 			pubID, payload, err := BuildPublishedEnvelope(savedHazard, corrID)
-			if err == nil {
-				_ = p.db.EnqueueOutbox(ctxPoll, tx, pubID, savedHazard.HazardID, "PVMBG", payload)
+			if err != nil {
+				recordPollMetrics(err, 0)
+				_ = p.db.UpdateWatermark(ctxPoll, "pvmbg_volcanic", "PVMBG", watermark, false, err.Error())
+				return
+			}
+			if err := p.db.EnqueueOutbox(ctxPoll, tx, pubID, savedHazard.HazardID, "PVMBG", payload); err != nil {
+				recordPollMetrics(err, 0)
+				_ = p.db.UpdateWatermark(ctxPoll, "pvmbg_volcanic", "PVMBG", watermark, false, err.Error())
+				return
 			}
 		}
 

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"reflect"
 	"strings"
 	"time"
 
@@ -55,7 +56,8 @@ func (db *DB) UpsertHazard(ctx context.Context, tx pgx.Tx, h *domain.HazardRecor
 	}
 
 	queryExisting := `
-		SELECT hazard_id, ingested_at, attributes FROM hazard_events
+		SELECT hazard_id, ingested_at, hazard_type, severity, area_name, latitude, longitude, occurred_at, attributes
+		FROM hazard_events
 		WHERE source = $1 AND source_ref_id = $2
 	`
 	var row pgx.Row
@@ -67,8 +69,17 @@ func (db *DB) UpsertHazard(ctx context.Context, tx pgx.Tx, h *domain.HazardRecor
 
 	var existingID string
 	var existingIngestedAt time.Time
+	var existingHazardType string
+	var existingSeverity string
+	var existingAreaName string
+	var existingLat float64
+	var existingLon float64
+	var existingOccurredAt time.Time
 	var existingAttrJSON []byte
-	err = row.Scan(&existingID, &existingIngestedAt, &existingAttrJSON)
+	err = row.Scan(
+		&existingID, &existingIngestedAt, &existingHazardType, &existingSeverity,
+		&existingAreaName, &existingLat, &existingLon, &existingOccurredAt, &existingAttrJSON,
+	)
 
 	if errors.Is(err, pgx.ErrNoRows) {
 		// New record
@@ -107,6 +118,34 @@ func (db *DB) UpsertHazard(ctx context.Context, tx pgx.Tx, h *domain.HazardRecor
 	// Update existing record: retain hazard_id and ingested_at
 	h.HazardID = existingID
 	h.IngestedAt = existingIngestedAt
+
+	var existingAttrs map[string]any
+	if len(existingAttrJSON) > 0 {
+		_ = json.Unmarshal(existingAttrJSON, &existingAttrs)
+	}
+	if existingAttrs == nil {
+		existingAttrs = make(map[string]any)
+	}
+
+	var newAttrs map[string]any
+	if len(attrJSON) > 0 {
+		_ = json.Unmarshal(attrJSON, &newAttrs)
+	}
+	if newAttrs == nil {
+		newAttrs = make(map[string]any)
+	}
+
+	isUpdated := existingHazardType != h.HazardType ||
+		existingSeverity != h.Severity ||
+		existingAreaName != h.AreaName ||
+		existingLat != h.Latitude ||
+		existingLon != h.Longitude ||
+		!existingOccurredAt.Equal(h.OccurredAt) ||
+		!reflect.DeepEqual(existingAttrs, newAttrs)
+
+	if !isUpdated {
+		return h, false, nil
+	}
 
 	updateQuery := `
 		UPDATE hazard_events SET

@@ -123,8 +123,15 @@ func (p *BMKGPoller) poll(ctx context.Context) {
 		if isNewOrUpdated {
 			newCount++
 			pubID, payload, err := BuildPublishedEnvelope(savedHazard, corrID)
-			if err == nil {
-				_ = p.db.EnqueueOutbox(ctxPoll, tx, pubID, savedHazard.HazardID, "BMKG", payload)
+			if err != nil {
+				recordPollMetrics(err, 0)
+				_ = p.db.UpdateWatermark(ctxPoll, "bmkg_seismic", "BMKG", watermark, false, err.Error())
+				return
+			}
+			if err := p.db.EnqueueOutbox(ctxPoll, tx, pubID, savedHazard.HazardID, "BMKG", payload); err != nil {
+				recordPollMetrics(err, 0)
+				_ = p.db.UpdateWatermark(ctxPoll, "bmkg_seismic", "BMKG", watermark, false, err.Error())
+				return
 			}
 		}
 
