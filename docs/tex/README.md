@@ -31,7 +31,7 @@ Hasil k6 beban mencatat 50 VU selama fase beban 60 detik, 17.546 request, throug
 
 Interpretasi mengikuti cakupan bukti. Penerbitan token service melalui client credentials dibedakan dari refresh sesi browser. Kepemilikan logis database dibedakan dari isolasi akses konfigurasi. Bukti baru P4 memakai `--no-deps` dan hanya menampilkan build Notification; screenshot lama tetap menjadi riwayat.
 
-`evidence/P5/4-3.png` dan `4-3-alternative.png` tidak dimasukkan ke PDF karena memperlihatkan nilai secret konfigurasi. Gambar expiry P3 dengan fragmen token dan dua gambar refresh baru yang memuat CSRF token tidak dimuat; field relevannya ditranskripsi tanpa token. Bukti asli tetap dipertahankan dan perlu disanitasi tersendiri sebelum publikasi repository.
+`evidence/P5/4-3.png` dan `4-3-alternative.png` tidak dimasukkan ke PDF karena memperlihatkan nilai secret konfigurasi. Gambar expiry P3 dengan fragmen token dan dua gambar refresh baru yang memuat CSRF token dimuat dalam versi `*-redacted.png` (bagian token/CSRF ditutup kotak hitam); berkas aslinya tidak diubah. Bukti asli tetap dipertahankan dan perlu disanitasi tersendiri sebelum publikasi repository.
 
 ## Proof tambahan pada commit 4a1973b
 

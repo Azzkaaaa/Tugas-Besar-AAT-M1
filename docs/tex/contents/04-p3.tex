@@ -42,6 +42,28 @@ POST refresh/logout mensyaratkan Origin aplikasi dan kecocokan nilai \code{X-CSR
 
 Logout menghapus sesi lokal, membersihkan cookie, dan mencoba revokasi provider. Browser diarahkan ke logout Zitadel untuk mengakhiri SSO. Login UI V2 dapat menampilkan tindakan \emph{End Session}; penghapusan cookie aplikasi saja tidak selalu mengakhiri sesi provider. Implementasi ada di \code{services/auth-bridge/src/server.mjs}, \code{provider.mjs}, dan \code{store.mjs}.
 
+\subsection{Analisis: Mengapa Mekanisme Ini Tidak Membuka Celah Baru}
+Mekanisme Auth menambah komponen dan endpoint baru: Auth Bridge (\code{/auth/*}), cookie sesi, filter Lua pada Envoy, Token Exchange Sidecar, dan hook \code{zitadel-claims}. Setiap tambahan tersebut merupakan permukaan serangan baru, sehingga rancangan memeriksa celah yang dapat muncul dari masing-masing komponen dan memastikan setiap celah tersebut ditutup oleh kontrol tertentu. Tabel~\ref{tab:p3-threats} merangkum analisis ini.
+
+\begin{table}[H]\small
+\begin{tabularx}{\textwidth}{@{}P{3.0cm}YY@{}}
+\toprule \textbf{Komponen baru} & \textbf{Celah yang mungkin muncul} & \textbf{Kontrol yang menutupnya}\\\midrule
+Token di browser & Pencurian token melalui XSS atau ekstensi yang membaca \code{localStorage}. & Access token hanya berada pada cookie HttpOnly; refresh token tidak pernah dikirim ke browser. \code{/auth/session} dan \code{/auth/refresh} hanya mengembalikan profil, scope, expiry, dan CSRF token.\\
+Cookie sebagai kredensial & CSRF: situs lain memicu request ber-cookie atas nama pengguna. & SameSite=Lax, cookie host-only, pemeriksaan Origin, dan header \code{X-CSRF-Token} yang dicocokkan dengan sesi untuk refresh/logout; mutasi API berbasis cookie wajib membawa Origin dan header CSRF.\\
+Alur login \code{/auth/login} dan callback & Login CSRF, injeksi authorization code, replay ID token, open redirect. & \code{state} dan \code{nonce} acak; PKCE S256; transaksi login terikat cookie browser dan kedaluwarsa dalam 10 menit. Tujuan redirect setelah login adalah \code{appUrl} dari konfigurasi, bukan parameter request.\\
+Penyimpanan sesi Auth Bridge & Kebocoran refresh token dari file SQLite; pemakaian ulang refresh token lama. & Payload sesi dienkripsi AES-256-GCM dan ID sesi disimpan sebagai hash SHA-256. Refresh token dirotasi; hash token lama dicatat sebagai ditolak.\\
+Filter Lua cookie $\rightarrow$ bearer & Kebingungan sumber kredensial; cookie bocor ke layanan internal. & Request yang membawa bearer eksplisit sekaligus cookie Auth ditolak. Cookie dihapus sebelum request diteruskan ke upstream.\\
+Token Exchange Sidecar & Sidecar disalahgunakan sebagai penerbit JWT bagi token sembarang. & Sidecar tidak dipublikasikan ke host dan hanya dipanggil Envoy melalui \code{ext_authz}. Pertukaran memakai confidential client dan hanya berhasil untuk access token aktif yang diterbitkan Zitadel; token kedaluwarsa ditolak (Gambar~\ref{fig:p3-expiry-after}).\\
+Hook \code{zitadel-claims} & Pemalsuan role/scope untuk eskalasi hak akses. & Tanda tangan HMAC-SHA256 dan timestamp setiap panggilan diverifikasi; hook tidak dirutekan oleh Envoy. Role dibentuk dari grant Zitadel, bukan dari input frontend.\\
+Port gRPC layanan & Bypass gateway dengan memanggil layanan secara langsung. & Setiap layanan backend memverifikasi JWT (issuer, expiry, algoritme, kunci JWKS) dan memeriksa scope per method secara mandiri, sehingga melewati gateway tidak melewati otorisasi.\\
+Kredensial mock & Kredensial pengguna BNPB atau milik satu instansi dipakai ke instansi lain. & Secret BMKG dan PVMBG berbeda dan disimpan di environment; kredensial pengguna tidak diteruskan ke mock (Gambar~\ref{fig:p3-credential-isolation}).\\\bottomrule
+\end{tabularx}
+\caption{Analisis celah yang mungkin muncul dari komponen Auth baru dan kontrol yang menutupnya.}
+\label{tab:p3-threats}
+\end{table}
+
+Selain kontrol per komponen, dua prinsip membatasi dampak bila satu kontrol gagal. Pertama, TTL access token 60 detik membatasi masa pakai token yang bocor. Kedua, keputusan otorisasi dibuat di backend berdasarkan scope pada JWT, sehingga celah pada UI, misalnya tombol detail yang terlihat, tidak memberikan akses data. Risiko yang masih tersisa, yaitu revokasi asinkron, audience yang dikosongkan pada Compose lokal, transport plaintext, dan akun broker bersama, bukan celah yang tidak disadari. Risiko tersebut merupakan tradeoff lingkungan lokal yang dicantumkan secara eksplisit pada Batasan Solusi beserta konfigurasi yang diperlukan untuk menutupnya di luar lingkungan lokal.
+
 \section{Justifikasi dan Alternatif}
 API key/opaque token sederhana dipakai untuk mock agar perbedaan protokol autentikasi antarsumber tetap terlihat tanpa membangun provider untuk setiap instansi. Pemisahan secret membatasi penggunaan kredensial lintas instansi. Konsekuensinya, rotasi dan distribusi secret mock tetap menjadi tugas konfigurasi.
 
@@ -80,11 +102,14 @@ Tangkapan layar demonstrasi P3 memperlihatkan request akun service ber-role MEDI
 Laporan pengujian stack melengkapi tangkapan layar dengan pemeriksaan proyeksi penuh untuk FIELD\_TEAM dan BNPB\_INTERNAL serta penolakan detail hazard penuh bagi MEDIA. Identitas pada tes tersebut adalah akun service \code{svc-media}, \code{svc-lapangan}, dan akun service BNPB. Demonstrasi ini membuktikan enforcement role pada request API; login tiga akun pengguna melalui hosted UI tercatat terpisah pada pemeriksaan sesi browser 6 Oktober 2026.
 
 \subsection{Expiry Token dan Pembaruan Akses}
-Pada \code{P3/3-1.png} dan \code{P3/3-2.png}, token akun service Tim Lapangan mula-mula menghasilkan 200. Setelah menunggu 62 detik, token yang sama menghasilkan 401. Penerbitan token baru menghasilkan akses 200, sedangkan token pertama tetap ditolak dengan 401. Dengan demikian, artefak manual mendukung berlakunya expiry pada jalur gateway serta pemulihan akses menggunakan token baru.
+Pada Gambar~\ref{fig:p3-expiry-before} dan Gambar~\ref{fig:p3-expiry-after}, token akun service Tim Lapangan mula-mula menghasilkan 200. Setelah menunggu 62 detik, token yang sama menghasilkan 401 dengan detail \code{token exchange rejected: STS returned 400}; penolakan terjadi di edge sebelum request mencapai layanan bisnis. Penerbitan token baru menghasilkan akses 200, sedangkan token pertama tetap ditolak dengan 401. Dengan demikian, artefak manual mendukung berlakunya expiry pada jalur gateway serta pemulihan akses menggunakan token baru. Fragmen token pada kedua gambar ditutup sebelum dimuat ke laporan; gambar asli tetap tersimpan sebagai artefak rujukan.
+
+\evidencefigure{evidence/P3/3-1-redacted.png}{Token pertama akun service Tim Lapangan diterima (HTTP 200), lalu pengujian menunggu expiry alami 62 detik. Fragmen token ditutup. Sumber: \code{P3/3-1.png}.}{fig:p3-expiry-before}
+\evidencefigure{evidence/P3/3-2-redacted.png}{Setelah TTL berakhir, token pertama ditolak HTTP 401 oleh token exchange; token pengganti diterima HTTP 200 dan token pertama tetap ditolak. Fragmen token ditutup. Sumber: \code{P3/3-2.png}.}{fig:p3-expiry-after}
 
 Menu demo dan \code{test_03_token_ttl_expiry_and_refresh_flow} meminta token pengganti dengan grant \code{client_credentials}. Ini adalah penerbitan ulang token service; tidak melibatkan refresh token sesi pengguna. Penolakan token pertama setelah expiry juga tidak mengukur kecepatan revokasi token yang masih berlaku.
 
-Tangkapan layar tambahan \code{P3/3-1-alternative.png} dan \code{P3/3-2-alternative.png} merekam respons request \code{refresh} pada browser dengan dashboard aktif. Kedua respons memuat identitas pengguna yang sama, nama BNPB Pusat, role \code{BNPB_INTERNAL}, serta mode \code{oidc}. Nilai \code{expires_at} berubah dari 03:30:33 menjadi 03:31:28 UTC pada 10 Oktober 2026, atau bertambah 55 detik, sementara request polling dashboard berlanjut. Ini mendukung pembaruan sesi browser BNPB Pusat pada stack terbaru selama penggunaan dashboard, sesuai penjadwalan refresh sekitar lima detik sebelum TTL 60 detik berakhir.
+Tangkapan layar tambahan pada Gambar~\ref{fig:p3-refresh-1} dan Gambar~\ref{fig:p3-refresh-2} merekam respons request \code{refresh} pada browser dengan dashboard aktif. Kedua respons memuat identitas pengguna yang sama, nama BNPB Pusat, role \code{BNPB_INTERNAL}, serta mode \code{oidc}. Nilai \code{expires_at} berubah dari 03:30:33 menjadi 03:31:28 UTC pada 10 Oktober 2026, atau bertambah 55 detik, sementara request polling dashboard berlanjut. Ini mendukung pembaruan sesi browser BNPB Pusat pada stack terbaru selama penggunaan dashboard, sesuai penjadwalan refresh sekitar lima detik sebelum TTL 60 detik berakhir.
 
 \begin{table}[H]\small
 \begin{tabularx}{\textwidth}{@{}P{3.0cm}YY@{}}
@@ -93,8 +118,11 @@ Nama pengguna & BNPB Pusat & BNPB Pusat\\
 Role dan mode & \code{BNPB_INTERNAL}, \code{oidc} & \code{BNPB_INTERNAL}, \code{oidc}\\
 \code{expires_at} (UTC) & \code{2026-10-10T03:30:33.000Z} & \code{2026-10-10T03:31:28.000Z}\\\bottomrule
 \end{tabularx}
-\caption{Transkripsi field aman dari screenshot \code{P3/3-1-alternative.png} dan \code{P3/3-2-alternative.png}. Identitas tetap sama dan expiry bertambah 55 detik; nilai CSRF tidak disalin.}
+\caption{Ringkasan field dari screenshot \code{P3/3-1-alternative.png} dan \code{P3/3-2-alternative.png}. Identitas tetap sama dan expiry bertambah 55 detik; nilai CSRF tidak disalin.}
 \end{table}
+
+\evidencefigure{evidence/P3/3-1-alternative-redacted.png}{Respons \code{refresh} pertama pada dashboard BNPB Pusat: profil, role \code{BNPB_INTERNAL}, mode \code{oidc}, dan \code{expires_at} 03:30:33 UTC. Body tidak memuat access/refresh token; nilai CSRF ditutup. Sumber: \code{P3/3-1-alternative.png}.}{fig:p3-refresh-1}
+\evidencefigure{evidence/P3/3-2-alternative-redacted.png}{Respons \code{refresh} berikutnya pada sesi yang sama: identitas tidak berubah dan \code{expires_at} maju ke 03:31:28 UTC tanpa login ulang. Nilai CSRF ditutup. Sumber: \code{P3/3-2-alternative.png}.}{fig:p3-refresh-2}
 
 Kedua screenshot tersebut melengkapi hasil uji sesi browser historis, yang mencatat 45 pemeriksaan browser/provider pada 6 Oktober dengan arsitektur bridge saat itu. Cakupan screenshot refresh terbaru adalah pembaruan sesi BNPB Pusat; bukti tersebut tidak memperlihatkan sesi pengguna Tim Lapangan dibiarkan kedaluwarsa lalu dipulihkan, ataupun request eksplisit memakai token lama setelah refresh. Kesimpulan kedua skenario itu tetap dibedakan dari refresh browser yang sudah terlihat.
 
@@ -114,4 +142,4 @@ Konfigurasi tanpa secret literal & Laporan stack; \code{P3/4-1.png} dan \code{P3
 \caption{Hasil P3 dengan pembedaan alur service, sesi browser, dan konfigurasi.}
 \end{table}
 
-Nilai token, cookie, password, dan client secret tidak diperlukan dalam laporan. Gambar expiry yang menyertakan fragmen token dan dua screenshot refresh terbaru yang memuat CSRF token disimpan sebagai artefak rujukan asli, tetapi tidak dimuat langsung ke PDF. Uraian dan tabel hanya mencantumkan field aman, urutan request, waktu tunggu, serta status HTTP. Panduan pengujian sesi browser serta E2E tersedia di \code{docs/auth-testing.md} dan \code{docs/e2e-testing.md}.
+Nilai token, cookie, password, dan client secret tidak diperlukan dalam laporan. Gambar expiry yang menyertakan fragmen token dan dua screenshot refresh yang memuat CSRF token dimuat dalam versi yang bagian sensitifnya telah ditutup (\code{*-redacted.png}); artefak asli tetap disimpan tanpa perubahan. Panduan pengujian sesi browser serta E2E tersedia di \code{docs/auth-testing.md} dan \code{docs/e2e-testing.md}.

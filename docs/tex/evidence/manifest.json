@@ -120,26 +120,60 @@
       "sha256": "03a904281505d7c92ccd561842c9a61a17af1cfb889faf1877d66c03a5aebfad",
       "included_in_pdf": false,
       "added_in_commit": "4a1973b",
-      "pdf_exclusion_reason": "Visible CSRF token; safe profile and expiry fields transcribed in P3.",
+      "pdf_exclusion_reason": "Original kept unmodified; redacted copy P3/3-1-alternative-redacted.png is included instead.",
+      "discussed_in": "contents/04-p3.tex"
+    },
+    {
+      "file": "P3/3-1-alternative-redacted.png",
+      "sha256": "e8ed33f97433870fb790d50e32fe752002d9b2666bb785a640be6525b3158740",
+      "included_in_pdf": true,
+      "derived_from": "P3/3-1-alternative.png",
+      "redaction": "Token fragment or CSRF value covered with a black box; no other pixels changed.",
       "discussed_in": "contents/04-p3.tex"
     },
     {
       "file": "P3/3-1.png",
       "sha256": "0434f4ead0a2ce006e558a9c44d4c9f945015a1ba00549601addffe9f61e97e5",
-      "included_in_pdf": false
+      "included_in_pdf": false,
+      "pdf_exclusion_reason": "Original kept unmodified; redacted copy P3/3-1-redacted.png is included instead."
+    },
+    {
+      "file": "P3/3-1-redacted.png",
+      "sha256": "6433812b5c49eebc932c763855d472ad6932f8c4c1265228bd966d461802085b",
+      "included_in_pdf": true,
+      "derived_from": "P3/3-1.png",
+      "redaction": "Token fragment or CSRF value covered with a black box; no other pixels changed.",
+      "discussed_in": "contents/04-p3.tex"
     },
     {
       "file": "P3/3-2-alternative.png",
       "sha256": "e23ca9f2ba71edd0ecb8a71b86911b1e9ed341a84fefd4a9ebbb24e86541fbd3",
       "included_in_pdf": false,
       "added_in_commit": "4a1973b",
-      "pdf_exclusion_reason": "Visible CSRF token; safe profile and expiry fields transcribed in P3.",
+      "pdf_exclusion_reason": "Original kept unmodified; redacted copy P3/3-2-alternative-redacted.png is included instead.",
+      "discussed_in": "contents/04-p3.tex"
+    },
+    {
+      "file": "P3/3-2-alternative-redacted.png",
+      "sha256": "88d66736983296c20371f32fe4e14e8794352f583cb1dea2d58f450ec49595ae",
+      "included_in_pdf": true,
+      "derived_from": "P3/3-2-alternative.png",
+      "redaction": "Token fragment or CSRF value covered with a black box; no other pixels changed.",
       "discussed_in": "contents/04-p3.tex"
     },
     {
       "file": "P3/3-2.png",
       "sha256": "e6b254daed7663f345b72ac42bc5ed04c5d6200f1375397302d5c98ba9247bb6",
-      "included_in_pdf": false
+      "included_in_pdf": false,
+      "pdf_exclusion_reason": "Original kept unmodified; redacted copy P3/3-2-redacted.png is included instead."
+    },
+    {
+      "file": "P3/3-2-redacted.png",
+      "sha256": "f53663916eb982a5c2e66f83b0e0d4a4972132c57e9b7eaef855a34abcc43327",
+      "included_in_pdf": true,
+      "derived_from": "P3/3-2.png",
+      "redaction": "Token fragment or CSRF value covered with a black box; no other pixels changed.",
+      "discussed_in": "contents/04-p3.tex"
     },
     {
       "file": "P3/4-1.png",

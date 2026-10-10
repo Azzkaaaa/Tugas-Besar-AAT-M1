@@ -140,30 +140,115 @@ perilaku pada skenario mock yang dicatat, bukan p95 gateway atau hasil
     \end{tabularx}
 \end{table}
 
-Repositori menyediakan skenario yang dapat diulang pada
-\code{tests/load/aggregator.js} dan
-\code{tests/load/aggregator-isolation.js}, dengan petunjuk pada
-\code{docs/load-testing.md}. Konfigurasi pengujian dan prosedur pengulangannya
-adalah:
+\subsection{Tooling dan Konfigurasi Load Testing}
+
+Pengujian beban menggunakan \textbf{Grafana k6}~\cite{k6}. k6 dipilih karena
+skenario ditulis sebagai skrip JavaScript yang tersimpan di repositori, mendukung
+beberapa \emph{scenario} dengan executor dan jadwal mulai berbeda dalam satu run,
+serta dapat memberi tag pada setiap request sehingga persentil dapat dihitung per
+fase dan per endpoint. Dua skrip digunakan:
+\code{tests/load/aggregator.js} untuk beban berkelanjutan dan
+\code{tests/load/aggregator-isolation.js} untuk isolasi latensi; fungsi bersama
+(token, request, validasi, ringkasan) berada pada \code{tests/load/lib.js}.
+Petunjuk menjalankan tersedia pada \code{docs/load-testing.md}.
+
+\paragraph{Jalur yang diuji.} k6 tidak memanggil Aggregator secara langsung.
+Setiap request dikirim ke Envoy pada \code{http://127.0.0.1:8080} dengan header
+\code{Host: localhost:8080}, sehingga melewati jalur yang sama dengan klien:
+Envoy $\rightarrow$ \code{ext_authz} Token Exchange Sidecar $\rightarrow$
+API Gateway $\rightarrow$ gRPC Aggregator $\rightarrow$ PostgreSQL. Identitas yang
+dipakai adalah akun service \code{svc-bnpb} (role BNPB\_INTERNAL); secret-nya dibaca
+dari \code{.cache/auth/}.
+
+\paragraph{Alur setiap Virtual User (VU).}
+\begin{enumerate}
+    \item \textbf{Setup (sekali per run).} Skrip meminta token lalu memanggil
+    \code{GET /api/v1/hazards?page_size=100} sampai daftar tidak kosong, kemudian
+    menyimpan hingga 100 \code{hazard_id} untuk request detail. Request setup diberi
+    tag tersendiri dan tidak dihitung dalam hasil.
+    \item \textbf{Token per VU.} Setiap VU meminta access token sendiri melalui
+    \code{POST /oauth/v2/token} (grant \code{client_credentials}, Host
+    \code{auth.localhost:8080}) dan menyimpannya di memori VU. Token diperbarui
+    10 detik sebelum TTL 60 detik berakhir, sehingga selama 60 detik fase beban
+    tiap VU melakukan sekitar satu sampai dua kali penerbitan token. Request token
+    diberi tag \code{kind:token} dan dikeluarkan dari persentil API; kegagalannya
+    dihitung pada metrik \code{token_failures}.
+    \item \textbf{Iterasi.} Setiap iterasi mengirim tepat satu request API dengan
+    header \code{Authorization: Bearer} dan \code{X-Correlation-ID} unik
+    (\code{runId-vu-iterasi}) untuk pencocokan trace. Tidak ada \emph{think time};
+    VU langsung memulai iterasi berikutnya setelah respons diterima (model
+    \emph{closed-loop}), sehingga 50 VU berarti paling banyak 50 request API
+    bersamaan.
+    \item \textbf{Validasi respons.} Request dianggap error bila status bukan 200
+    atau bentuk body tidak sesuai: daftar wajib memiliki array \code{items},
+    detail wajib memiliki \code{item.hazard_id}, status sumber wajib memiliki
+    array \code{freshness}. Jumlah per status HTTP (termasuk 429 dan error
+    jaringan) dicatat terpisah.
+\end{enumerate}
+
+\begin{table}[htbp]
+    \centering
+    \small
+    \caption{Campuran request per iterasi pada skrip k6}
+    \begin{tabularx}{\textwidth}{@{}P{0.17\textwidth}P{0.12\textwidth}X@{}}
+        \toprule
+        \textbf{Skrip / grup} & \textbf{Peluang} & \textbf{Endpoint yang dipanggil} \\
+        \midrule
+        \code{aggregator.js} & 60\% & \code{GET /api/v1/hazards?page_size=20}, bergiliran tanpa filter, dengan parameter \code{source=BMKG}, dan dengan \code{source=PVMBG}. \\
+         & 30\% & \code{GET /api/v1/hazards/<hazard_id>} dengan ID acak dari hasil setup. \\
+         & 10\% & \code{GET /api/v1/hazards/sources/statuses}. \\
+        \midrule
+        Isolasi, grup BMKG & 40\% & Daftar \code{page_size=20} dengan \code{source=BMKG}. \\
+         & 30\% & Daftar \code{page_size=20} dengan \code{hazard_type=SEISMIC}. \\
+         & 30\% & Detail hazard BMKG acak. \\
+        \midrule
+        Isolasi, grup PVMBG & 40/30/30\% & Pola sama dengan \code{source=PVMBG}, \code{hazard_type=VOLCANIC}, dan detail hazard PVMBG. \\
+        \bottomrule
+    \end{tabularx}
+\end{table}
+
+\begin{table}[htbp]
+    \centering
+    \small
+    \caption{Scenario k6 dan executor yang dipakai}
+    \begin{tabularx}{\textwidth}{@{}P{0.22\textwidth}P{0.22\textwidth}X@{}}
+        \toprule
+        \textbf{Scenario} & \textbf{Executor} & \textbf{Jadwal dan beban} \\
+        \midrule
+        \code{warmup} (beban) & \code{ramping-vus} & 1 $\rightarrow$ 50 VU selama 10 detik; membuka koneksi dan mengisi cache, tidak dihitung. \\
+        \code{load} & \code{constant-vus} & 50 VU selama 60 detik, mulai detik ke-10; satu-satunya jendela yang dilaporkan. \\
+        \midrule
+        \code{warmup} (isolasi) & \code{constant-vus} & 20 VU BMKG selama 5 detik. \\
+        \code{baseline} + \code{baseline_filler} & \code{constant-vus} & 10 VU BMKG terukur + 10 VU BMKG pengisi selama 30 detik. \\
+        \code{contention_bmkg} + \code{contention_pvmbg} & \code{constant-vus} & 10 VU BMKG terukur + 10 VU PVMBG selama 60 detik, mulai setelah baseline. \\
+        \bottomrule
+    \end{tabularx}
+\end{table}
+
+Grup kedua pada skrip isolasi sengaja menjaga total VU tetap 20 pada kedua fase;
+satu-satunya perbedaan baseline dan kontensi adalah jenis lalu lintas grup kedua
+(BMKG $\rightarrow$ PVMBG). Threshold yang menentukan lulus/gagal adalah
+\code{p(95)<300} ms dan error di bawah 1\% pada request BMKG fase kontensi;
+pada skrip beban, error API di bawah 1\% dan tidak ada kegagalan token.
+
+Prosedur pengulangan:
 \begin{enumerate}
     \item Jalankan stack yang telah diprovisikan, pastikan akun layanan tersedia
     pada \code{.cache/auth/}, dan buat direktori \code{.cache/load/}.
     Jalankan \code{k6 run tests/load/aggregator.js} dari root repositori.
-    Defaultnya adalah pemanasan 10 detik, lalu 50 VU selama 60 detik.
-    Campuran request adalah 60\% daftar, 30\% detail, dan 10\% status sumber.
-    Hanya fase beban dihitung; kegagalan pengambilan token dicatat terpisah.
+    Parameter dapat diubah melalui \code{LOAD_VUS}, \code{LOAD_DURATION}, dan
+    \code{LOAD_RAMP}.
     \item Untuk isolasi, tetapkan
     \code{PVMBG_RESPONSE_DELAY_MIN_MS} dan
     \code{PVMBG_RESPONSE_DELAY_MAX_MS} menjadi 3000, lalu buat ulang
     \code{pvmbg-mock} sebagaimana panduan. Jalankan
-    \code{k6 run tests/load/aggregator-isolation.js}. Setup memeriksa tiga
-    request langsung ke mock dan membatalkan pengujian bila median delay
-    kurang dari 2900 ms.
-    \item Bandingkan fase baseline 30 detik dengan fase kontensi 60 detik,
-    setelah pemanasan 5 detik. Kedua fase menggunakan 10 VU BMKG yang diukur
-    dan 10 VU kelompok kedua; kelompok kedua beralih dari BMKG ke PVMBG.
-    Simpan p50/p95/p99, error, throughput, ringkasan JSON, dan jendela waktu
-    untuk pencocokan trace. Pulihkan konfigurasi delay setelah selesai.
+    \code{k6 run tests/load/aggregator-isolation.js}. Setup mengirim tiga
+    request langsung ke \code{/volcanic-reports} pada mock (port 8082) dan
+    membatalkan pengujian bila median delay kurang dari 2900 ms.
+    \item Simpan keluaran terminal dan ringkasan JSON yang ditulis skrip ke
+    \code{.cache/load/}. Ringkasan isolasi mencantumkan jendela waktu baseline
+    dan kontensi untuk pencocokan trace. Pulihkan konfigurasi delay setelah
+    selesai.
 \end{enumerate}
 
 Latensi yang diukur skrip tersebut mencakup Envoy, token exchange, gateway,

@@ -88,6 +88,55 @@ Setiap consumer menentukan titik acknowledgement sesuai pekerjaannya:
     keberhasilan FCM atau penerimaan pada perangkat.
 \end{itemize}
 
+\subsection{Penanganan At-Least-Once: Idempotent Consumer}
+
+Sistem memilih semantik pengiriman \textbf{at-least-once} dan menangani
+duplikasi yang ditimbulkannya dengan pola \textbf{idempotent consumer}~\cite{idempotent}.
+At-most-once (ack sebelum diproses) ditolak karena event bahaya dapat hilang
+ketika consumer crash. Exactly-once ditolak karena RabbitMQ tidak menyediakannya
+dan efek samping consumer (HTTP callback, push FCM) berada di luar transaksi
+broker. Konsekuensinya, satu publication dapat diterima consumer lebih dari
+sekali dari dua sumber berikut:
+\begin{enumerate}
+    \item \textbf{Redelivery oleh broker}: consumer crash atau koneksi putus
+    sebelum ack, atau consumer melakukan nack dengan requeue.
+    \item \textbf{Publikasi ulang oleh outbox}: publisher crash setelah broker
+    mengonfirmasi pesan tetapi sebelum \code{published_at} tersimpan, sehingga
+    record yang sama dikirim kembali.
+\end{enumerate}
+
+Kedua kasus membawa \code{event_id} yang sama, karena ID tersebut dibuat sekali
+ketika envelope ditulis ke outbox dan tidak dibuat ulang saat pengiriman. Karena
+itu \code{event_id} dipakai sebagai \emph{kunci idempotensi}. Setiap consumer
+menerapkan tiga aturan yang sama: (1) periksa apakah \code{event_id} sudah
+diproses, (2) simpan efek dan penanda ``sudah diproses'' sebelum ack, (3) ack
+hanya setelah keduanya tersimpan. Pesan yang diterima ulang kemudian dikenali
+dan tidak menghasilkan efek bisnis kedua.
+
+\begin{table}[htbp]
+    \centering
+    \small
+    \caption{Penerapan idempotent consumer pada tiap layanan}
+    \begin{tabularx}{\textwidth}{@{}P{0.15\textwidth}P{0.20\textwidth}X P{0.20\textwidth}@{}}
+        \toprule
+        \textbf{Consumer} & \textbf{Kunci dan penyimpanan} & \textbf{Perilaku saat pesan diterima ulang} & \textbf{Titik ack} \\
+        \midrule
+        Event Live Feed & \code{event_id} dalam himpunan \code{seen} di memori, sepanjang jendela replay. & Event yang sudah ada tidak ditambahkan ke buffer dan tidak disiarkan ulang ke subscriber. & Setelah event masuk buffer replay. \\
+        Webhook Provider & Pasangan \code{(event_id, webhook_id)} pada tabel SQLite \code{delivery_dedup}. & Subscription yang sudah sukses dilewati; hanya subscription yang belum sukses dikirim ulang. Kegagalan pengiriman atau penulisan log menyebabkan nack dengan requeue. & Setelah semua pengiriman sukses dan log tercatat. \\
+        Danger Notification & \code{event_id} sebagai primary key tabel \code{notifications} di SQLite. & Record yang sudah ada hanya digabung; status push hanya bergerak maju (Pending, Failed, Delivered), sehingga tidak ada pekerjaan push baru. Revisi lama yang datang terlambat tidak menggantikan revisi current. & Setelah transaksi SQLite commit. \\
+        \bottomrule
+    \end{tabularx}
+\end{table}
+
+Selain deduplikasi per \code{event_id}, Notification membedakan \emph{revisi}
+dari \emph{duplikat}. Publication baru untuk \code{hazard_id} yang sama
+mempunyai \code{event_id} berbeda dan diperlakukan sebagai revisi: revisi
+sebelumnya ditandai tidak current. Urutan revisi ditentukan dari waktu
+publication, sehingga pesan yang tiba tidak berurutan tidak menimpa data yang
+lebih baru. Di sisi produsen, Aggregator juga idempoten terhadap pengambilan
+ulang data sumber: upsert dengan kunci unik \code{(source, source_ref_id)}
+menjaga satu baris hazard per kejadian sumber.
+
 Kode consumer berada pada
 \code{services/event-live-feed/src/adapters/inbound/rabbitmq.rs},
 \code{services/webhook-provider/internal/consumer/consumer.go}, dan

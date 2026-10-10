@@ -3,127 +3,132 @@
 
 \section{Rancangan Solusi}
 
-Pemisahan layanan mengikuti tanggung jawab pengolahan data dan cara
-penyampaiannya. Aggregator mengintegrasikan sumber eksternal ke model kanonis;
-Event Live Feed melayani aliran event; Webhook Provider mengirim callback;
-Danger Notification memilih peringatan untuk push notification. Gateway
-menerjemahkan kontrak HTTP menjadi panggilan gRPC, sehingga layanan domain
-tidak perlu mengimplementasikan ulang seluruh antarmuka publik.
+\subsection{Pembagian Domain dan Batas Layanan}
 
-Consumer telah diimplementasikan dalam tiga bahasa: Rust untuk Event Live Feed,
-Go untuk Webhook Provider, dan C\# untuk Danger Notification. Kontrak Protobuf
-menjadi batas pertukaran data lintas bahasa. Compose membangun masing-masing
-image dari direktori layanannya dan menghubungkannya melalui jaringan Docker.
-Pemisahan proses memungkinkan restart satu consumer tanpa harus mematikan
-consumer lain, meskipun kemandirian operasional tetap dibatasi dependency yang
-dipakai bersama.
+Batas layanan ditarik menurut domain bisnis, bukan menurut lapisan teknis.
+Pertanyaan yang dipakai untuk menentukan batas adalah: kemampuan bisnis apa
+yang dilayani, data apa yang menjadi miliknya, dan kepada siapa ia bergantung
+ketika berjalan. Hasilnya adalah satu domain inti yang menghasilkan data hazard
+kanonis dan tiga domain penyampaian yang masing-masing mengonsumsi data itu
+dengan semantik berbeda. Identitas dan kontrak publik ditempatkan sebagai
+domain pendukung di tepi sistem.
 
-\begin{table}[htbp]
+\begin{table}[H]
     \centering
     \small
-    \caption{Pembagian tanggung jawab dan penyimpanan layanan}
-    \begin{tabularx}{\textwidth}{@{}P{0.22\textwidth}P{0.18\textwidth}X@{}}
+    \caption{Pembagian domain dan batas layanan}
+    \begin{tabularx}{\textwidth}{@{}P{0.20\textwidth}P{0.17\textwidth}X X@{}}
         \toprule
-        \textbf{Layanan} & \textbf{Teknologi} & \textbf{Tanggung jawab dan data} \\
+        \textbf{Domain} & \textbf{Layanan} & \textbf{Kemampuan bisnis} & \textbf{Alasan dipisah} \\
         \midrule
-        Aggregator & Go, gRPC 9091 & Normalisasi BMKG/PVMBG; hazard kanonis, watermark, dan outbox pada PostgreSQL. \\
-        Event Live Feed & Rust, gRPC 9093 & Subscription event, filter/proyeksi, cursor, dan replay terbatas dalam memori proses. \\
-        Webhook Provider & Go, gRPC 9094 & Subscription webhook, delivery log, serta deduplikasi pengiriman pada SQLite. \\
-        Danger Notification & C\#, gRPC 9095 & Filter SIAGA/AWAS; snapshot notifikasi, revisi, dan outbox push pada SQLite; pengiriman melalui FCM. \\
-        API Gateway & Go, HTTP & Validasi kontrak, pemetaan HTTP--gRPC, dan SSE; tidak menjadi pemilik data hazard. \\
+        Integrasi sumber (inti) & Aggregator (Go) & Mengambil data BMKG/PVMBG, memetakan ke \code{HazardEvent}, menjadi satu-satunya penulis data kanonis, dan memublikasikan perubahan. & Satu-satunya domain yang memahami format dan kredensial instansi sumber; aturan pemetaan berubah mengikuti sumber, bukan mengikuti klien. \\
+        Distribusi real-time & Event Live Feed (Rust) & Mengalirkan event hazard ke klien yang sedang terhubung, dengan filter, proyeksi, dan replay jangka pendek. & Beban berupa banyak koneksi berumur panjang; semantiknya \emph{best-effort} dalam jendela replay, berbeda dari pengiriman yang harus tercatat. \\
+        Integrasi pihak ketiga & Webhook Provider (Go) & Mengelola langganan webhook dan mengirim callback bertanda tangan ke sistem eksternal. & Bergantung pada endpoint di luar kendali BNPB yang bisa lambat atau mati; retry dan log pengiriman tidak boleh menahan domain lain. \\
+        Peringatan bahaya & Danger Notification (C\#) & Memilih hazard SIAGA/AWAS, menyimpan notifikasi, dan mengirim push melalui FCM. & Memiliki aturan bisnis sendiri (ambang severity, revisi notifikasi) dan dependensi eksternal FCM. \\
+        Identitas dan akses (pendukung) & Zitadel, Auth Bridge, sidecar & Login, sesi, penerbitan token, dan pembentukan role/scope. & Menjadi dependensi lintas domain; dipisahkan agar domain bisnis cukup memverifikasi JWT tanpa mengelola kredensial pengguna. \\
+        Kontrak publik (pendukung) & Envoy, API Gateway (Go) & Routing, validasi OpenAPI, dan penerjemahan HTTP/SSE ke gRPC. & Bukan pemilik data; memisahkan bentuk API publik dari kontrak internal tiap domain. \\
         \bottomrule
     \end{tabularx}
 \end{table}
 
-Aggregator memiliki tabel \code{hazard_events} dengan kunci
-\code{hazard_id} dan batas unik pasangan \code{source} serta
-\code{source_ref_id}. Atribut umum disimpan sebagai kolom bertipe, sedangkan
-atribut yang berbeda menurut sumber disimpan dalam JSONB. Kombinasi ini
-memungkinkan filter lintas sumber tanpa membuang informasi khusus sumber.
-Tabel \code{ingest_watermarks} menyimpan kemajuan ingestion dan kesegaran,
-\code{outbox_events} menyimpan publication yang belum dikirim, dan
-\code{outbox_dead_letters} menyimpan publication yang mencapai batas gagal.
-Schema yang diterapkan saat startup berada pada
+Tiga domain penyampaian sengaja tidak digabung walaupun ketiganya
+mengonsumsi event yang sama. Ketiganya berbeda pada tiga hal: tujuan
+penyampaian (klien yang sedang terhubung, sistem eksternal, perangkat
+pengguna), jaminan yang diberikan (replay terbatas, pengiriman tercatat dengan
+retry, push satu kali per revisi), dan dependensi eksternal (tidak ada,
+endpoint callback, FCM). Bila digabung, endpoint webhook yang lambat atau FCM
+yang gagal dapat menahan aliran feed. Dengan pemisahan, kegagalan satu
+domain hanya menumpuk backlog pada queue miliknya (Bab~\ref{chap:p5}).
+
+Hubungan antardomain hanya melalui dua jenis kontrak: event
+\code{HazardEventPublished} dari domain inti ke domain penyampaian, dan gRPC
+untuk query, misalnya Danger Notification yang menanyakan status kesegaran
+sumber ke Aggregator. Kontrak Protobuf menjadi batas lintas bahasa, sehingga
+setiap domain dapat memakai bahasa yang paling sesuai: Go untuk Aggregator dan
+Webhook, Rust untuk stream asinkron Feed, dan C\# untuk Notification. Compose
+membangun image dari direktori masing-masing layanan, sehingga satu layanan
+dapat dihentikan, dibangun ulang, dan dijalankan kembali tanpa menyentuh
+layanan lain.
+
+Setiap domain memiliki datanya sendiri (\emph{database per service}~\cite{dbperservice}):
+Aggregator memiliki Canonical Store, Webhook Provider memiliki langganan dan
+log pengiriman, Danger Notification memiliki notifikasi dan antrean push, dan
+Event Live Feed memiliki buffer replay dalam memori. Tidak ada layanan yang
+membaca tabel milik layanan lain. Domain penyampaian yang memerlukan data
+hazard memperolehnya dari event, bukan dengan query ke Canonical Store.
+
+\subsection{Canonical Store milik Aggregator}
+
+Canonical Store adalah penyimpanan data hazard hasil normalisasi dan hanya
+diakses oleh Aggregator. Implementasinya PostgreSQL 17 dengan skema
+\emph{hybrid}: atribut yang sama untuk semua sumber disimpan sebagai kolom
+bertipe, sedangkan atribut khusus sumber disimpan dalam satu kolom JSONB.
+
+\begin{table}[htbp]
+    \centering
+    \small
+    \caption{Struktur Canonical Store}
+    \begin{tabularx}{\textwidth}{@{}P{0.25\textwidth}X@{}}
+        \toprule
+        \textbf{Tabel} & \textbf{Isi dan fungsi} \\
+        \midrule
+        \code{hazard_events} & Kolom bertipe \code{hazard_id}, \code{source}, \code{source_ref_id}, \code{hazard_type}, \code{severity}, \code{area_name}, koordinat, \code{occurred_at}, \code{ingested_at}; kolom \code{attributes} JSONB. Unique \code{(source, source_ref_id)} menjaga satu baris per kejadian sumber; indeks pada sumber, jenis, severity, dan \code{(occurred_at, hazard_id)} untuk filter dan paginasi. \\
+        \code{ingest_watermarks} & Posisi polling, waktu sukses/percobaan terakhir, dan error per sumber; dasar status FRESH/STALE pada P2. \\
+        \code{outbox_events} & Envelope event yang ditulis dalam transaksi yang sama dengan upsert hazard, menunggu dipublikasikan ke broker. \\
+        \code{outbox_dead_letters} & Envelope yang gagal dipublikasikan setelah batas retry. \\
+        \code{volcano_references} & Referensi nama dan koordinat gunung api milik BNPB untuk pemetaan PVMBG. \\
+        \bottomrule
+    \end{tabularx}
+\end{table}
+
+Ketika PVMBG menambahkan \code{confidence_level}, nilai tersebut masuk ke
+\code{attributes} tanpa \code{ALTER TABLE}; record lama dan baru tersimpan pada
+tabel yang sama dan dibaca dengan query yang sama. Filter lintas sumber tetap
+memakai kolom bertipe dan indeks biasa. Skema diterapkan saat startup pada
 \code{services/aggregator/internal/store/postgres.go}.
-
-Kepemilikan logis Canonical Store berada pada Aggregator. Danger Notification
-menerima snapshot hazard dari event broker dan menyimpannya pada SQLite
-melalui \code{EfNotificationStore}. Daftar dan detail notifikasi dibaca dari
-penyimpanan lokal ini, sedangkan status kesegaran sumber tetap diperoleh
-melalui adapter gRPC Aggregator. FCM mengelola subscription token ke topic.
-Dengan demikian, data notifikasi tidak memerlukan query langsung ke tabel
-hazard milik Aggregator.
-
-Tabel \code{notifications} memakai ID publication sebagai primary key dan
-menyimpan snapshot Protobuf hazard, \code{hazard_id}, waktu publication,
-penanda \code{IsCurrent}, status push, jumlah kegagalan, jadwal retry, dan
-lease pekerjaan. Revisi baru menandai revisi lama hazard yang sama sebagai
-tidak current; API daftar/detail menampilkan revisi current. Upsert dan
-pembaruan revisi menggunakan transaksi SQLite. \code{PushOutboxWorker}
-mengambil pekerjaan yang waktunya sudah tiba, mengirim melalui FCM, lalu
-mencatat hasilnya. Compose memasang \code{notification_data} pada
-\code{/data}, dengan database \code{notifications.db}. Registrasi layanan
-dan migrasi berada pada \code{Program.cs} serta adapter
-\code{Adapters/Outbound/Persistence/} di layanan Danger Notification.
-
-Webhook Provider memiliki database SQLite tersendiri untuk
-\code{webhook_subscriptions}, \code{webhook_deliveries}, dan
-\code{delivery_dedup}. Mode WAL digunakan dan pool dibatasi satu koneksi
-terbuka. Kunci gabungan \code{event_id} dan \code{webhook_id} pada tabel
-dedup menandai delivery yang berhasil. Implementasi berada pada
-\code{services/webhook-provider/internal/store/sqlite.go}.
-Compose memasang volume \code{webhook_data} pada \code{/data}; DSN contoh
-mengarahkan database ke \code{file:/data/webhook.db}.
-
-Event Live Feed menggunakan abstraksi \code{ReplayStore} dengan implementasi
-\code{MemoryStore}. Buffer menyimpan urutan event dan himpunan ID yang sudah
-diterima, dilindungi mutex, lalu menyebarkan event ke kanal broadcast.
-Default Compose membatasi replay pada 600 detik atau 10.000 entri, sedangkan
-kanal live memiliki kapasitas 256 entri. Ketika subscriber tertinggal, backlog
-dapat dibaca kembali selama belum keluar dari jendela replay. Restart
-membentuk epoch baru dan cursor lama ditolak, sehingga klien mengetahui bahwa
-riwayat sebelumnya tidak lagi tersedia. Sumbernya adalah
-\code{services/event-live-feed/src/core/ports.rs} dan
-\code{services/event-live-feed/src/adapters/outbound/memory_store.rs}.
 
 \section{Justifikasi dan Alternatif}
 
-Pemilihan penyimpanan mengikuti kebutuhan masing-masing layanan. PostgreSQL
-memberikan transaksi untuk menyimpan hazard dan outbox bersama, keunikan
-identitas sumber, serta indeks untuk penyaringan dan paginasi. SQLite
-memadai untuk volume subscription dan log webhook pada satu instance,
-dengan biaya operasi rendah. Memori proses menyediakan replay live-feed yang
-ringan ketika kontraknya memang membatasi umur riwayat.
+\subsection{Batas Layanan}
+
+Alternatif pertama adalah \textbf{monolit modular}: semua domain dalam satu
+proses dengan modul terpisah. Rancangan ini lebih sederhana dioperasikan,
+tetapi kegagalan atau kebocoran memori pada satu modul (misalnya ribuan
+koneksi feed) menjatuhkan seluruh fungsi, dan satu bahasa harus dipakai untuk
+semua kebutuhan. Spesifikasi juga meminta satu layanan dapat dihentikan dan
+di-deploy ulang tanpa mengganggu yang lain.
+
+Alternatif kedua adalah \textbf{pemisahan lebih halus}, misalnya satu layanan
+adapter per sumber (BMKG dan PVMBG) di depan Aggregator. Pemisahan ini
+memberikan isolasi per sumber, tetapi pemetaan, upsert, dan penulisan outbox
+perlu berada dalam satu transaksi agar tidak ada event yang hilang. Membagi
+langkah tersebut ke beberapa layanan membutuhkan koordinasi transaksi
+terdistribusi. Isolasi per sumber sudah dicapai dengan goroutine dan
+watermark independen di dalam Aggregator (P2), sehingga pemisahan ini tidak
+sebanding dengan biayanya.
+
+\subsection{Penyimpanan Canonical Store}
 
 \begin{table}[htbp]
     \centering
     \small
-    \caption{Alternatif penyimpanan dan pertimbangannya}
-    \begin{tabularx}{\textwidth}{@{}P{0.19\textwidth}X X@{}}
+    \caption{Alternatif penyimpanan Canonical Store}
+    \begin{tabularx}{\textwidth}{@{}P{0.21\textwidth}X X@{}}
         \toprule
-        \textbf{Pilihan} & \textbf{Kelebihan untuk kasus ini} & \textbf{Biaya atau batasan} \\
+        \textbf{Pilihan} & \textbf{Kelebihan} & \textbf{Biaya atau batasan} \\
         \midrule
-        PostgreSQL, dipakai Aggregator & Transaksi hazard--outbox, constraint identitas, dan kolom JSONB untuk atribut sumber. & Memerlukan proses database dan pengelolaan koneksi; kapasitasnya dipakai seluruh pembacaan kanonis. \\
-        SQLite, dipakai webhook & Penyimpanan lokal persisten tanpa server database tambahan; schema dan dedup mudah diperiksa. & Satu penulis dan satu volume lokal membatasi replikasi horizontal. \\
-        MongoDB, alternatif & Dokumen fleksibel untuk payload sumber yang beragam. & Perlu merancang kembali indeks gabungan, transaksi publication, dan kontrak query; fleksibilitas payload sudah dapat ditampung JSONB. \\
-        Redis, alternatif replay & Data replay dan dedup dapat ditempatkan di luar proses feed untuk dipakai beberapa instance. & Menambah dependency; TTL, eviction, persistensi, dan posisi cursor perlu dirancang eksplisit. \\
+        PostgreSQL relasional + JSONB (dipilih) & Atribut baru tidak memerlukan migrasi; kolom inti tetap bertipe dan terindeks; transaksi ACID mencakup hazard dan outbox; constraint unik menjaga identitas sumber. & Isi \code{attributes} tidak divalidasi skema database; query pada atribut dinamis memerlukan operator JSON atau indeks GIN tambahan. \\
+        Relasional murni (kolom per atribut) & Semua field bertipe dan tervalidasi database. & Setiap field baru dari sumber memerlukan migrasi \code{ALTER TABLE} dan rilis ulang; bertentangan dengan kebutuhan menerima \code{confidence_level} saat runtime. \\
+        MongoDB (dokumen) & Skema sepenuhnya fleksibel; payload sumber dapat disimpan apa adanya. & Field inti kehilangan jaminan tipe; constraint unik gabungan, transaksi multi-dokumen hazard--outbox, dan paginasi perlu dirancang ulang. Fleksibilitas yang dibutuhkan sudah dipenuhi JSONB. \\
         \bottomrule
     \end{tabularx}
 \end{table}
 
-Alternatif satu database bersama untuk semua layanan mengurangi jumlah
-komponen, tetapi memungkinkan perubahan schema satu layanan memengaruhi
-layanan lain secara langsung. Rancangan yang dipilih membatasi akses melalui
-kontrak gRPC atau event. Fleksibilitas penyimpanan berarti implementasi
-penyimpanan dapat disesuaikan per kebutuhan; bukan berarti mengganti database
-tanpa migrasi data, perubahan adapter, dan pengujian ulang.
-
-Untuk feed, penyimpanan eksternal seperti Redis atau PostgreSQL dapat
-memperpanjang replay lintas restart. Implementasi saat ini memilih memori,
-sehingga biaya serialisasi dan I/O penyimpanan lebih kecil, tetapi tidak
-mengklaim riwayat permanen. Untuk webhook berskala lebih besar, PostgreSQL
-dapat menggantikan SQLite agar beberapa worker mempunyai state dedup
-bersama, dengan tambahan koordinasi pekerjaan dan pengendalian duplikasi.
+PostgreSQL + JSONB dipilih karena kebutuhan Canonical Store terbagi dua:
+bagian yang stabil dan sering difilter (sumber, jenis, severity, waktu) serta
+bagian yang berubah mengikuti sumber. Skema hybrid melayani keduanya dalam satu
+penyimpanan. Faktor penentu lainnya adalah transactional outbox pada P5, yang
+membutuhkan upsert hazard dan penulisan event dalam satu transaksi atomik.
 
 \section{Batasan Solusi}
 
@@ -135,17 +140,10 @@ memerlukan strategi berbagi state sebelum menjalankan beberapa replica.
 Keterbatasan ini perlu diselesaikan sebelum menyatakan dukungan penskalaan
 horizontal yang transparan.
 
-Durability harus dibedakan per komponen. PostgreSQL menggunakan volume
-\code{aggregator_data}; SQLite menggunakan \code{webhook_data} dan
-\code{notification_data} untuk masing-masing layanan.
-Data tersebut tetap bergantung pada lifecycle volume dan prosedur backup.
-Feed tidak persisten setelah restart. Notification menyimpan status push
-dan identitas publication secara lokal; status diterima FCM belum merupakan
-bukti pesan telah tampil pada perangkat pengguna. RabbitMQ mendeklarasikan
-queue durable dan menyimpan datanya pada volume \code{rabbitmq_data} dengan
-hostname node yang tetap, sehingga state broker dapat dipakai kembali setelah
-container dibuat ulang. Seperti volume lainnya, ketahanan tersebut tetap
-bergantung pada lifecycle volume dan prosedur backup.
+Durability Canonical Store bergantung pada volume \code{aggregator_data}
+dan prosedur backup; Compose belum menyediakan replikasi atau failover
+PostgreSQL. Isi \code{attributes} tidak divalidasi oleh database, sehingga
+konsistensi tipe atribut dinamis bergantung pada adapter Aggregator.
 
 Penyimpanan hazard mempertahankan satu identitas kanonis per referensi
 sumber. Pemisahan database dan penggunaan constraint tidak
