@@ -1,172 +1,353 @@
 # IF4031 — Platform Koordinasi Kebencanaan, Milestone 1
 
-Mock **BMKG dan PVMBG sudah diimplementasikan** menggunakan Python 3.12 dan
-SQLite. Keduanya berjalan sebagai service REST terpisah dengan database,
-kredensial, generator data, dan Dockerfile masing-masing. Komponen BNPB lainnya
-masih berupa kerangka/kontrak. Frontend **SPA React + TypeScript** menyediakan
-dashboard sederhana dan login melalui **Zitadel**. Auth bridge menangani OIDC,
-cookie HttpOnly, sesi SQLite, refresh, dan logout; service Rust `zitadel-claims`
-menambahkan klaim `role`/`scopes` melalui Zitadel Actions v2. Data dashboard standalone
-masih berupa fixture Gateway; belum tersambung ke service BNPB.
+Platform BNPB yang mengagregasi data bahaya dari mock **BMKG** (gempa/tsunami)
+dan **PVMBG** (vulkanik), menyimpannya dalam bentuk kanonik, lalu
+mendistribusikannya ke API REST, live feed SSE, webhook, dan push notification.
+Login memakai **Zitadel** (OIDC) melalui Auth bridge; SPA **React + TypeScript**
+menampilkan dashboard.
 
-## Menjalankan frontend dengan Auth
+| Komponen | Teknologi | Peran |
+| --- | --- | --- |
+| `bmkg-mock`, `pvmbg-mock` | Python 3.12 + SQLite | API sumber eksternal tiruan, data dan kredensial terpisah |
+| `aggregator-service` | Go + PostgreSQL | Polling kedua mock, store kanonik, outbox → RabbitMQ (gRPC `:9091`) |
+| `feed-service` | Rust | Event Live Feed, consumer RabbitMQ, stream gRPC (`:9093`) |
+| `webhook-provider` | Go + SQLite | Langganan webhook dan pengiriman bertanda tangan HMAC (`:9094`, opsional) |
+| `notification-service` | .NET 10 + SQLite | Danger Notification, push FCM (`:9095`) |
+| `api-gateway` | Go | REST `/api/v1` dari OpenAPI, memanggil service gRPC |
+| `envoy` | Envoy | Satu-satunya pintu masuk publik `http://localhost:8080` |
+| `token-exchange`, `zitadel-claims` | Rust | Token exchange `ext_authz` Envoy; klaim `role`/`scopes` Zitadel |
+| `auth-bridge`, `zitadel`, `auth-db` | Node.js, Zitadel, PostgreSQL | OIDC, cookie HttpOnly, sesi |
+| `spa-server` | React + nginx | Frontend |
+| `rabbitmq` | RabbitMQ 4 | Exchange fan-out `bnpb.hazards.v1` |
+| `otel-lgtm`, `blackbox` | Grafana LGTM | Trace, metrics, log, health probe |
 
-Dengan Docker Desktop/Engine aktif, jalankan dari root repository:
+Rancangan lengkap ada di [arsitektur](docs/architecture.md),
+[pemetaan data](docs/data-mapping.md), dan [rencana M1](docs/milestone-plan.md).
 
-```powershell
-python tools/setup_auth_env.py
-docker compose --env-file .env.auth -f compose.auth.yaml up --build -d --wait
-```
+## Prasyarat
 
-Buka `http://localhost:8080`, lalu **Masuk dengan Zitadel**. Akun seed adalah
-`media-demo`, `lapangan-demo`, dan `bnpb-demo`. Password masing-masing ada di
-`.env.auth`; helper mempertahankan nilai yang sudah ada. Akun disimpan oleh
-Zitadel di PostgreSQL, sedangkan SQLite bridge menyimpan sesi terenkripsi.
+**Untuk menjalankan sistem** (semua service dibangun di dalam Docker, tanpa
+toolchain bahasa di host):
 
-[Penjelasan implementasi Auth](services/auth-bridge/README.md) dan
-[langkah testing Auth](docs/auth-testing.md) menjelaskan cookie, akun seed,
-refresh, logout, serta batas integrasi yang masih pending. **Pengujian langsung
-Zitadel di Docker lulus 45 pemeriksaan**, termasuk tiga akun, expiry alami 60
-detik, refresh, logout, dan persistensi sesi setelah restart bridge.
+| Kebutuhan | Versi | Keterangan |
+| --- | --- | --- |
+| Docker Engine / Docker Desktop | terbaru | Dengan plugin **Docker Compose v2** (`docker compose`, mendukung `--wait`) |
+| Python | 3.12+ | Helper setup dan seluruh tes; hanya standard library, tanpa `pip install` |
+| Kredensial Firebase | — | File service account JSON di `.secrets/firebase-credentials.json`; `notification-service` gagal start tanpa file ini |
+| k6 | 1.x | Hanya untuk uji beban ([instalasi](https://grafana.com/docs/k6/latest/set-up/install-k6/)) |
 
-## Menjalankan pratinjau frontend tanpa Auth
+Port host yang dipakai: `8080` (Envoy), `8081`/`8082` (mock), `9091`, `9093`–`9095`
+(gRPC), `5432` (PostgreSQL aggregator), `5672`/`15672` (RabbitMQ), `3000`,
+`4317`, `4318`, `9090` (otel-lgtm). Pastikan port tersebut kosong.
 
-Gunakan Node.js 22.12+ dan jalankan dari root repository:
+**Untuk mengembangkan/membangun service di luar Docker** (opsional):
 
-```powershell
-npm --prefix services/frontend ci
-npm --prefix services/frontend run dev
-```
+| Toolchain | Versi | Dipakai oleh |
+| --- | --- | --- |
+| Node.js + npm | 22.12+ | `npm ci` di root (Nx, buf, openapi-generator), frontend, auth-bridge |
+| Go | 1.26 | aggregator, api-gateway, webhook-provider, `packages/bnpb-*-go` |
+| Rust | 1.96 | event-live-feed, token-exchange, zitadel-claims |
+| .NET SDK | 10.0 | danger-notification |
+| buf | 1.73 (lewat `npm ci`) | Generasi stub gRPC dari `contracts/proto` |
 
-Buka `http://localhost:5173`, lalu pilih akun pratinjau Media, Tim Lapangan, atau
-BNPB Pusat. Mode demo ini tidak membutuhkan service lain atau konfigurasi secret.
-Alternatif memakai Docker:
+## Membangun dan menjalankan dari awal
 
-```powershell
-docker compose -f compose.frontend.yaml up --build -d --wait
-```
+Semua perintah dijalankan dari root repository.
 
-Panduan implementasi, skenario pengujian, konfigurasi, dan integrasi Auth ada di
-[README frontend](services/frontend/README.md). Compose utama membangun frontend
-dengan demo nonaktif; Compose khusus frontend secara eksplisit mengaktifkan demo.
-
-## Menjalankan dua mock
-
-Prasyarat: Python 3.12+ untuk helper lokal; Docker Desktop/Engine dan Compose
-untuk container. Runtime Python hanya menggunakan standard library, tanpa pip.
-Jalankan dari root repository:
-
-```bash
-python tools/setup_mock_env.py
-docker compose -f compose.mocks.yaml up --build -d
-```
-
-Helper membuat `.env` dari contoh dan mengganti **hanya** kredensial mock yang
-kosong/placeholder dengan nilai acak berbeda. Secret yang sudah Anda isi tetap
-dipertahankan dan tidak dicetak. `.env` tidak masuk Git. Alternatifnya salin
-`.env.example` sendiri dan isi `BMKG_API_KEY` serta `PVMBG_BEARER_TOKEN` berbeda.
-
-| Service | URL host | Autentikasi data/admin | Storage privat |
-| --- | --- | --- | --- |
-| BMKG | `http://localhost:8081` | `X-BMKG-Key: <BMKG_API_KEY>` | volume `bmkg_data` |
-| PVMBG | `http://localhost:8082` | `Authorization: Bearer <PVMBG_BEARER_TOKEN>` | volume `pvmbg_data` |
-
-`GET /health` publik pada keduanya. Port host dapat diubah melalui
-`BMKG_HTTP_PORT`/`PVMBG_HTTP_PORT` di `.env`; port **di dalam container selalu
-8080**. Aggregator pada jaringan `internet_mock_net` nantinya memakai
-`http://bmkg-mock:8080` dan `http://pvmbg-mock:8080`, tanpa akses volume SQLite.
-Compose hanya menyuntikkan kredensial milik service penerima.
+### 1. Siapkan konfigurasi
 
 ```bash
-docker compose -f compose.mocks.yaml logs -f
-docker compose -f compose.mocks.yaml restart pvmbg-mock
-docker compose -f compose.mocks.yaml stop pvmbg-mock
-docker compose -f compose.mocks.yaml up -d pvmbg-mock
-docker compose -f compose.mocks.yaml down
+python tools/setup_mock_env.py   # membuat .env dari .env.example, mengisi BMKG_API_KEY & PVMBG_BEARER_TOKEN
+python tools/setup_auth_env.py   # membuat .env.auth dari .env.auth.example, mengisi secret Auth
 ```
 
-Data tetap ada setelah restart/down biasa. Jangan memakai `down -v` bila ingin
-mempertahankan data. `compose.yaml` utama mewarisi definisi mock yang sama,
-tetapi service BNPB placeholder di sana masih perlu implementasi/build image;
-gunakan `compose.mocks.yaml` untuk menjalankan hasil pekerjaan ini.
+Kedua helper hanya mengganti nilai kosong/placeholder dan mempertahankan nilai
+yang sudah Anda isi. Setelah itu **edit `.env` secara manual**:
 
-Tanpa Docker, gunakan dua terminal terpisah setelah helper konfigurasi:
+- `AGGREGATOR_DB_PASSWORD`: isi password apa pun (database aggregator dibuat dengan
+  password ini pada start pertama).
+- `AGGREGATOR_SERVICE_TOKEN` dan `WEBHOOK_SERVICE_TOKEN`: ganti placeholder
+  `REPLACE_*` dengan secret acak berbeda; aggregator menolak start dengan placeholder.
+  Contoh nilai: `python -c "import secrets; print(secrets.token_urlsafe(32))"`.
+- `FIREBASE_WEB_*` (opsional): isi untuk mengaktifkan push di browser; kosongkan
+  untuk build tanpa push.
+
+Letakkan service account Firebase di `.secrets/firebase-credentials.json` (atau
+arahkan `FIREBASE_CREDENTIALS_PATH` ke lokasi lain). `.env`, `.env.auth`,
+`.secrets/`, dan `.cache/` tidak masuk Git.
+
+### 2. Build dan jalankan seluruh stack
 
 ```bash
-python tools/run_mock.py bmkg
+docker compose --env-file .env --env-file .env.auth up --build -d --wait
 ```
+
+Build pertama memerlukan beberapa menit karena semua image (Go, Rust, .NET,
+Node) dibangun dari sumber. `auth-bootstrap` memprovisi Zitadel sekali jalan:
+akun seed, client OIDC, service user untuk tes, dan menulis secret service user
+ke `.cache/auth/`.
+
+Webhook Provider **mati secara default** (profile `manual`). Untuk ikut
+menjalankannya, yang diperlukan oleh tes webhook dan Problem 5:
 
 ```bash
-python tools/run_mock.py pvmbg
+docker compose --env-file .env --env-file .env.auth --profile manual up --build -d --wait
 ```
 
-Helper membaca konfigurasi milik masing-masing service dari `.env`; environment
-shell mengambil prioritas. Database lokal ada di `data/bmkg.sqlite3` dan
-`data/pvmbg.sqlite3`. Ctrl+C menghentikan service. Untuk menjalankan `app.py`
-secara langsung, set environment sendiri; entrypoint tidak membaca `.env`.
+### 3. Akses
 
-## Perilaku dan demo
+| URL | Isi |
+| --- | --- |
+| `http://localhost:8080` | SPA; **Masuk dengan Zitadel** memakai `media-demo`, `lapangan-demo`, atau `bnpb-demo` (password ada di `.env.auth`: `AUTH_MEDIA_PASSWORD`, `AUTH_FIELD_TEAM_PASSWORD`, `AUTH_BNPB_PASSWORD`) |
+| `http://localhost:8080/api/v1` | REST API (kontrak: [`contracts/openapi/gateway.yaml`](contracts/openapi/gateway.yaml)) |
+| `http://auth.localhost:8080` | Zitadel (console/login) |
+| `http://localhost:8081`, `http://localhost:8082` | Mock BMKG (`X-BMKG-Key`) dan PVMBG (`Authorization: Bearer`) |
+| `http://localhost:15672` | RabbitMQ management (`RABBITMQ_DEFAULT_USER`/`_PASS`) |
+| `http://localhost:3000` | Grafana, dashboard **BNPB Health & Traces** |
 
-- BMKG menyediakan `GET /seismic-events?since=...` dan
-  `GET /tsunami-warnings?since=...`, delay tetap default 100 ms.
-- PVMBG menyediakan `GET /volcanic-reports?since=...`, delay acak default
-  500–3000 ms. `POST /admin/schema-version` dengan `{"version":2}` membuat
-  laporan baru memiliki `confidence_level` tanpa restart/migrasi SQLite.
-- `POST /admin/outage` dengan `{"enabled":true}` membuat data/health PVMBG
-  mengembalikan 503. `{"enabled":false}` memulihkan proses yang sama; admin
-  tetap tersedia dan BMKG tetap berjalan.
-- Masing-masing membuat ≥20 record historis dan satu event baru setiap 10
-  detik secara default. Data tersimpan permanen; `since` inklusif dan tanpa
-  parameter tersebut seluruh data dikembalikan. Tidak ada push ke BNPB.
+### 4. Operasi sehari-hari
 
-Panduan request, konfigurasi, skenario demo, dan penjelasan desain ada di
-[implementasi mock](docs/mock-services.md), [BMKG](services/bmkg-mock/README.md),
-[PVMBG](services/pvmbg-mock/README.md), dan
-[inventaris konfigurasi](docs/configuration.md).
+```bash
+docker compose --env-file .env --env-file .env.auth ps
+docker compose --env-file .env --env-file .env.auth logs -f aggregator-service
+docker compose --env-file .env --env-file .env.auth restart pvmbg-mock
+docker compose --env-file .env --env-file .env.auth down      # data tetap di volume
+docker compose --env-file .env --env-file .env.auth down -v   # hapus semua data (reset total)
+```
+
+Jangan mengganti `ZITADEL_MASTERKEY` selama volume `auth_postgres` masih ada; untuk
+reset Auth gunakan `down -v`. Provisioning ulang Zitadel:
+`docker compose --env-file .env.auth -f compose.auth.yaml run --rm auth-bootstrap`.
+
+### Mode parsial
+
+| Tujuan | Perintah | Panduan |
+| --- | --- | --- |
+| Hanya dua mock | `docker compose -f compose.mocks.yaml up --build -d` | [mock](docs/mock-services.md) |
+| Mock tanpa Docker | `python tools/run_mock.py bmkg` dan `python tools/run_mock.py pvmbg` (dua terminal) | [mock](docs/mock-services.md) |
+| Auth + SPA dengan data fixture | `docker compose --env-file .env.auth -f compose.auth.yaml up --build -d --wait` | [Auth bridge](services/auth-bridge/README.md) |
+| SPA demo tanpa backend | `npm --prefix services/frontend ci && npm --prefix services/frontend run dev` → `http://localhost:5173` | [frontend](services/frontend/README.md) |
+
+### Build service di luar Docker
+
+```bash
+npm ci                                         # Nx, buf, openapi-generator
+npx nx run-many -t build                       # semua project Nx (generate stub lalu build)
+npx nx run api-gateway:build                   # atau per project
+(cd services/aggregator && go build ./...)     # aggregator dan webhook-provider bukan project Nx
+```
+
+Generasi kode kontrak: `npx nx run bnpb-aggregator-go:check-proto` (stub gRPC
+sesuai `contracts/proto`) dan `npx nx run bnpb-gateway-go:generate-openapi`
+(server REST dari OpenAPI). Service di luar Docker tetap membutuhkan RabbitMQ,
+PostgreSQL, dan Zitadel yang berjalan.
+
+## Konfigurasi
+
+Ada dua file environment; keduanya dibaca Compose dan hanya variabel yang
+relevan disuntikkan ke tiap container.
+
+- [`.env.example`](.env.example) → `.env`: service aplikasi, mock, broker, observability.
+- [`.env.auth.example`](.env.auth.example) → `.env.auth`: Zitadel, Auth bridge, akun seed.
+
+Variabel shell mengalahkan nilai dari `--env-file`. Variabel `VITE_*`/`FIREBASE_WEB_*`/
+`FRONTEND_*` dibaca saat build SPA, sehingga perubahannya memerlukan `--build`.
+Inventaris lengkap beserta pemakai dan batas tiap variabel ada di
+[docs/configuration.md](docs/configuration.md).
+
+### `.env` — umum, port, dan alamat
+
+| Variabel | Default | Arti |
+| --- | --- | --- |
+| `APP_ENV` | `development` | Label environment pada telemetry |
+| `LOG_LEVEL` | `info` | Level log aggregator, webhook-provider, event-live-feed |
+| `BMKG_HTTP_PORT` / `PVMBG_HTTP_PORT` | `8081` / `8082` | Port host mock (di dalam container selalu `8080`) |
+| `AGGREGATOR_GRPC_PORT`, `EVENT_FEED_GRPC_PORT`, `WEBHOOK_GRPC_PORT`, `NOTIFICATION_GRPC_PORT` | `9091`, `9093`, `9094`, `9095` | Port gRPC tiap service |
+| `BMKG_BASE_URL` / `PVMBG_BASE_URL` | `http://bmkg-mock:8080` / `http://pvmbg-mock:8080` | URL mock yang di-poll aggregator |
+| `*_GRPC_ADDRESS` | `aggregator-service:9091`, dst. | Alamat backend yang dipanggil api-gateway dan Danger Notification |
+
+### `.env` — kredensial dan autentikasi
+
+| Variabel | Default | Arti |
+| --- | --- | --- |
+| `BMKG_API_KEY` | placeholder → diisi helper | Kunci BMKG; dipakai mock (validator) dan aggregator (pemanggil) |
+| `PVMBG_BEARER_TOKEN` | placeholder → diisi helper | Bearer PVMBG; harus berbeda dari kunci BMKG |
+| `AGGREGATOR_SERVICE_TOKEN` / `WEBHOOK_SERVICE_TOKEN` | placeholder → **isi manual** | Token antar-service (`x-service-token`) |
+| `AGGREGATOR_AUTH_AUTHORITY` / `WEBHOOK_AUTH_AUTHORITY` | `http://auth.localhost:8080` | Issuer OIDC untuk verifikasi JWT via JWKS |
+| `AUTH_AUDIENCE` | kosong | Klaim `aud` yang diharapkan; kosong = tidak divalidasi |
+| `AUTH_INSECURE_SKIP_VERIFY` | `false` | `true` melewatkan verifikasi signature JWT; **hanya development** |
+| `FEED_AUTH_AUTHORITY` | `http://auth.localhost:8080` | Issuer untuk Event Live Feed |
+| `FEED_TOKEN_EXCHANGE_CLIENT_ID` / `_SECRET` | kosong | Override client token exchange feed; default dari `oidc.json` bootstrap |
+| `FEED_TOKEN_RENEW_BEFORE_SECONDS` | `15` | Token aktor ditukar ulang sekian detik sebelum kedaluwarsa |
+| `FEED_MAX_STREAM_SECONDS` | `3600` | Umur maksimum satu stream SSE |
+
+### `.env` — Danger Notification dan Firebase
+
+| Variabel | Default | Arti |
+| --- | --- | --- |
+| `NOTIFICATION_AUTH_AUTHORITY` | kosong → Zitadel lokal | Issuer JWT (`Auth:Authority`) |
+| `NOTIFICATION_AUTH_REQUIRE_HTTPS_METADATA` | `false` | Zitadel lokal hanya HTTP |
+| `NOTIFICATION_AUTH_SCOPE_CLAIM` | `scopes` | Nama klaim scope dari `zitadel-claims` |
+| `NOTIFICATION_RABBITMQ_HOST` / `_PORT` | `rabbitmq` / `5672` | Lokasi broker |
+| `NOTIFICATION_FCM_TOPIC` | `hazard-alerts` | Topik FCM tujuan push |
+| `NOTIFICATION_STORE_CONNECTION` | `Data Source=/data/notifications.db` | SQLite notifikasi + outbox push |
+| `FIREBASE_CREDENTIALS_PATH` | `./.secrets/firebase-credentials.json` | Service account Firebase yang di-mount read-only (wajib ada) |
+| `FIREBASE_WEB_API_KEY`, `_PROJECT_ID`, `_MESSAGING_SENDER_ID`, `_APP_ID`, `_VAPID_KEY` | kosong | Identitas publik web app Firebase untuk push browser; kosong = tanpa push |
+
+### `.env` — frontend
+
+| Variabel | Default | Arti |
+| --- | --- | --- |
+| `FRONTEND_API_BASE_URL` | `/api/v1` | Base URL API yang ditanam ke build SPA `compose.yaml` |
+| `FRONTEND_HTTP_PORT` | `5173` | Port host preview `compose.frontend.yaml` |
+
+### `.env` — perilaku mock, polling, dan gateway
+
+| Variabel | Default | Arti |
+| --- | --- | --- |
+| `MOCK_SEED_COUNT` | `20` | Record historis awal per mock (minimal 20) |
+| `MOCK_EVENT_INTERVAL_MS` | `10000` | Interval event baru per mock (maks. 10.000) |
+| `BMKG_RESPONSE_DELAY_MS` | `100` | Delay tetap BMKG (50–150) |
+| `PVMBG_RESPONSE_DELAY_MIN_MS` / `_MAX_MS` | `500` / `3000` | Rentang delay acak PVMBG |
+| `BMKG_POLL_INTERVAL_MS` / `PVMBG_POLL_INTERVAL_MS` | `3000` | Interval polling aggregator per sumber |
+| `BMKG_REQUEST_TIMEOUT_MS` / `PVMBG_REQUEST_TIMEOUT_MS` | `1000` / `3500` | Timeout satu panggilan polling |
+| `SOURCE_STALE_AFTER_MS` | `10000` | Sumber ditandai STALE bila tak ada polling sukses selama ini |
+| `GATEWAY_REQUEST_TIMEOUT_MS` | `2000` | Deadline request unary gateway |
+| `GATEWAY_MAX_IN_FLIGHT` | `100` | Batas request unary serentak; kelebihan → 429/503 |
+| `GATEWAY_RETRY_AFTER_SECONDS` | `5` | Header `Retry-After` pada 429/503 |
+| `GATEWAY_SSE_HEARTBEAT_SECONDS` | `15` | Interval heartbeat SSE |
+| `FEED_REPLAY_RETENTION_SECONDS` / `FEED_REPLAY_MAX_ENTRIES` | `600` / `10000` | Buffer replay feed di memori |
+| `WEBHOOK_MAX_RETRIES` / `WEBHOOK_HTTP_TIMEOUT_MS` | `5` / `10000` | Retry dan timeout pengiriman webhook |
+| `OUTBOX_MAX_RETRIES` | `5` | Retry publish outbox aggregator |
+
+### `.env` — penyimpanan dan RabbitMQ
+
+| Variabel | Default | Arti |
+| --- | --- | --- |
+| `BMKG_STORE_DSN` / `PVMBG_STORE_DSN` | `sqlite:///data/bmkg.sqlite3` / `…pvmbg.sqlite3` | File SQLite tiap mock (harus berbeda) |
+| `AGGREGATOR_DB_PASSWORD` | kosong → **isi manual** | Password PostgreSQL store kanonik aggregator |
+| `WEBHOOK_STORE_DSN` | `file:/data/webhook.db` | SQLite webhook-provider |
+| `RABBITMQ_DEFAULT_USER` / `_PASS` / `_VHOST` | `guest` / `guest` / `vhost` | Akun broker yang dibuat Compose |
+| `AGGREGATOR_AMQP_URL` / `WEBHOOK_AMQP_URL` | `amqp://guest:guest@rabbitmq:5672/vhost` | Koneksi broker; sesuaikan bila akun di atas diubah |
+| `RABBITMQ_EXCHANGE` | `bnpb.hazards.v1` | Exchange fan-out |
+| `*_CONSUMER_QUEUE` / `*_CONSUMER_DLQ` | `bnpb.<consumer>.v1` / `.dlq.v1` | Queue dan dead-letter queue tiap consumer (feed, webhook, notification) |
+
+### `.env` — observability
+
+| Variabel | Default | Arti |
+| --- | --- | --- |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` / `_PROTOCOL` | `http://otel-lgtm:4318` / `http/protobuf` | Tujuan ekspor OTLP |
+| `OTEL_SERVICE_NAME` | placeholder | Di-override Compose per service |
+| `TRACE_ESCAPE_HATCH_ENABLED` | `false` | Bila `true`, request dengan header `x-bnpb-trace-debug` menerima `x-trace-id`; **hanya development** |
+
+### `.env.auth` — Auth
+
+| Variabel | Default | Arti |
+| --- | --- | --- |
+| `ZITADEL_MASTERKEY` | dari helper (32 karakter) | Kunci enkripsi Zitadel; jangan diganti selama database ada |
+| `AUTH_POSTGRES_PASSWORD` | dari helper | Password PostgreSQL Zitadel |
+| `LOGIN_SESSION_COOKIE_SECRET` | dari helper | Secret cookie Login UI Zitadel |
+| `AUTH_SESSION_KEY` | dari helper (64 hex) | Kunci enkripsi refresh token di Auth bridge |
+| `AUTH_ADMIN_PASSWORD` | dari helper | Administrator Zitadel lokal |
+| `AUTH_MEDIA_PASSWORD`, `AUTH_FIELD_TEAM_PASSWORD`, `AUTH_BNPB_PASSWORD` | dari helper | Password `media-demo` (MEDIA), `lapangan-demo` (FIELD_TEAM), `bnpb-demo` (BNPB_INTERNAL) |
+| `ZITADEL_ACCESS_TOKEN_TTL_SECONDS` | `60` | Umur access token (sesuai M1) |
+| `AUTH_SESSION_TTL_SECONDS` | `86400` | Umur sesi/refresh |
+| `FRONTEND_DATA_MODE` | `mock` | Hanya untuk `compose.auth.yaml` standalone; `compose.yaml` selalu `gateway` |
+| `TRACE_ESCAPE_HATCH_ENABLED` | `false` | Sama seperti di `.env` |
 
 ## Pengujian
 
-Untuk menguji container yang sudah berjalan, termasuk persistensi setelah restart:
+### Unit dan tes proses (tanpa Docker)
 
 ```bash
-python tools/test_mock_containers.py --restart-check
-```
-
-Langkah manual PowerShell beserta hasil yang diharapkan ada di
-[panduan testing Docker](docs/mock-testing.md). Script mengembalikan PVMBG ke
-skema v1 dan outage nonaktif; laporan tersimpan di
-`.cache/mock-container-test-results.json`.
-
-Pengujian proses Python tanpa Docker:
-
-```bash
-python -m unittest discover -s tests -v
+python -m unittest discover -s tests -v       # mock BMKG/PVMBG; tes e2e/problem otomatis dilewati
 python -m unittest discover -s services/bmkg-mock -p test_storage.py -v
+npx nx run-many -t test                       # tes per service (butuh toolchain pengembangan)
 ```
 
-Tes end-to-end sistem lengkap (`tests/test_e2e_*.py`) dilewati kecuali
-`BNPB_E2E=1` dan stack `compose.yaml` sudah berjalan; lihat
-[panduan e2e](docs/e2e-testing.md). Uji beban aggregator lewat Envoy (k6,
-50 koneksi paralel, 60 detik) dan uji isolasi BMKG–PVMBG (p95 BMKG-only < 300 ms
-saat PVMBG lambat) dijelaskan di [panduan uji beban](docs/load-testing.md).
+### End-to-end (stack berjalan)
 
-Pengujian menjalankan proses Python terpisah lewat jaringan HTTP dengan port
-sementara, SQLite sementara, dan secret acak. Skenario mencakup kontrak data,
-autentikasi silang, filter waktu, generator, perubahan skema/outage saat berjalan,
-persistensi setelah restart, serta isolasi request lambat. Tidak membutuhkan
-Docker, library tambahan, atau database yang sedang Anda gunakan.
-
-## Pengembangan kontrak BNPB
-
-Bagian berikut dipakai ketika mengembangkan service BNPB; tidak diperlukan
-untuk menjalankan mock. Prasyarat: Go 1.26 dan buf.
+Jalankan stack lengkap dengan profile `manual` (lihat langkah 2), lalu:
 
 ```bash
-npx nx run bnpb-aggregator-go:check-proto     # stub gRPC Go sesuai contracts/proto
-npx nx run bnpb-gateway-go:generate-openapi   # server REST dari contracts/openapi/gateway.yaml
-npx nx run api-gateway:test                   # respons gateway divalidasi terhadap OpenAPI
+BNPB_E2E=1 python -m unittest discover -s tests -p 'test_e2e_*.py' -v
 ```
 
-Lihat [arsitektur](docs/architecture.md), [pemetaan data](docs/data-mapping.md),
-dan [rencana M1](docs/milestone-plan.md). Pengujian mock belum membuktikan kinerja
-atau seluruh kriteria P1–P5 sistem BNPB.
+PowerShell: `$env:BNPB_E2E = "1"` sebelum perintah. Tes masuk lewat Envoy
+memakai service user `svc-media`, `svc-lapangan`, `svc-bnpb` (secret dari
+`.cache/auth/`) dan mencakup auth, hazard, feed SSE, webhook, dan notifikasi.
+Pada stack yang baru dinyalakan satu putaran memerlukan beberapa menit.
+Konfigurasi `E2E_*` dan catatan firewall ada di [panduan e2e](docs/e2e-testing.md).
+
+> Docker rootless/firewall: bila webhook-provider tidak dapat menjangkau listener
+> tes di host, set `E2E_CALLBACK_HOST` ke IP LAN host.
+
+### Skenario Problem Set 1–5
+
+```bash
+python tests/run_problem_set.py               # kelima problem
+python tests/run_problem_set.py --problem 1,3 # problem tertentu
+python tests/run_problem_set.py --report      # simpan laporan ke .cache/problem_set_report.md
+```
+
+Runner menyetel `BNPB_E2E=1` sendiri.
+
+| Problem | Skenario yang diuji |
+| --- | --- |
+| P1 — Interoperabilitas data | Mapping `HazardEvent` kanonik; `POST /admin/schema-version` v2 menambah `confidence_level` di `attributes` tanpa restart |
+| P2 — Concurrency & degradasi | p95 BMKG-only < 300 ms saat PVMBG lambat, beban 50 VU (error < 1%), outage PVMBG → data STALE tanpa 500, pulih tanpa restart |
+| P3 — Auth antar-service | Kredensial silang ditolak, MEDIA `view=full` → 403, TTL token 60 detik dan refresh, audit secret |
+| P4 — Microservice & storage | Restart satu container tanpa mengganggu endpoint lain, atribut JSONB, batas akses database |
+| P5 — Fan-out pub/sub | Outbox → exchange fan-out, consumer independen, buffering saat consumer mati, consumer baru tanpa restart |
+
+Bukti manual yang perlu ditangkap untuk laporan (screenshot Grafana, DevTools,
+RabbitMQ) dirangkum di [docs/problem-set-test.md](docs/problem-set-test.md).
+
+### Demo interaktif
+
+```bash
+python tests/test_menu.py
+```
+
+Menu CLI untuk mengubah skema/outage PVMBG, mengambil token, memanggil API lewat
+Envoy atau mock langsung, memeriksa RabbitMQ, status container, berlangganan SSE,
+serta menjalankan bukti P3/P4. Admin mock juga dapat dipanggil langsung:
+
+```bash
+curl -X POST http://localhost:8082/admin/schema-version -H "Authorization: Bearer $PVMBG_BEARER_TOKEN" -H "Content-Type: application/json" -d '{"version":2}'
+curl -X POST http://localhost:8082/admin/outage -H "Authorization: Bearer $PVMBG_BEARER_TOKEN" -H "Content-Type: application/json" -d '{"enabled":true}'
+```
+
+### Uji beban (k6)
+
+```bash
+mkdir -p .cache/load
+k6 run tests/load/aggregator.js               # 50 VU, 60 detik
+```
+
+Uji isolasi BMKG–PVMBG (P2) memerlukan delay PVMBG tetap 3 detik:
+
+```bash
+PVMBG_RESPONSE_DELAY_MIN_MS=3000 PVMBG_RESPONSE_DELAY_MAX_MS=3000 \
+  docker compose --env-file .env --env-file .env.auth up -d --no-deps pvmbg-mock
+k6 run tests/load/aggregator-isolation.js
+```
+
+Jalankan ulang perintah `docker compose` tanpa kedua variabel untuk mengembalikan
+delay normal. Parameter `LOAD_*`/`ISO_*` ada di [panduan uji beban](docs/load-testing.md).
+
+### Tes container mock dan Auth
+
+```bash
+python tools/test_mock_containers.py --restart-check   # mock yang berjalan, termasuk persistensi
+```
+
+Langkah manual mock ada di [panduan testing mock](docs/mock-testing.md); pengujian
+login browser, expiry, refresh, dan logout ada di [panduan testing Auth](docs/auth-testing.md).
+
+## Dokumentasi lain
+
+- [Konfigurasi lengkap](docs/configuration.md)
+- [Mock BMKG/PVMBG](docs/mock-services.md), [BMKG](services/bmkg-mock/README.md), [PVMBG](services/pvmbg-mock/README.md)
+- [Kontrak gRPC](contracts/proto/README.md), [OpenAPI gateway](contracts/openapi/gateway.yaml)
+- [Envoy](services/envoy/README.md), [Event Live Feed](services/event-live-feed/README.md), [Zitadel](services/zitadel/README.md)
