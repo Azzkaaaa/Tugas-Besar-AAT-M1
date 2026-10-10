@@ -4,19 +4,16 @@
   "revision_method": "Documentation update using existing evidence; no live tests rerun.",
   "evidence": [
     {
-      "id": "E3",
       "file": "aggregator-unit-2026-10-09.jsonl",
       "original_source": ".cache/report-aggregator-tests.jsonl",
       "sha256": "a921d2788885fdfc02acaac274966c00bdf7eb42ac33505c29ba75ab72383563"
     },
     {
-      "id": "E2",
       "file": "auth-browser-2026-10-06.json",
       "original_source": ".cache/auth-browser-test-results.json",
       "sha256": "5ce5794d5992979e9ea5dd9d32e753ebcef953d71d38c59804e06e9f95ad973e"
     },
     {
-      "id": "E1",
       "file": "mock-container-2026-09-30.json",
       "original_source": ".cache/mock-container-test-results.json",
       "sha256": "0136e6726c249bb3889ce656b94646189b7da8ae3412f83fbaa15453ad92e667",
@@ -26,121 +23,101 @@
     {
       "file": "P1/1-1.png",
       "sha256": "3cb4707413d47207a14e3b166133a2de165eaef32e56bea17651484d565b6cb5",
-      "id": "M1/1-1",
       "included_in_pdf": false
     },
     {
       "file": "P1/1-2.png",
       "sha256": "8e6ebd6ebf30653c039cc5c22ff8f41bf6257e4a6b71eeba15ab69c2f8bbfb74",
-      "id": "M1/1-2",
       "included_in_pdf": true
     },
     {
       "file": "P1/2.png",
       "sha256": "33d43405e4d0485f7dfa4ebb7ed3c4fe590ecb2dc91307c59177b2a86befa0b2",
-      "id": "M1/2",
       "included_in_pdf": true
     },
     {
       "file": "P1/3-1.png",
       "sha256": "7e23d903966fbabb8c8a171c08ca68db4cf4a4958843bc3bb27dcd1a5cd8058f",
-      "id": "M1/3-1",
       "included_in_pdf": false
     },
     {
       "file": "P1/3-2.png",
       "sha256": "35f2005d26abc3e927bc87bfa24bfa5f0f456f8eb19107b09ffc279741e34df8",
-      "id": "M1/3-2",
       "included_in_pdf": true
     },
     {
       "file": "P2/1.png",
       "sha256": "e8e0c64049d3bc6cdd9df5aaee1afbcc75655778544f0ba0ab185ca4b673da62",
-      "id": "M2/1",
       "included_in_pdf": true
     },
     {
       "file": "P2/2.png",
       "sha256": "c7df6a1ca1cbc159006bc856e323f78017d6e44aa064041f576a695b724f98e0",
-      "id": "M2/2",
       "included_in_pdf": true
     },
     {
       "file": "P2/3-1.png",
       "sha256": "4391dd31897d946cfad23cf1e20ff9fff1edb67a12b6cef5805797accd89e7c2",
-      "id": "M2/3-1",
       "included_in_pdf": false
     },
     {
       "file": "P2/3-2.png",
       "sha256": "f1bd6bec748d5bfea7c18dd954f5b208c560851e71c5509bb7adc63b4556dae7",
-      "id": "M2/3-2",
       "included_in_pdf": false
     },
     {
       "file": "P2/3-3.png",
       "sha256": "ce6ccebd105c0c64798a5a236427cddc9579babe1de232c8b228ce74c25f27dd",
-      "id": "M2/3-3",
       "included_in_pdf": true
     },
     {
       "file": "P2/3-4.png",
       "sha256": "e3b6a8be94a48b31fb38af9182369c9e52e071c6174b919fa656733e210d8506",
-      "id": "M2/3-4",
       "included_in_pdf": false
     },
     {
       "file": "P2/3-5.png",
       "sha256": "6efae093be4a158e383010d250e6c89b9d090a29caa4d5ef9e450dfc2662cfec",
-      "id": "M2/3-5",
       "included_in_pdf": true
     },
     {
       "file": "P2/aggregator-2026-10-09T15-31-17-502Z.json",
-      "sha256": "a90efd52b2581b0e59ef6a79978ba97c247ae185c0286d84b2d89bd71472c18e",
-      "id": "K1"
+      "sha256": "a90efd52b2581b0e59ef6a79978ba97c247ae185c0286d84b2d89bd71472c18e"
     },
     {
       "file": "P2/aggregator-isolation-2026-10-09T15-37-25-357Z.json",
-      "sha256": "65fcce00cb466dcd9aa9ba66c0426e5db2274adedaad293adfa4e8c6b8474d95",
-      "id": "K2"
+      "sha256": "65fcce00cb466dcd9aa9ba66c0426e5db2274adedaad293adfa4e8c6b8474d95"
     },
     {
       "file": "P3/1-new.png",
       "sha256": "29de0ef8dde0bacfb5a4256c510b3f3167ff6c500f1eb6e3a517580750315763",
-      "id": "M3/1-new",
       "included_in_pdf": true,
       "added_in_commit": "4a1973b"
     },
     {
       "file": "P3/1.png",
       "sha256": "8f9ea369f6b7f0ec9e480ec3cdd212694eb652d20821c8419f4c4b508fb70398",
-      "id": "M3/1",
       "included_in_pdf": false,
       "superseded_for_cross_credential_demo_by": "P3/1-new.png"
     },
     {
       "file": "P3/2-1.png",
       "sha256": "9c29352f272403f57eee81f001858e11e46d642fa79d0345b12f3c3c2ea5284f",
-      "id": "M3/2-1",
       "included_in_pdf": true
     },
     {
       "file": "P3/2-2.png",
       "sha256": "74b40f3da296cd5cb53b35296789b7e34ada740a4f73882b7358a12f9f483700",
-      "id": "M3/2-2",
       "included_in_pdf": true
     },
     {
       "file": "P3/2-3.png",
       "sha256": "d5e5740ec84a4cb838ee1dd8a6eece61b79e4ac24a968eee10595621c742c025",
-      "id": "M3/2-3",
       "included_in_pdf": true
     },
     {
       "file": "P3/3-1-alternative.png",
       "sha256": "03a904281505d7c92ccd561842c9a61a17af1cfb889faf1877d66c03a5aebfad",
-      "id": "M3/3-1-alternative",
       "included_in_pdf": false,
       "added_in_commit": "4a1973b",
       "pdf_exclusion_reason": "Visible CSRF token; safe profile and expiry fields transcribed in P3.",
@@ -149,13 +126,11 @@
     {
       "file": "P3/3-1.png",
       "sha256": "0434f4ead0a2ce006e558a9c44d4c9f945015a1ba00549601addffe9f61e97e5",
-      "id": "M3/3-1",
       "included_in_pdf": false
     },
     {
       "file": "P3/3-2-alternative.png",
       "sha256": "e23ca9f2ba71edd0ecb8a71b86911b1e9ed341a84fefd4a9ebbb24e86541fbd3",
-      "id": "M3/3-2-alternative",
       "included_in_pdf": false,
       "added_in_commit": "4a1973b",
       "pdf_exclusion_reason": "Visible CSRF token; safe profile and expiry fields transcribed in P3.",
@@ -164,167 +139,140 @@
     {
       "file": "P3/3-2.png",
       "sha256": "e6b254daed7663f345b72ac42bc5ed04c5d6200f1375397302d5c98ba9247bb6",
-      "id": "M3/3-2",
       "included_in_pdf": false
     },
     {
       "file": "P3/4-1.png",
       "sha256": "b53527f2ff59cc8067221cc282b0ade095fdbc67bfea37c6eebff76ca99cd296",
-      "id": "M3/4-1",
       "included_in_pdf": false
     },
     {
       "file": "P3/4-2.png",
       "sha256": "3e4fd97c938342d5081af65b8ce8e0b9c615b47c176a3bcac457ca52c9a38c00",
-      "id": "M3/4-2",
       "included_in_pdf": false
     },
     {
       "file": "P4/1-1.png",
       "sha256": "5f7e2d85d3c92fd1d699972d0b4a07ec0d61c9dd142cb622765a78005e7ea98b",
-      "id": "M4/1-1",
       "included_in_pdf": true
     },
     {
       "file": "P4/1-2.png",
       "sha256": "6caf546bd0f7d8fbe311088a29dd098c6b49d38994f61582e759c208078fbc35",
-      "id": "M4/1-2",
       "included_in_pdf": false
     },
     {
       "file": "P4/1-3-new.png",
       "sha256": "3835043e00dea0c1329cd961e8d7864431711fd9b420ce9ea2605f32ca1bb812",
-      "id": "M4/1-3-new",
       "included_in_pdf": true,
       "added_in_commit": "4a1973b"
     },
     {
       "file": "P4/1-3.png",
       "sha256": "07afb868a92e07b05a43b7f537097545f6cffd164353edc64fcb3a055cec9982",
-      "id": "M4/1-3",
       "included_in_pdf": false,
       "superseded_for_independent_build_demo_by": "P4/1-3-new.png"
     },
     {
       "file": "P4/1-4.png",
       "sha256": "92c17670cb78d9f93755fcc1315a31697d5bb572c2a71ea0d321beb9353b9c56",
-      "id": "M4/1-4",
       "included_in_pdf": false
     },
     {
       "file": "P4/1-5.png",
       "sha256": "bb54d0e530a7299a03503652e8c2aafbd43e381b8011350661832fdd8ef1013a",
-      "id": "M4/1-5",
       "included_in_pdf": true
     },
     {
       "file": "P4/2-1.png",
       "sha256": "1ca799dbce1da4de895563a84b4d602e186e3bf4696c8fb2581e81c27621952e",
-      "id": "M4/2-1",
       "included_in_pdf": true
     },
     {
       "file": "P4/2-2.png",
       "sha256": "cac39ce9122b6300a3546e663e3c404e85d807fe9b6f430e3bb3e4a74380b7e6",
-      "id": "M4/2-2",
       "included_in_pdf": true
     },
     {
       "file": "P4/3.png",
       "sha256": "82d95bf77dc78ddccedb6e0de19faa6b61996dcd0238425a3a40c3f7f3c370f1",
-      "id": "M4/3",
       "included_in_pdf": false
     },
     {
       "file": "P5/1.png",
       "sha256": "ede72ae8f45b35a242e35edc705cd95bc739e75ab2673388615e36d113cbd1d6",
-      "id": "M5/1",
       "included_in_pdf": true
     },
     {
       "file": "P5/2-1.png",
       "sha256": "dc714b3fd2cca694b47caba8890f483bff54da5bb17867cc5837529f770de60f",
-      "id": "M5/2-1",
       "included_in_pdf": false
     },
     {
       "file": "P5/2-2.png",
       "sha256": "3162d9e1409b1c485b5321e3b01800ec77b5b78fcee71abacbefbf8db36be110",
-      "id": "M5/2-2",
       "included_in_pdf": false
     },
     {
       "file": "P5/2-3.png",
       "sha256": "3cf4d020e9ecbd979ec38d46b7d585b28c72c665d3ff340dd947a273ee169312",
-      "id": "M5/2-3",
       "included_in_pdf": false
     },
     {
       "file": "P5/3-1.png",
       "sha256": "2e5b3897d6f1c7690bba1e4c3603ac431aaf3587ef57df53120048cd8bd5c6a8",
-      "id": "M5/3-1",
       "included_in_pdf": true
     },
     {
       "file": "P5/3-2.png",
       "sha256": "b4081c3b1236697f6ecd7e0451efcb2d05d40204bf98b552c0a29d1f7058bfe6",
-      "id": "M5/3-2",
       "included_in_pdf": true
     },
     {
       "file": "P5/4-1-alternative.png",
       "sha256": "b61bc994d7eda84a4fcb2419e775cd9103df601362d2860982c3b65877ba7dfa",
-      "id": "M5/4-1-alternative",
       "included_in_pdf": false
     },
     {
       "file": "P5/4-1.png",
       "sha256": "e9d0ffaa4c00ae345c13853d1ff3e31cd13b0a6062536ad15e3e45c70041cbed",
-      "id": "M5/4-1",
       "included_in_pdf": false
     },
     {
       "file": "P5/4-2-alternative.png",
       "sha256": "a07b6735092e4273e6eac14e7faee5dc9f56f1478b94605c45bddf08a0e5dcc7",
-      "id": "M5/4-2-alternative",
       "included_in_pdf": false
     },
     {
       "file": "P5/4-2.png",
       "sha256": "9e50190577e595fcd49dab3aff898d96045ec3a7824a94fa4f0e1027051df847",
-      "id": "M5/4-2",
       "included_in_pdf": false
     },
     {
       "file": "P5/4-3-alternative.png",
       "sha256": "f67d8ee9dadd6c3b8353c252e1af1f1fcada89520700d1ce39263a4398382a38",
-      "id": "M5/4-3-alternative",
       "included_in_pdf": false,
       "pdf_exclusion_reason": "Visible configuration secret; original evidence retained, not embedded."
     },
     {
       "file": "P5/4-3.png",
       "sha256": "d2b9351571c68382ab8d78411790f2be7bf19a8deb2c39098bdf559cca9ffa47",
-      "id": "M5/4-3",
       "included_in_pdf": false,
       "pdf_exclusion_reason": "Visible configuration secret; original evidence retained, not embedded."
     },
     {
       "file": "P5/4-4.png",
       "sha256": "604972bab212d4ed57a40a0c0200e8fec123ca8e99bc0800c41fa90e4d397b99",
-      "id": "M5/4-4",
       "included_in_pdf": true
     },
     {
       "file": "P5/4-5.png",
       "sha256": "4307db985d6f148428f5106d4dcbb470764d634349aebf3c0f4059a979622f05",
-      "id": "M5/4-5",
       "included_in_pdf": true
     },
     {
       "file": "problem_set_report.md",
-      "sha256": "096dd56916a2381866a4c11ea62bd14efa1898cc1f25ee3b9692d9d3502f5c61",
-      "id": "E4"
+      "sha256": "096dd56916a2381866a4c11ea62bd14efa1898cc1f25ee3b9692d9d3502f5c61"
     }
   ],
   "verification_limits": [
@@ -356,5 +304,6 @@
       "P4/1-3-new.png"
     ],
     "test_execution": "No tests rerun during this documentation update; existing automatic scorecard and k6 JSON unchanged."
-  }
+  },
+  "reference_style": "Direct evidence file paths and descriptive test names; file is the unique key for each entry."
 }

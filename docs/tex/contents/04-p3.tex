@@ -59,32 +59,32 @@ Alternatif mTLS dapat mengautentikasi identitas workload antarlayanan dengan leb
 \end{itemize}
 
 \section{Proof-of-Concept dan Keterlacakan}
-Bukti P3 menggabungkan E1 untuk kredensial mock, E2 untuk sesi browser historis, E3 untuk validasi JWT backend, E4 untuk pengujian stack, dan demonstrasi manual M3. E4 mencatat empat tes P3 lulus tanpa error/failure maupun skip, dengan durasi 61,37 detik. Angka tersebut adalah hasil suite yang disimpan; kesimpulan per alur di bawah mengikuti request dan respons yang benar-benar terlihat pada artefak.
+Bukti P3 menggabungkan hasil uji kredensial mock dalam \code{mock-container-2026-09-30.json}, pemeriksaan sesi browser historis dalam \code{auth-browser-2026-10-06.json}, tes unit validasi JWT backend dalam \code{aggregator-unit-2026-10-09.jsonl}, laporan pengujian stack dalam \code{problem_set_report.md}, dan tangkapan layar demonstrasi P3. Laporan pengujian stack mencatat empat tes P3 lulus tanpa error/failure maupun skip, dengan durasi 61,37 detik. Angka tersebut adalah hasil suite yang disimpan; kesimpulan per alur di bawah mengikuti request dan respons yang benar-benar terlihat pada artefak.
 
 \subsection{Isolasi Kredensial Sumber}
-E1 merekam penolakan tujuh request tidak sah pada kedua mock. Pada suite E4, \code{test_01_cross_service_credentials_rejected} menguji kredensial silang dan request tanpa kredensial pada endpoint data \code{/seismic-events} serta \code{/volcanic-reports}. Keduanya merupakan dasar pengujian isolasi kredensial.
+Hasil uji kredensial mock merekam penolakan tujuh request tidak sah pada kedua mock. Pada laporan pengujian stack, \code{test_01_cross_service_credentials_rejected} menguji kredensial silang dan request tanpa kredensial pada endpoint data \code{/seismic-events} serta \code{/volcanic-reports}. Keduanya merupakan dasar pengujian isolasi kredensial.
 
 Artefak terbaru \code{P3/1-new.png} pada commit \code{4a1973b} memperlihatkan dua penolakan HTTP 401: bearer PVMBG ditolak BMKG, dan API key BMKG ditolak PVMBG. Respons keduanya menyatakan kredensial instansi yang sesuai diperlukan. Bukti ini menggantikan \code{P3/1.png} sebagai observasi manual utama dan mendukung isolasi kredensial dua arah. Artefak lama tetap dipertahankan sebagai riwayat.
 
-Kontrol dengan kredensial benar pada gambar terbaru masih menghasilkan 404 untuk BMKG dan 405 untuk PVMBG akibat pemilihan route/method. Karena itu label \emph{Authorized} pada keluaran menu tidak ditafsirkan sebagai keberhasilan membaca data. Keberhasilan akses dengan kredensial benar pada endpoint data tetap merujuk E1/E4; gambar terbaru digunakan untuk dua penolakan kredensial silang yang terlihat.
+Kontrol dengan kredensial benar pada gambar terbaru masih menghasilkan 404 untuk BMKG dan 405 untuk PVMBG akibat pemilihan route/method. Karena itu label \emph{Authorized} pada keluaran menu tidak ditafsirkan sebagai keberhasilan membaca data. Keberhasilan akses dengan kredensial benar pada endpoint data tetap merujuk hasil uji kredensial mock dan laporan pengujian stack; gambar terbaru digunakan untuk dua penolakan kredensial silang yang terlihat.
 
-\evidencefigure{evidence/P3/1-new.png}{M3 terbaru: kredensial silang ditolak dengan HTTP 401 pada BMKG maupun PVMBG. Status 404/405 pada kontrol terpisah tidak digunakan sebagai bukti keberhasilan akses data.}{fig:p3-credential-isolation}
+\evidencefigure{evidence/P3/1-new.png}{Kredensial silang ditolak dengan HTTP 401 pada BMKG maupun PVMBG. Status 404/405 pada kontrol terpisah tidak digunakan sebagai bukti keberhasilan akses data. Sumber: \code{P3/1-new.png}.}{fig:p3-credential-isolation}
 
 \subsection{Otorisasi Ringkasan dan Data Penuh}
-M3 memperlihatkan request akun service ber-role MEDIA ke \code{/api/v1/hazards} memperoleh 200 dan hanya tujuh field ringkasan. Permintaan eksplisit \code{view=full} dengan role yang sama memperoleh 403 dari server, beserta correlation ID. Ketika role FIELD\_TEAM meminta proyeksi penuh, respons 200 memuat \code{source_ref_id}, koordinat, dan attributes. Hal ini menunjukkan bahwa pembatasan data berlaku pada API, bukan hanya pada tampilan.
+Tangkapan layar demonstrasi P3 memperlihatkan request akun service ber-role MEDIA ke \code{/api/v1/hazards} memperoleh 200 dan hanya tujuh field ringkasan. Permintaan eksplisit \code{view=full} dengan role yang sama memperoleh 403 dari server, beserta correlation ID. Ketika role FIELD\_TEAM meminta proyeksi penuh, respons 200 memuat \code{source_ref_id}, koordinat, dan attributes. Hal ini menunjukkan bahwa pembatasan data berlaku pada API, bukan hanya pada tampilan.
 
-\evidencefigure{evidence/P3/2-1.png}{M3: respons summary untuk role MEDIA; record tidak memuat koordinat, referensi sumber, ataupun attributes.}{fig:p3-summary}
-\evidencefigure{evidence/P3/2-2.png}{M3: permintaan eksplisit data penuh oleh MEDIA ditolak server dengan HTTP 403.}{fig:p3-media-full}
-\evidencefigure{evidence/P3/2-3.png}{M3: role FIELD\_TEAM memperoleh HTTP 200 dan field penuh.}{fig:p3-field-full}
+\evidencefigure{evidence/P3/2-1.png}{Respons summary untuk role MEDIA; record tidak memuat koordinat, referensi sumber, ataupun attributes. Sumber: \code{P3/2-1.png}.}{fig:p3-summary}
+\evidencefigure{evidence/P3/2-2.png}{Permintaan eksplisit data penuh oleh MEDIA ditolak server dengan HTTP 403. Sumber: \code{P3/2-2.png}.}{fig:p3-media-full}
+\evidencefigure{evidence/P3/2-3.png}{Role FIELD\_TEAM memperoleh HTTP 200 dan field penuh. Sumber: \code{P3/2-3.png}.}{fig:p3-field-full}
 
-E4 melengkapi tangkapan layar dengan pemeriksaan proyeksi penuh untuk FIELD\_TEAM dan BNPB\_INTERNAL serta penolakan detail hazard penuh bagi MEDIA. Identitas pada tes tersebut adalah akun service \code{svc-media}, \code{svc-lapangan}, dan akun service BNPB. Demonstrasi ini membuktikan enforcement role pada request API; login tiga akun pengguna melalui hosted UI tercatat terpisah pada E2.
+Laporan pengujian stack melengkapi tangkapan layar dengan pemeriksaan proyeksi penuh untuk FIELD\_TEAM dan BNPB\_INTERNAL serta penolakan detail hazard penuh bagi MEDIA. Identitas pada tes tersebut adalah akun service \code{svc-media}, \code{svc-lapangan}, dan akun service BNPB. Demonstrasi ini membuktikan enforcement role pada request API; login tiga akun pengguna melalui hosted UI tercatat terpisah pada pemeriksaan sesi browser 6 Oktober 2026.
 
 \subsection{Expiry Token dan Pembaruan Akses}
 Pada \code{P3/3-1.png} dan \code{P3/3-2.png}, token akun service Tim Lapangan mula-mula menghasilkan 200. Setelah menunggu 62 detik, token yang sama menghasilkan 401. Penerbitan token baru menghasilkan akses 200, sedangkan token pertama tetap ditolak dengan 401. Dengan demikian, artefak manual mendukung berlakunya expiry pada jalur gateway serta pemulihan akses menggunakan token baru.
 
 Menu demo dan \code{test_03_token_ttl_expiry_and_refresh_flow} meminta token pengganti dengan grant \code{client_credentials}. Ini adalah penerbitan ulang token service; tidak melibatkan refresh token sesi pengguna. Penolakan token pertama setelah expiry juga tidak mengukur kecepatan revokasi token yang masih berlaku.
 
-Tambahan M3 \code{P3/3-1-alternative.png} dan \code{P3/3-2-alternative.png} merekam respons request \code{refresh} pada browser dengan dashboard aktif. Kedua respons memuat identitas pengguna yang sama, nama BNPB Pusat, role \code{BNPB_INTERNAL}, serta mode \code{oidc}. Nilai \code{expires_at} berubah dari 03:30:33 menjadi 03:31:28 UTC pada 10 Oktober 2026, atau bertambah 55 detik, sementara request polling dashboard berlanjut. Ini mendukung pembaruan sesi browser BNPB Pusat pada stack terbaru selama penggunaan dashboard, sesuai penjadwalan refresh sekitar lima detik sebelum TTL 60 detik berakhir.
+Tangkapan layar tambahan \code{P3/3-1-alternative.png} dan \code{P3/3-2-alternative.png} merekam respons request \code{refresh} pada browser dengan dashboard aktif. Kedua respons memuat identitas pengguna yang sama, nama BNPB Pusat, role \code{BNPB_INTERNAL}, serta mode \code{oidc}. Nilai \code{expires_at} berubah dari 03:30:33 menjadi 03:31:28 UTC pada 10 Oktober 2026, atau bertambah 55 detik, sementara request polling dashboard berlanjut. Ini mendukung pembaruan sesi browser BNPB Pusat pada stack terbaru selama penggunaan dashboard, sesuai penjadwalan refresh sekitar lima detik sebelum TTL 60 detik berakhir.
 
 \begin{table}[H]\small
 \begin{tabularx}{\textwidth}{@{}P{3.0cm}YY@{}}
@@ -93,23 +93,23 @@ Nama pengguna & BNPB Pusat & BNPB Pusat\\
 Role dan mode & \code{BNPB_INTERNAL}, \code{oidc} & \code{BNPB_INTERNAL}, \code{oidc}\\
 \code{expires_at} (UTC) & \code{2026-10-10T03:30:33.000Z} & \code{2026-10-10T03:31:28.000Z}\\\bottomrule
 \end{tabularx}
-\caption{Transkripsi field aman dari dua screenshot refresh M3 terbaru. Identitas tetap sama dan expiry bertambah 55 detik; nilai CSRF tidak disalin.}
+\caption{Transkripsi field aman dari screenshot \code{P3/3-1-alternative.png} dan \code{P3/3-2-alternative.png}. Identitas tetap sama dan expiry bertambah 55 detik; nilai CSRF tidak disalin.}
 \end{table}
 
-Kedua screenshot tersebut melengkapi E2, yang mencatat 45 pemeriksaan browser/provider pada 6 Oktober dengan arsitektur bridge saat itu. Cakupan M3 terbaru adalah pembaruan sesi BNPB Pusat; bukti tersebut tidak memperlihatkan sesi pengguna Tim Lapangan dibiarkan kedaluwarsa lalu dipulihkan, ataupun request eksplisit memakai token lama setelah refresh. Kesimpulan kedua skenario itu tetap dibedakan dari refresh browser yang sudah terlihat.
+Kedua screenshot tersebut melengkapi hasil uji sesi browser historis, yang mencatat 45 pemeriksaan browser/provider pada 6 Oktober dengan arsitektur bridge saat itu. Cakupan screenshot refresh terbaru adalah pembaruan sesi BNPB Pusat; bukti tersebut tidak memperlihatkan sesi pengguna Tim Lapangan dibiarkan kedaluwarsa lalu dipulihkan, ataupun request eksplisit memakai token lama setelah refresh. Kesimpulan kedua skenario itu tetap dibedakan dari refresh browser yang sudah terlihat.
 
 \subsection{Konfigurasi Secret dan Ringkasan Hasil}
-M3 \code{P3/4-1.png} dan \code{P3/4-2.png} memperlihatkan penelusuran pola key/token/secret pada repository dan tersedianya placeholder konfigurasi. E4 memeriksa variabel yang diwajibkan oleh suite pada \code{.env.example} serta pola tertentu untuk kredensial literal. Pemeriksaan ini mendukung penggunaan environment pada komponen terkait, dengan cakupan pola terbatas: kredensial pendek atau bentuk YAML tanpa tanda kutip tidak seluruhnya tercakup. Password pengembangan literal pada Compose canonical database tetap menjadi batasan konfigurasi yang telah dijelaskan sebelumnya.
+Tangkapan layar \code{P3/4-1.png} dan \code{P3/4-2.png} memperlihatkan penelusuran pola key/token/secret pada repository dan tersedianya placeholder konfigurasi. Pengujian stack memeriksa variabel yang diwajibkan oleh suite pada \code{.env.example} serta pola tertentu untuk kredensial literal. Pemeriksaan ini mendukung penggunaan environment pada komponen terkait, dengan cakupan pola terbatas: kredensial pendek atau bentuk YAML tanpa tanda kutip tidak seluruhnya tercakup. Password pengembangan literal pada Compose canonical database tetap menjadi batasan konfigurasi yang telah dijelaskan sebelumnya.
 
 \begin{table}[H]\small
 \begin{tabularx}{\textwidth}{@{}P{3.3cm}YY@{}}
 \toprule \textbf{Kriteria} & \textbf{Bukti tersedia} & \textbf{Kesimpulan dan batas cakupan}\\\midrule
-Isolasi kredensial mock & E1; E4; M3 terbaru \code{P3/1-new.png}. & Kredensial silang ditolak 401 pada kedua mock. Kontrol akses data yang berhasil mengacu E1/E4.\\
-Pembatasan role API & E4 tes scope; M3 \code{P3/2-1.png} sampai \code{P3/2-3.png}. & MEDIA summary 200/full 403; FIELD\_TEAM full 200. E4 juga memeriksa BNPB\_INTERNAL.\\
-Expiry dan token pengganti & E4; M3 \code{P3/3-1.png} dan \code{P3/3-2.png}. & Token service lama 401 sesudah 62 detik; token baru 200. Alur memakai client credentials.\\
-Login, cookie, refresh browser & E2; M3 \code{P3/3-1-alternative.png} dan \code{P3/3-2-alternative.png}. & Sesi browser BNPB Pusat tetap aktif, identitas sama, dan expiry bertambah 55 detik. Expiry sesi Tim Lapangan dan penolakan token lama sesudah refresh tidak ditunjukkan oleh screenshot baru.\\
-Validasi JWT backend & E3: 15 tes utama Auth Aggregator lulus. & Memeriksa issuer, expiry, algoritme, rotasi JWKS, service token, dan provider unavailable dengan server tes.\\
-Konfigurasi tanpa secret literal & E4 dan M3 \code{P3/4-1.png}, \code{P3/4-2.png}. & Pemeriksaan pola dan placeholder tersedia; temuan password pengembangan literal membatasi klaim kepatuhan menyeluruh.\\\bottomrule
+Isolasi kredensial mock & Hasil uji kredensial mock; laporan stack; \code{P3/1-new.png}. & Kredensial silang ditolak 401 pada kedua mock. Kontrol akses data yang berhasil mengacu hasil uji kredensial mock dan laporan stack.\\
+Pembatasan role API & Tes scope pada laporan stack; \code{P3/2-1.png} sampai \code{P3/2-3.png}. & MEDIA summary 200/full 403; FIELD\_TEAM full 200. Pengujian stack juga memeriksa BNPB\_INTERNAL.\\
+Expiry dan token pengganti & Laporan stack; \code{P3/3-1.png} dan \code{P3/3-2.png}. & Token service lama 401 sesudah 62 detik; token baru 200. Alur memakai client credentials.\\
+Login, cookie, refresh browser & Pemeriksaan sesi browser 6 Oktober; \code{P3/3-1-alternative.png} dan \code{P3/3-2-alternative.png}. & Sesi browser BNPB Pusat tetap aktif, identitas sama, dan expiry bertambah 55 detik. Expiry sesi Tim Lapangan dan penolakan token lama sesudah refresh tidak ditunjukkan oleh screenshot baru.\\
+Validasi JWT backend & Hasil tes unit Aggregator: 15 tes utama Auth lulus. & Memeriksa issuer, expiry, algoritme, rotasi JWKS, service token, dan provider unavailable dengan server tes.\\
+Konfigurasi tanpa secret literal & Laporan stack; \code{P3/4-1.png} dan \code{P3/4-2.png}. & Pemeriksaan pola dan placeholder tersedia; temuan password pengembangan literal membatasi klaim kepatuhan menyeluruh.\\\bottomrule
 \end{tabularx}
 \caption{Hasil P3 dengan pembedaan alur service, sesi browser, dan konfigurasi.}
 \end{table}

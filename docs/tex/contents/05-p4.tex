@@ -154,8 +154,8 @@ dengan sendirinya menyediakan pemrosesan event tepat satu kali.
 
 \section{Proof-of-Concept dan Keterlacakan}
 
-Bukti manual M4 pada \code{docs/tex/evidence/P4/} mencakup rangkaian awal
-dan tambahan \code{1-3-new.png} pada commit \code{4a1973b}. Ringkasan eksekusi otomatis E4 pada
+Tangkapan layar pengujian layanan dan penyimpanan pada \code{docs/tex/evidence/P4/} mencakup rangkaian awal
+dan tambahan \code{1-3-new.png} pada commit \code{4a1973b}. Ringkasan eksekusi otomatis pada
 \code{docs/tex/evidence/problem_set_report.md}, dibuat 10 Oktober 2026,
 mencatat tiga tes P4 lulus, tanpa failure maupun skipped. Cakupan kedua
 jenis bukti dijelaskan berikut; label lulus tes tidak memperluas observasi
@@ -163,7 +163,7 @@ melampaui assertion dan screenshot yang tersedia.
 
 \subsection{Pemisahan Proses dan Pengoperasian Layanan}
 
-Pada M4, operator menghentikan \code{notification-service}. Halaman
+Pada pengujian pemisahan proses, operator menghentikan \code{notification-service}. Halaman
 notifikasi kemudian menampilkan respons 503 untuk endpoint yang bergantung
 pada layanan tersebut, sementara feed tetap aktif dan status sumber tetap
 tersedia. Setelah layanan dibangun dan dijalankan kembali, halaman
@@ -171,7 +171,7 @@ notifikasi kembali menampilkan data. Urutan ini direkam pada
 \code{P4/1-1.png} sampai \code{P4/1-4.png}.
 
 \evidencefigure{evidence/P4/1-1.png}
-{M4: penghentian container Danger Notification secara terpisah.}
+{Penghentian container Danger Notification secara terpisah (\code{P4/1-1.png}).}
 {fig:p4-stop-notification}
 
 Grafik health memperlihatkan interval notification tidak tersedia,
@@ -180,7 +180,7 @@ Webhook memang sedang tidak aktif pada interval grafik tersebut; gambar
 ini tidak digunakan untuk menyatakan semua layanan hidup bersamaan.
 
 \evidencefigure{evidence/P4/1-5.png}
-{M4: observasi health ketika notification dihentikan dan dipulihkan.}
+{Observasi health ketika notification dihentikan dan dipulihkan (\code{P4/1-5.png}).}
 {fig:p4-health-independence}
 
 Tes otomatis \code{tests/test_problem_4.py} melengkapi observasi dengan
@@ -199,7 +199,7 @@ oleh perintah ini. Bukti ini menggantikan \code{P4/1-3.png} sebagai rujukan
 build satu layanan; screenshot lama tetap tersimpan sebagai riwayat.
 
 \evidencefigure{evidence/P4/1-3-new.png}
-{M4 terbaru: build dan pembuatan container Notification dengan \code{--no-deps}; output hanya menampilkan layanan target.}
+{Build dan pembuatan container Notification dengan \code{--no-deps}; output hanya menampilkan layanan target (\code{P4/1-3-new.png}).}
 {fig:p4-rebuild-no-deps}
 
 Grafik health dan pembacaan API pada rangkaian awal melengkapi observasi
@@ -218,11 +218,11 @@ Pemeriksaan tabel memperlihatkan bahwa \code{attributes} bertipe JSONB;
 \code{confidence_level} tidak menjadi kolom terpisah.
 
 \evidencefigure{evidence/P4/2-1.png}
-{M4: record PVMBG sebelum dan sesudah penambahan atribut tersedia bersamaan melalui API.}
+{Record PVMBG sebelum dan sesudah penambahan atribut tersedia bersamaan melalui API (\code{P4/2-1.png}).}
 {fig:p4-schema-coexistence}
 
 \evidencefigure{evidence/P4/2-2.png}
-{M4: struktur tabel hazard menggunakan JSONB untuk atribut sumber.}
+{Struktur tabel hazard menggunakan JSONB untuk atribut sumber (\code{P4/2-2.png}).}
 {fig:p4-jsonb-schema}
 
 Hasil ini mendukung rancangan penyimpanan fleksibel dan koeksistensi data
@@ -233,7 +233,7 @@ angka perubahan DDL atau hasil perbandingan hash schema yang diklaim.
 
 \subsection{Kepemilikan Data dan Batas Pengujian}
 
-M4 \code{P4/3.png} memperlihatkan inspeksi konfigurasi serta keberhasilan
+Tangkapan layar \code{P4/3.png} memperlihatkan inspeksi konfigurasi serta keberhasilan
 pembacaan status sumber melalui API. Pada kode aplikasi, operasi Canonical
 Store ditangani Aggregator; consumer memperoleh data lewat event atau API.
 Pemeriksaan otomatis mencari variabel \code{CANONICAL_STORE_DSN} secara
@@ -261,15 +261,18 @@ diterapkan bila kriteria akses eksklusif hendak dijamin secara teknis.
         Independensi proses & Stop dan pemulihan diamati; bukti baru memperlihatkan build target dengan \code{--no-deps}. Health jalur lain tersedia pada rangkaian awal. Identitas semua container belum dibandingkan. \\
         Atribut dinamis & 25 record tanpa confidence dan 75 dengan confidence terbaca; kolom JSONB diperlihatkan. \\
         Kepemilikan Canonical Store & Jalur aplikasi melalui Aggregator/event ditunjukkan; konfigurasi belum menjamin isolasi credential dan jaringan. \\
-        Persistensi lintas restart & Volume PostgreSQL, webhook, dan notification tersedia pada kode. Bukti M4 tidak membandingkan ID/jumlah data ketiganya sebelum dan sesudah restart. \\
+        Persistensi lintas restart & Volume PostgreSQL, webhook, dan notification tersedia pada kode. Tangkapan layar pengujian layanan dan penyimpanan tidak membandingkan ID/jumlah data ketiganya sebelum dan sesudah restart. \\
         \bottomrule
     \end{tabularx}
 \end{table}
 
-Bukti historis E1 tetap hanya berlaku untuk persistensi database mock yang
+Hasil historis pengujian container mock pada
+\code{docs/tex/evidence/mock-container-2026-09-30.json} tetap hanya berlaku untuk persistensi database mock yang
 ketika itu diuji; tidak digunakan sebagai pengganti pengujian volume
 Canonical Store, webhook, atau notification. Pengujian unit Aggregator
-E3 mendukung transformasi atribut, sedangkan E4 dan M4 menambahkan
-pengamatan pada stack berjalan. Sumber bukti terdaftar pada
+pada \code{docs/tex/evidence/aggregator-unit-2026-10-09.jsonl}
+mendukung transformasi atribut, sedangkan ringkasan eksekusi otomatis dan
+tangkapan layar pengujian layanan dan penyimpanan menambahkan pengamatan
+pada stack berjalan. Sumber bukti terdaftar pada
 \code{docs/tex/evidence/manifest.json}; petunjuk pengujian tersedia pada
 \code{docs/e2e-testing.md}.

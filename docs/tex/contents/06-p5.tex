@@ -176,16 +176,17 @@ notification terutama bergantung pada parsing serta akses field yang dipakai.
 
 \section{Proof-of-Concept dan Keterlacakan}
 
-Bukti manual M5 pada \code{docs/tex/evidence/P5/} merekam distribusi event,
+Tangkapan layar pengujian pada \code{docs/tex/evidence/P5/} merekam distribusi event,
 penghentian consumer, pemulihan backlog, dan pengoperasian consumer
-tambahan tanggal 9 Oktober 2026. Ringkasan otomatis E4 mencatat empat tes
+tambahan tanggal 9 Oktober 2026. Ringkasan eksekusi otomatis pada
+\code{docs/tex/evidence/problem_set_report.md} mencatat empat tes
 P5 lulus tanpa failure atau skipped pada 10 Oktober 2026. Uraian berikut
 mengutamakan kondisi yang benar-benar terlihat pada artefak; screenshot
 beberapa sesi tidak diperlakukan sebagai satu rangkaian waktu yang utuh.
 
 \subsection{Publication dan Dua Consumer Independen}
 
-Trace pada M5 memperlihatkan polling PVMBG oleh Aggregator, transaksi
+Trace pengujian distribusi event memperlihatkan polling PVMBG oleh Aggregator, transaksi
 penyimpanan, span \code{rabbitmq.publish}, serta span
 \code{rabbitmq.consume} pada Event Live Feed dan Danger Notification.
 Keterhubungan span dalam trace yang sama mendukung distribusi satu
@@ -193,7 +194,7 @@ publication ke dua consumer, tanpa panggilan langsung producer ke
 endpoint masing-masing.
 
 \evidencefigure{evidence/P5/1.png}
-{M5: trace publication Aggregator dengan cabang konsumsi pada Feed dan Notification.}
+{Trace publication Aggregator dengan cabang konsumsi pada Feed dan Notification (\code{P5/1.png}).}
 {fig:p5-fanout-trace}
 
 Screenshot \code{P5/2-1.png} menunjukkan exchange
@@ -206,10 +207,10 @@ mengklaim ketiga layanan telah memproses satu ID publication yang
 terlihat lengkap pada screenshot yang sama.
 
 Tes otomatis membuka SSE dan menerima \code{hazard.upsert}, lalu
-memeriksa keberadaan queue Notification. Ringkasan E4 menyebut Feed dan
+memeriksa keberadaan queue Notification. Ringkasan eksekusi otomatis menyebut Feed dan
 Webhook, sedangkan implementasi tes \code{test_02} menggunakan
 Notification. Pasangan yang dipakai pada pembahasan hasil ini adalah
-Feed--Notification, sesuai kode dan trace M5. Assertion queue tes tersebut
+Feed--Notification, sesuai kode dan trace pengujian distribusi event. Assertion queue tes tersebut
 belum mencocokkan ID publication; trace manual menjadi bukti tambahan
 untuk hubungan publish--consume.
 
@@ -222,7 +223,7 @@ publication untuk kedua queue. Kondisi ini menunjukkan bahwa tidak
 aktifnya satu consumer tidak menghentikan distribusi ke consumer lainnya.
 
 \evidencefigure{evidence/P5/3-1.png}
-{M5: backlog Notification bertambah saat consumernya berhenti, sedangkan Feed tetap memproses event.}
+{Backlog Notification bertambah saat consumernya berhenti, sedangkan Feed tetap memproses event (\code{P5/3-1.png}).}
 {fig:p5-consumer-offline}
 
 Setelah Notification kembali aktif, grafik queue memperlihatkan backlog
@@ -231,7 +232,7 @@ consumer kembali satu dan terdapat lonjakan delivery/ack saat pengurasan.
 Feed tetap aktif selama interval yang diperlihatkan.
 
 \evidencefigure{evidence/P5/3-2.png}
-{M5: backlog Notification terkuras setelah consumer kembali aktif.}
+{Backlog Notification terkuras setelah consumer kembali aktif (\code{P5/3-2.png}).}
 {fig:p5-consumer-recovery}
 
 Event yang terbit ketika consumer berhenti tersimpan sebagai pesan ready
@@ -258,7 +259,7 @@ kemudian memperlihatkan queue webhook bersama Feed dan Notification;
 ketiga queue utama mempunyai laju incoming, delivery, dan ack.
 
 \evidencefigure{evidence/P5/4-4.png}
-{M5: tiga queue consumer aktif setelah Webhook Provider tersedia.}
+{Tiga queue consumer aktif setelah Webhook Provider tersedia (\code{P5/4-4.png}).}
 {fig:p5-webhook-queue}
 
 Callback HTTP yang diterima memuat \code{event_id}, \code{hazard_id},
@@ -267,7 +268,7 @@ webhook menghasilkan callback data, bukan sekadar queue yang berhasil
 dibuat. Endpoint callback eksternal pada bukti hanya digunakan untuk demo.
 
 \evidencefigure{evidence/P5/4-5.png}
-{M5: payload hazard diterima pada endpoint callback Webhook Provider.}
+{Payload hazard diterima pada endpoint callback Webhook Provider (\code{P5/4-5.png}).}
 {fig:p5-webhook-callback}
 
 Bukti alternatif merekam penambahan queue baru dan binding ke exchange
@@ -298,8 +299,8 @@ untuk menyimpulkan riwayat restart producer di luar interval observasi.
 
 Pengujian DLQ, injeksi publication duplikat, pemulihan setelah broker
 dibuat ulang, dan keberhasilan push pada perangkat tidak direkam dalam
-rangkaian M5 ini. Batasan at-least-once, retensi replay Feed, volume broker,
-dan efek samping FCM yang dijelaskan sebelumnya tetap berlaku. Artefak
-E4 adalah ringkasan hasil tes; rincian klaim harus dibaca bersama assertion
+rangkaian pengujian distribusi event ini. Batasan at-least-once, retensi replay Feed, volume broker,
+dan efek samping FCM yang dijelaskan sebelumnya tetap berlaku. Ringkasan
+eksekusi otomatis memuat hasil tes; rincian klaim harus dibaca bersama assertion
 pada \code{tests/test_problem_5.py} dan gambar manual, sebagaimana
 inventaris pada \code{docs/tex/evidence/manifest.json}.

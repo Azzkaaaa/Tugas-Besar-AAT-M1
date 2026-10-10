@@ -49,29 +49,29 @@ Polling mengikuti spesifikasi dan memudahkan pengujian sumber yang tidak menyedi
 \end{itemize}
 
 \section{Proof-of-Concept dan Keterlacakan}
-Bukti P1 terdiri atas tes unit E3, hasil pengujian stack E4, dan demonstrasi manual M1 yang diuraikan pada bagian ini. E3 merekam tujuh tes tingkat utama paket ingest yang lulus pada 9 Oktober 2026, mencakup fetch HTTP, pemetaan gempa/warning, laporan vulkanik, evolusi skema, serta proyeksi. Paket domain tidak mempunyai test case dan tidak dihitung sebagai tes lulus. E4, yang dibuat pada 10 Oktober 2026, mencatat lima tes P1 lulus, tanpa error/failure maupun skip, dengan durasi 2,42 detik.
+Bukti P1 terdiri atas hasil tes unit Aggregator dalam \code{aggregator-unit-2026-10-09.jsonl}, laporan pengujian stack dalam \code{problem_set_report.md}, dan tangkapan layar demonstrasi P1 yang diuraikan pada bagian ini. Hasil tes unit Aggregator merekam tujuh tes tingkat utama paket ingest yang lulus pada 9 Oktober 2026, mencakup fetch HTTP, pemetaan gempa/warning, laporan vulkanik, evolusi skema, serta proyeksi. Paket domain tidak mempunyai test case dan tidak dihitung sebagai tes lulus. Laporan pengujian stack, yang dibuat pada 10 Oktober 2026, mencatat lima tes P1 lulus, tanpa error/failure maupun skip, dengan durasi 2,42 detik.
 
 \subsection{Hasil Demonstrasi Manual}
-Pada kondisi awal, M1 memperlihatkan detail BMKG Selatan Jawa dengan magnitudo 5,6, kedalaman 20 km, dan severity WASPADA. Detail PVMBG Gunung Anak Krakatau menampilkan ID kanonik, referensi sumber, koordinat, jumlah erupsi, serta tinggi kolom abu tanpa atribut confidence. Kedua tampilan menggunakan bentuk detail kejadian yang sama meskipun rincian sumbernya berbeda. Nilai magnitudo dan severity BMKG pada contoh ini konsisten dengan aturan pemetaan ketika tidak terdapat warning tsunami terkait.
+Pada kondisi awal, tangkapan layar demonstrasi P1 memperlihatkan detail BMKG Selatan Jawa dengan magnitudo 5,6, kedalaman 20 km, dan severity WASPADA. Detail PVMBG Gunung Anak Krakatau menampilkan ID kanonik, referensi sumber, koordinat, jumlah erupsi, serta tinggi kolom abu tanpa atribut confidence. Kedua tampilan menggunakan bentuk detail kejadian yang sama meskipun rincian sumbernya berbeda. Nilai magnitudo dan severity BMKG pada contoh ini konsisten dengan aturan pemetaan ketika tidak terdapat warning tsunami terkait.
 
-\evidencefigure{evidence/P1/1-2.png}{M1: detail PVMBG sebelum perubahan skema; atribut sumber belum memuat confidence.}{fig:p1-v1}
+\evidencefigure{evidence/P1/1-2.png}{Detail PVMBG sebelum perubahan skema; atribut sumber belum memuat confidence. Sumber: \code{P1/1-2.png}.}{fig:p1-v1}
 
 Operator kemudian mengubah versi PVMBG menjadi 2 melalui menu kontrol yang memanggil endpoint admin; respons yang direkam adalah \verb|{"version": 2}|. Sesudah perubahan, antarmuka tetap menampilkan kejadian dari kedua sumber. Detail BMKG Barat Sumatra masih memuat magnitudo 5,6 dan severity WASPADA; detail PVMBG Gunung Semeru pada pukul 06.43 WIB tanggal 10 Oktober 2026 memuat \code{confidence_level} bernilai 0,675, selain atribut vulkanik yang sebelumnya sudah ada. Urutan ini memperlihatkan bahwa field tambahan diteruskan sampai tampilan klien BNPB.
 
-\evidencefigure{evidence/P1/2.png}{M1: respons kontrol runtime ketika versi skema PVMBG diubah menjadi 2.}{fig:p1-toggle}
-\evidencefigure{evidence/P1/3-2.png}{M1: detail PVMBG sesudah perubahan; confidence bernilai 0,675 tampil bersama atribut vulkanik lainnya.}{fig:p1-v2}
+\evidencefigure{evidence/P1/2.png}{Respons kontrol runtime ketika versi skema PVMBG diubah menjadi 2. Sumber: \code{P1/2.png}.}{fig:p1-toggle}
+\evidencefigure{evidence/P1/3-2.png}{Detail PVMBG sesudah perubahan; confidence bernilai 0,675 tampil bersama atribut vulkanik lainnya. Sumber: \code{P1/3-2.png}.}{fig:p1-v2}
 
 \subsection{Cakupan Bukti}
 \begin{table}[H]\small
 \begin{tabularx}{\textwidth}{@{}P{3.3cm}YY@{}}
 \toprule \textbf{Kriteria} & \textbf{Bukti tersedia} & \textbf{Kesimpulan dan batas cakupan}\\\midrule
-Pemetaan dua sumber & E3; E4 tes awal; M1 \code{P1/1-1.png} dan \code{P1/1-2.png}. & Struktur kanonik dan contoh nilai kedua sumber terlihat. Tes unit melengkapi pemeriksaan aturan korelasi warning.\\
-Perubahan v1 ke v2 & M1 \code{P1/2.png}, \code{P1/3-1.png}, dan \code{P1/3-2.png}; E4 tes perubahan skema. & Kontrol versi berhasil dan kedua sumber tetap tampil; confidence terlihat pada hasil PVMBG.\\
-Field tambahan pada attributes & E3 tes evolusi skema; E4 tes penerusan field; M1 detail v2. & Kebijakan aditif teramati untuk confidence; tidak menyatakan semua jenis perubahan skema didukung.\\
-Koeksistensi record v1/v2 & E4 \code{test_05_v1_and_v2_coexistence_in_canonical_store}. & Tes memeriksa record tanpa dan dengan confidence dalam hasil query yang sama. Screenshot M1 menunjukkan contoh sebelum dan sesudah secara terpisah.\\
-Kontinuitas tanpa restart & Kode kontrol runtime dan urutan M1. & Artefak tidak menyertakan pasangan ID/start time container sebelum--sesudah; kontinuitas proses belum diukur langsung.\\\bottomrule
+Pemetaan dua sumber & Tes unit Aggregator; tes awal pada laporan stack; \code{P1/1-1.png} dan \code{P1/1-2.png}. & Struktur kanonik dan contoh nilai kedua sumber terlihat. Tes unit melengkapi pemeriksaan aturan korelasi warning.\\
+Perubahan v1 ke v2 & \code{P1/2.png}, \code{P1/3-1.png}, dan \code{P1/3-2.png}; tes perubahan skema pada laporan stack. & Kontrol versi berhasil dan kedua sumber tetap tampil; confidence terlihat pada hasil PVMBG.\\
+Field tambahan pada attributes & Tes unit evolusi skema Aggregator; tes penerusan field pada laporan stack; detail v2 pada \code{P1/3-2.png}. & Kebijakan aditif teramati untuk confidence; tidak menyatakan semua jenis perubahan skema didukung.\\
+Koeksistensi record v1/v2 & Laporan stack, tes \code{test_05_v1_and_v2_coexistence_in_canonical_store}. & Tes memeriksa record tanpa dan dengan confidence dalam hasil query yang sama. Tangkapan layar demonstrasi P1 menunjukkan contoh sebelum dan sesudah secara terpisah.\\
+Kontinuitas tanpa restart & Kode kontrol runtime dan urutan tangkapan layar demonstrasi P1. & Artefak tidak menyertakan pasangan ID/start time container sebelum--sesudah; kontinuitas proses belum diukur langsung.\\\bottomrule
 \end{tabularx}
 \caption{Keterlacakan P1 terhadap bukti unit, otomatis, dan manual.}
 \end{table}
 
-Hasil E4 memperkuat demonstrasi manual, dengan batas metode bahwa pencarian record v2 pada tes menerima record yang sudah memiliki confidence dan tidak mengikatnya pada ID serta waktu sesudah toggle. Oleh karena itu, laporan membedakan keberhasilan membaca data v1/v2 dari pembuktian bahwa record tertentu baru dihasilkan pada percobaan tersebut. Respons mentah sebelum--sesudah serta snapshot container akan memperkuat keterlacakan pada pengujian berikutnya; bukti M1 yang tersedia sudah memperlihatkan hasil perubahan aditif pada antarmuka.
+Laporan pengujian stack memperkuat demonstrasi manual, dengan batas metode bahwa pencarian record v2 pada tes menerima record yang sudah memiliki confidence dan tidak mengikatnya pada ID serta waktu sesudah toggle. Oleh karena itu, laporan membedakan keberhasilan membaca data v1/v2 dari pembuktian bahwa record tertentu baru dihasilkan pada percobaan tersebut. Respons mentah sebelum--sesudah serta snapshot container akan memperkuat keterlacakan pada pengujian berikutnya; tangkapan layar demonstrasi P1 yang tersedia sudah memperlihatkan hasil perubahan aditif pada antarmuka.

@@ -17,14 +17,17 @@ Revisi 10 Oktober 2026 mengikuti spesifikasi tugas dan snapshot repository `4a19
 
 ## Bukti yang digunakan
 
-| ID | Artefak | Cakupan |
+| Rujukan | Berkas di dalam `evidence/` | Cakupan |
 |---|---|---|
-| E1-E3 | JSON mock, JSON browser Auth, JSONL unit Aggregator | Bukti historis dengan tanggal asli |
-| E4 | `evidence/problem_set_report.md` | Scorecard 19 tes; 0 error/failure dan 0 skipped |
-| M1-M5 | Screenshot dalam `evidence/P1/` sampai `P5/` | Observasi demo pada tiap bab |
-| K1-K2 | Dua JSON k6 dalam `evidence/P2/` | Beban, isolasi, percentile, error, dan 429 |
+| Hasil tes mock 30 September | `mock-container-2026-09-30.json` | Perilaku mock dan persistensi database |
+| Hasil tes browser Auth 6 Oktober | `auth-browser-2026-10-06.json` | Login, cookie, refresh, dan logout pada arsitektur terdahulu |
+| Unit test Aggregator 9 Oktober | `aggregator-unit-2026-10-09.jsonl` | Ingest, pemetaan, proyeksi, dan validasi autentikasi |
+| Ringkasan pengujian otomatis | `problem_set_report.md` | Scorecard 19 tes; 0 error/failure dan 0 skipped |
+| Screenshot demo tiap problem | Direktori `P1/` sampai `P5/` | Observasi demo pada bab terkait |
+| Hasil k6 beban | `P2/aggregator-2026-10-09T15-31-17-502Z.json` | Beban 50 VU selama 60 detik |
+| Hasil k6 isolasi | `P2/aggregator-isolation-2026-10-09T15-37-25-357Z.json` | Latensi BMKG ketika ada kontensi PVMBG |
 
-K1 mencatat 50 VU selama fase beban 60 detik, 17.546 request, throughput 292,43 request/detik, dan p95 243,96 ms. K2 mencatat p95 BMKG pada kontensi 87,09 ms. Throughput menggunakan durasi fase pengukuran, bukan durasi keseluruhan run termasuk pemanasan.
+Hasil k6 beban mencatat 50 VU selama fase beban 60 detik, 17.546 request, throughput 292,43 request/detik, dan p95 243,96 ms. Hasil k6 isolasi mencatat p95 BMKG pada kontensi 87,09 ms. Throughput menggunakan durasi fase pengukuran, bukan durasi keseluruhan run termasuk pemanasan.
 
 Interpretasi mengikuti cakupan bukti. Penerbitan token service melalui client credentials dibedakan dari refresh sesi browser. Kepemilikan logis database dibedakan dari isolasi akses konfigurasi. Bukti baru P4 memakai `--no-deps` dan hanya menampilkan build Notification; screenshot lama tetap menjadi riwayat.
 
@@ -53,6 +56,6 @@ Skrip menjalankan tiga putaran, menyimpan berkas bantu dalam `docs/tex/build/`, 
 1. Isi kontribusi nyata setiap anggota di `metadata.tex`.
 2. Tinjau caption dan cakupan bukti pada tiap bab.
 3. Build kembali setelah mengubah LaTeX dan gunakan PDF utama di atas.
-4. Jika evidence diganti, perbarui hash manifest. Hash E1 sebelumnya tetap dicatat sebagai riwayat; revisi ini tidak mengubah artefak sumber tersebut.
+4. Jika evidence diganti, perbarui hash manifest. Hash sebelumnya untuk `mock-container-2026-09-30.json` tetap dicatat sebagai riwayat; revisi ini tidak mengubah artefak sumber tersebut. Manifest menggunakan path berkas sebagai identitas langsung.
 
 Panduan: [mock](../mock-testing.md), [Auth](../auth-testing.md), [E2E](../e2e-testing.md), [load testing](../load-testing.md). Menu demo ada di `tests/test_menu.py`; suite memakai `tests/run_problem_set.py`.
