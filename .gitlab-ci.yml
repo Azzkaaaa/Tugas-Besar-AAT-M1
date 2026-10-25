@@ -68,7 +68,7 @@ prepare-runner-image:
         --digest-file "$CI_PROJECT_DIR/digest" \
         --cleanup
 
-      read -r digest < "$CI_PROJECT_DIR/digest"
+      read -r digest < "$CI_PROJECT_DIR/digest" || [ -n "$digest" ]
       echo "RUNNER_IMAGE=$ref@$digest" > "$CI_PROJECT_DIR/bootstrap.env"
   artifacts:
     reports:
