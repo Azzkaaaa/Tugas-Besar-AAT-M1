@@ -1,0 +1,76 @@
+stages:
+  - bootstrap
+  - ci
+
+find-runner-tag:
+  stage: bootstrap
+  image:
+    name: docker.io/alpine/git:2.54.0@sha256:4fac439ee3b9204bec99c712b8a15942999632458f716ae8149fbb97cb760cd4
+    entrypoint: [""]
+  variables:
+    GIT_DEPTH: 1
+  script:
+    - git config --global --add safe.directory "$CI_PROJECT_DIR"
+    - echo "RUNNER_IMAGE_TAG=$(git rev-parse HEAD:ci/runner)" >> bootstrap.env
+  artifacts:
+    reports:
+      dotenv: bootstrap.env
+
+find-runner-image:
+  stage: bootstrap
+  needs: ["find-runner-tag"]
+  image:
+    name: gcr.io/go-containerregistry/crane/debug:v0.22.1@sha256:e78770b31258a3846f878036d9c1f63fbe4c871f9f56990bf77fd95c013e3c1b
+    entrypoint: [""]
+  script:
+    - mkdir -p ~/.docker && echo "$DOCKER_AUTH_CONFIG" > ~/.docker/config.json
+    - |
+      touch bootstrap.env
+      ref="$RUNNER_IMAGE_REMOTE/$RUNNER_IMAGE_NAME:$RUNNER_IMAGE_TAG"
+      if digest=$(crane digest "$ref" 2>err); then
+        echo "RUNNER_IMAGE_DIGEST=$digest" >> bootstrap.env
+        echo "RUNNER_IMAGE=$ref@$digest" >> bootstrap.env
+      elif grep -qiE 'MANIFEST_UNKNOWN|NAME_UNKNOWN|404' err; then
+        echo "image not found, will build"
+      else
+        cat err
+        exit 1
+      fi
+  artifacts:
+    reports:
+      dotenv: bootstrap.env
+
+prepare-runner-image:
+  stage: bootstrap
+  needs: ["find-runner-image"]
+  image:
+    name: ghcr.io/osscontainertools/kaniko:v1.28.6-debug@sha256:7ab44d0131c3051b6dea128067e258c7afb5c4815082a93b9cf6c624f2140bf0
+    entrypoint: [""]
+  script:
+    - echo "$DOCKER_AUTH_CONFIG" > /kaniko/.docker/config.json
+    - |
+      if [ -n "$RUNNER_IMAGE" ]; then
+        echo "RUNNER_IMAGE=$RUNNER_IMAGE" > "$CI_PROJECT_DIR/bootstrap.env"
+        exit 0
+      fi
+
+      ref="$RUNNER_IMAGE_REMOTE/$RUNNER_IMAGE_NAME:$RUNNER_IMAGE_TAG"
+      /kaniko/executor \
+        --context "$CI_PROJECT_DIR/ci/runner" \
+        --dockerfile "$CI_PROJECT_DIR/ci/runner/Dockerfile" \
+        --destination "$ref" \
+        --digest-file "$CI_PROJECT_DIR/digest" \
+        --cleanup
+
+      read -r digest < "$CI_PROJECT_DIR/digest"
+      echo "RUNNER_IMAGE=$ref@$digest" > "$CI_PROJECT_DIR/bootstrap.env"
+  artifacts:
+    reports:
+      dotenv: bootstrap.env
+
+ci:
+  stage: ci
+  needs: ["prepare-runner-image"]
+  image: $RUNNER_IMAGE
+  script:
+    - echo "running ci pipeline for each project"
