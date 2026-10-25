@@ -2,6 +2,10 @@ stages:
   - bootstrap
   - ci
 
+default:
+  tags:
+    - gitlab--duo
+
 find-runner-tag:
   stage: bootstrap
   image:
