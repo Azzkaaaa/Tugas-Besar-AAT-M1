@@ -139,5 +139,5 @@ nx-pipeline-manual:
   trigger:
     include:
       - artifact: child-pipeline.yml
-        job: generate-pipeline-all
+        job: generate-pipeline-manual
     strategy: depend
