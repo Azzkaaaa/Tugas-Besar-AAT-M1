@@ -87,14 +87,16 @@ rebuild-runner-image:
   variables:
     GIT_DEPTH: 0
     NX_DAEMON: "false"
+    NX_STEPS: "lint,test,build"
   script:
+    - '[ -n "$NX_STEPS" ] || { echo "NX_STEPS must list at least one target" >&2; exit 1; }'
     - npm ci
     - |
       if [ "$NX_RUN_MANY" = "true" ]; then
         echo "$NX_PROJECTS" | tr ',' '\n' | while read -r pattern; do
           [ -z "$pattern" ] || npx nx show projects -p "$pattern" | grep -q '"' || { echo "NX_PROJECTS entry matches no project: $pattern" >&2; exit 1; }
         done
-        npx nx run-many -t lint compile test build ${NX_PROJECTS:+-p "$NX_PROJECTS"} --graph=stdout > nx-graph.json
+        npx nx run-many -t "$NX_STEPS" ${NX_PROJECTS:+-p "$NX_PROJECTS"} --graph=stdout > nx-graph.json
       else
         git fetch --quiet origin "$CI_DEFAULT_BRANCH"
         if [ -n "$CI_MERGE_REQUEST_DIFF_BASE_SHA" ]; then
@@ -105,9 +107,9 @@ rebuild-runner-image:
           base=$(git merge-base "origin/$CI_DEFAULT_BRANCH" HEAD)
         fi
         echo "nx affected base: $base"
-        npx nx affected -t lint compile test build --base="$base" --head="$CI_COMMIT_SHA" --graph=stdout > nx-graph.json
+        npx nx affected -t "$NX_STEPS" --base="$base" --head="$CI_COMMIT_SHA" --graph=stdout > nx-graph.json
       fi
-    - python3 ci/gitlab.gen.py "$RUNNER_IMAGE" < nx-graph.json > child-pipeline.yml
+    - python3 ci/gitlab.gen.py "$RUNNER_IMAGE" --steps "$NX_STEPS" < nx-graph.json > child-pipeline.yml
   artifacts:
     paths:
       - child-pipeline.yml

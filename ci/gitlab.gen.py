@@ -44,10 +44,12 @@ class NxTaskGraph:
 @dataclass
 class NxGraph:
     task_graph: NxTaskGraph
+    targets: set[str] = field(default_factory=set)
 
     @classmethod
     def from_json(cls, content: str) -> Self:
-        data = json.loads(content)['tasks']
+        content = json.loads(content)
+        data = content['tasks']
 
         tasks = {
             task_id: NxTask(
@@ -67,7 +69,13 @@ class NxGraph:
             for target in targets
         ]
 
-        return cls(NxTaskGraph(tasks, edges))
+        targets = {
+            target
+            for node in content['graph']['nodes'].values()
+            for target in node['data'].get('targets', {})
+        }
+
+        return cls(NxTaskGraph(tasks, edges), targets)
 
 
 @dataclass
@@ -78,6 +86,7 @@ class Job:
     project_root: str
     needs: list[str]
     outputs: list[str] = field(default_factory=list)
+    order_needs: list[str] = field(default_factory=list)
 
 
 def _dependency_closure(deps: dict[str, list[str]], task_id: str) -> list[str]:
@@ -96,8 +105,18 @@ def _dependency_closure(deps: dict[str, list[str]], task_id: str) -> list[str]:
     return closure
 
 
-def build_job_list(nx_graph: NxGraph) -> list[Job]:
+def build_job_list(nx_graph: NxGraph, steps: list[str]) -> list[Job]:
     graph = nx_graph.task_graph
+
+    unknown = [step for step in steps if step not in nx_graph.targets]
+
+    if unknown:
+        raise ValueError(f'unknown steps: {unknown}')
+
+    duplicates = sorted({step for step in steps if steps.count(step) > 1})
+
+    if duplicates:
+        raise ValueError(f'duplicate steps: {duplicates}')
 
     tasks = {
         task_id: task
@@ -110,18 +129,44 @@ def build_job_list(nx_graph: NxGraph) -> list[Job]:
         for task_id in tasks
     }
 
+    task_ids = {(task.project, task.target): task_id for task_id, task in tasks.items()}
+    order = {}
+
+    for task_id, task in tasks.items():
+        if task.target not in steps:
+            continue
+
+        earlier = reversed(steps[:steps.index(task.target)])
+        previous = [task_ids[(task.project, step)] for step in earlier if (task.project, step) in task_ids]
+        order[task_id] = previous[:1]
+
     jobs = []
     done = set()
     pending = sorted(tasks)
 
     while pending:
-        ready = [task_id for task_id in pending if all(dep in done for dep in deps[task_id])]
+        ready = [
+            task_id
+            for task_id in pending
+            if all(dep in done for dep in deps[task_id] + order.get(task_id, []))
+        ]
+
         if not ready:
-            raise ValueError(f'cycle in nx task graph: {pending}')
+            raise ValueError(f'cycle in nx task graph or step order {steps}: {pending}')
+
         for task_id in ready:
             task = tasks[task_id]
-            jobs.append(Job(task_id, task.project, task.target, task.project_root, deps[task_id]))
+            jobs.append(Job(
+                task_id,
+                task.project,
+                task.target,
+                task.project_root,
+                deps[task_id],
+                order_needs=order.get(task_id, []),
+            ))
+
             done.add(task_id)
+
         pending = [task_id for task_id in pending if task_id not in done]
 
     by_name = {job.name: job for job in jobs}
@@ -149,14 +194,16 @@ def is_build_task(job: Job) -> bool:
     return job.target == 'build'
 
 
-def _needs(needs: list[str]) -> str:
-    if not needs:
+def _needs(needs: list[str], order_needs: list[str] | None = None) -> str:
+    order_needs = order_needs or []
+
+    if not needs and not order_needs:
         return '  needs: []\n'
 
     return '  needs:\n' + ''.join(
         f'    - job: {q(dep)}\n'
-        f'      artifacts: true\n'
-        for dep in needs
+        f'      artifacts: {"true" if artifacts else "false"}\n'
+        for dep, artifacts in [(dep, True) for dep in needs] + [(dep, False) for dep in order_needs]
     )
 
 
@@ -168,7 +215,7 @@ def build_generic_job(job: Job) -> str:
     return (
         f'{q(job.name)}:\n'
         f'  extends: ".nx-task"\n'
-        f'{_needs(job.needs)}'
+        f'{_needs(job.needs, job.order_needs)}'
         f'  script:\n'
         f'    - {q(f"npx nx run {job.name} --outputStyle=stream")}\n'
     )
@@ -206,7 +253,7 @@ def build_build_job(job: Job) -> str:
     kaniko_job = (
         f'{q(job.name)}:\n'
         f'  extends: ".kaniko-task"\n'
-        f'{_needs([_deps_job_name(job)] if job.needs else [])}'
+        f'{_needs([_deps_job_name(job)] if job.needs else [], job.order_needs)}'
         f'  script:\n'
         f'    - {q(executor)}\n'
     )
@@ -278,8 +325,8 @@ def build_pipeline(jobs: list[Job], runner_image: str) -> str:
     return header + '\n' + '\n'.join(blocks)
 
 
-def main(nx_graph: NxGraph, runner_image: str):
-    print(build_pipeline(build_job_list(nx_graph), runner_image), end='')
+def main(nx_graph: NxGraph, runner_image: str, steps: list[str]):
+    print(build_pipeline(build_job_list(nx_graph, steps), runner_image), end='')
 
 
 if __name__ == '__main__':
@@ -287,6 +334,12 @@ if __name__ == '__main__':
         description='Generate a GitLab child pipeline from an nx task graph read from stdin.',
     )
     parser.add_argument('runner_image', help='image the nx task jobs run in')
+    parser.add_argument(
+        '--steps',
+        default='',
+        help='comma separated targets that run one after another within each project',
+    )
     args = parser.parse_args()
 
-    main(NxGraph.from_json(sys.stdin.read()), args.runner_image)
+    steps = [step for step in args.steps.split(',') if step]
+    main(NxGraph.from_json(sys.stdin.read()), args.runner_image, steps)
