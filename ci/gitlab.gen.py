@@ -23,6 +23,7 @@ class NxTask:
     target: str
     project_root: str
     continuous: bool
+    outputs: list[str]
 
 
 @dataclass
@@ -55,9 +56,11 @@ class NxGraph:
                 target=task['target']['target'],
                 project_root=task['projectRoot'],
                 continuous=task.get('continuous', False),
+                outputs=task.get('outputs', []),
             )
             for task_id, task in data['tasks'].items()
         }
+
         edges = [
             NxTaskGraphEdge(source, target)
             for source, targets in data['dependencies'].items()
@@ -74,15 +77,34 @@ class Job:
     target: str
     project_root: str
     needs: list[str]
+    outputs: list[str] = field(default_factory=list)
+
+
+def _dependency_closure(deps: dict[str, list[str]], task_id: str) -> list[str]:
+    closure = []
+    stack = list(reversed(deps[task_id]))
+
+    while stack:
+        dep = stack.pop()
+
+        if dep in closure:
+            continue
+
+        closure.append(dep)
+        stack.extend(reversed(deps[dep]))
+
+    return closure
 
 
 def build_job_list(nx_graph: NxGraph) -> list[Job]:
     graph = nx_graph.task_graph
+
     tasks = {
         task_id: task
         for task_id, task in graph.tasks.items()
         if not task.continuous
     }
+
     deps = {
         task_id: sorted(dep for dep in graph.dependencies(task_id) if dep in tasks)
         for task_id in tasks
@@ -91,6 +113,7 @@ def build_job_list(nx_graph: NxGraph) -> list[Job]:
     jobs = []
     done = set()
     pending = sorted(tasks)
+
     while pending:
         ready = [task_id for task_id in pending if all(dep in done for dep in deps[task_id])]
         if not ready:
@@ -101,6 +124,24 @@ def build_job_list(nx_graph: NxGraph) -> list[Job]:
             done.add(task_id)
         pending = [task_id for task_id in pending if task_id not in done]
 
+    by_name = {job.name: job for job in jobs}
+
+    for job in jobs:
+        if not is_build_task(job):
+            continue
+
+        closure = _dependency_closure(deps, job.name)
+        nested = [dep for dep in closure if is_build_task(by_name[dep])]
+
+        if nested:
+            raise ValueError(f'build task {job.name} depends on build tasks {nested}')
+
+        job.outputs = list(dict.fromkeys(
+            output
+            for dep in closure
+            for output in tasks[dep].outputs
+        ))
+
     return jobs
 
 
@@ -108,23 +149,48 @@ def is_build_task(job: Job) -> bool:
     return job.target == 'build'
 
 
-def _needs(job: Job) -> str:
-    if not job.needs:
+def _needs(needs: list[str]) -> str:
+    if not needs:
         return '  needs: []\n'
+
     return '  needs:\n' + ''.join(
         f'    - job: {q(dep)}\n'
         f'      artifacts: true\n'
-        for dep in job.needs
+        for dep in needs
     )
+
+
+def _list(key: str, values: list[str]) -> str:
+    return f'    {key}:\n' + ''.join(f'      - {q(value)}\n' for value in values)
 
 
 def build_generic_job(job: Job) -> str:
     return (
         f'{q(job.name)}:\n'
         f'  extends: ".nx-task"\n'
-        f'{_needs(job)}'
+        f'{_needs(job.needs)}'
         f'  script:\n'
         f'    - {q(f"npx nx run {job.name} --outputStyle=stream")}\n'
+    )
+
+
+def _deps_job_name(job: Job) -> str:
+    return f'{job.name}:deps'
+
+
+def build_build_deps_job(job: Job) -> str:
+    paths = [CACHE_DIR + '/'] + [output for output in job.outputs if not output.startswith('!')]
+    exclude = [output[1:] for output in job.outputs if output.startswith('!')]
+    return (
+        f'{q(_deps_job_name(job))}:\n'
+        f'  extends: ".nx-task"\n'
+        f'{_needs(job.needs)}'
+        f'  script:\n'
+        + ''.join(f'    - {q(f"npx nx run {dep} --outputStyle=stream")}\n' for dep in job.needs)
+        + f'  artifacts:\n'
+        f'{_list("paths", paths)}'
+        + (_list('exclude', exclude) if exclude else '')
+        + f'    expire_in: "1 day"\n'
     )
 
 
@@ -136,13 +202,19 @@ def build_build_job(job: Job) -> str:
         f' --destination "$PROJECT_IMAGE_REMOTE/{job.project}:$CI_COMMIT_SHA"'
         ' --cleanup'
     )
-    return (
+
+    kaniko_job = (
         f'{q(job.name)}:\n'
         f'  extends: ".kaniko-task"\n'
-        f'{_needs(job)}'
+        f'{_needs([_deps_job_name(job)] if job.needs else [])}'
         f'  script:\n'
         f'    - {q(executor)}\n'
     )
+
+    if not job.needs:
+        return kaniko_job
+
+    return build_build_deps_job(job) + '\n' + kaniko_job
 
 
 def build_pipeline(jobs: list[Job], runner_image: str) -> str:
@@ -202,6 +274,7 @@ def build_pipeline(jobs: list[Job], runner_image: str) -> str:
         build_build_job(job) if is_build_task(job) else build_generic_job(job)
         for job in jobs
     ]
+
     return header + '\n' + '\n'.join(blocks)
 
 
