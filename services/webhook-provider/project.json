@@ -1,0 +1,21 @@
+{
+  "$schema": "../../node_modules/nx/schemas/project-schema.json",
+  "name": "webhook-provider",
+  "projectType": "application",
+  "sourceRoot": "services/webhook-provider",
+  "implicitDependencies": ["bnpb-aggregator-go"],
+  "targets": {
+    "compile": {
+      "dependsOn": ["^compile"],
+      "executor": "nx:run-commands",
+      "options": { "command": "go build ./...", "cwd": "{projectRoot}" },
+      "cache": true,
+      "inputs": ["{projectRoot}/**/*.go", "{projectRoot}/go.mod", "{projectRoot}/go.sum"]
+    },
+    "build": {
+      "executor": "nx:run-commands",
+      "options": { "command": "docker buildx build --push -f services/webhook-provider/Dockerfile -t \"$PROJECT_IMAGE_REMOTE/webhook-provider:$(git rev-parse HEAD)\" -t bnpb/webhook-provider .", "cwd": "{workspaceRoot}" },
+      "cache": false
+    }
+  }
+}

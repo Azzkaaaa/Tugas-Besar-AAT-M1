@@ -104,7 +104,7 @@ Image dibangun dari root repository di atas `envoyproxy/envoy:v1.38.6`, ditambah
 ## Nx
 
 ```bash
-npx nx run envoy:build                # docker build -f services/envoy/Dockerfile .
+npx nx run envoy:build                # docker buildx build --push -f services/envoy/Dockerfile .
 npx nx run envoy:render               # render template ke services/envoy/dist
 npx nx run envoy:validate             # envoy --mode validate dengan envoy.env.example
 ```

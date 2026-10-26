@@ -164,7 +164,9 @@ services:
 
   # Zitadel Actions v2 target: appends role/scopes claims to userinfo, introspection and JWT access tokens.
   zitadel-claims:
-    build: ./services/zitadel-claims
+    build:
+      context: .
+      dockerfile: services/zitadel-claims/Dockerfile
     environment:
       PORT: 3002
       ACTIONS_CONFIG_FILE: /actions/actions.json
@@ -182,7 +184,9 @@ services:
     networks: [bnpb_net]
 
   auth-bridge:
-    build: ./services/auth-bridge
+    build:
+      context: .
+      dockerfile: services/auth-bridge/Dockerfile
     environment:
       PORT: 3001
       APP_PUBLIC_URL: http://localhost:8080
@@ -210,7 +214,8 @@ services:
 
   spa-server:
     build:
-      context: ./services/frontend
+      context: .
+      dockerfile: services/frontend/Dockerfile
       args:
         VITE_APP_MODE: oidc
         VITE_DATA_MODE: "${FRONTEND_DATA_MODE:-mock}"
@@ -249,7 +254,9 @@ services:
   # Envoy ext_authz target: exchanges the opaque access token for a JWT (RFC 8693) with the
   # gateway client from oidc.json, in a traced call to Zitadel.
   token-exchange:
-    build: ./services/token-exchange
+    build:
+      context: .
+      dockerfile: services/token-exchange/Dockerfile
     environment:
       TOKEN_EXCHANGE_GRPC_PORT: "9000"
       # Split-horizon DNS: auth.localhost is Zitadel itself inside bnpb_net.

@@ -1,0 +1,6 @@
+*
+!services/zitadel-claims/**
+services/zitadel-claims/target
+services/zitadel-claims/.gitignore
+services/zitadel-claims/README.md
+services/zitadel-claims/project.json

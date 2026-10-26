@@ -8,7 +8,7 @@
       "executor": "nx:run-commands",
       "options": { "command": "npm run dev", "cwd": "services/frontend" }
     },
-    "build": {
+    "compile": {
       "executor": "nx:run-commands",
       "options": { "command": "npm run build", "cwd": "services/frontend" },
       "cache": true,
@@ -31,6 +31,11 @@
     "test-e2e": {
       "executor": "nx:run-commands",
       "options": { "command": "npm run test:e2e", "cwd": "services/frontend" }
+    },
+    "build": {
+      "executor": "nx:run-commands",
+      "options": { "command": "docker buildx build --push -f services/frontend/Dockerfile -t \"$PROJECT_IMAGE_REMOTE/frontend:$(git rev-parse HEAD)\" -t bnpb/frontend .", "cwd": "{workspaceRoot}" },
+      "cache": false
     }
   }
 }

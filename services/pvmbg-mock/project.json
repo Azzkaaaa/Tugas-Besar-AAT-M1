@@ -4,13 +4,18 @@
   "projectType": "application",
   "sourceRoot": "services/pvmbg-mock",
   "targets": {
-    "build": {
-      "dependsOn": ["^build"],
+    "compile": {
+      "dependsOn": ["^compile"],
       "cache": true,
       "inputs": [
         "{workspaceRoot}/contracts/openapi/pvmbg.yaml",
         "{projectRoot}/**/*.py"
       ]
+    },
+    "build": {
+      "executor": "nx:run-commands",
+      "options": { "command": "docker buildx build --push -f services/pvmbg-mock/Dockerfile -t \"$PROJECT_IMAGE_REMOTE/pvmbg-mock:$(git rev-parse HEAD)\" -t bnpb/pvmbg-mock .", "cwd": "{workspaceRoot}" },
+      "cache": false
     }
   }
 }

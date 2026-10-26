@@ -147,7 +147,8 @@ services:
 
   spa-server:
     build:
-      context: ./services/frontend
+      context: .
+      dockerfile: services/frontend/Dockerfile
       args:
         VITE_APP_MODE: oidc
         VITE_DATA_MODE: gateway

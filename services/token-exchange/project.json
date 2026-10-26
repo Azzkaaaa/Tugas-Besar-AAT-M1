@@ -4,7 +4,7 @@
   "projectType": "application",
   "sourceRoot": "services/token-exchange/src",
   "targets": {
-    "build": {
+    "compile": {
       "executor": "nx:run-commands",
       "options": { "command": "cargo build --release --locked", "cwd": "services/token-exchange" },
       "cache": true,
@@ -27,9 +27,9 @@
       "cache": true,
       "inputs": ["{projectRoot}/src/**/*", "{projectRoot}/Cargo.toml", "{projectRoot}/Cargo.lock", "{projectRoot}/rustfmt.toml"]
     },
-    "docker": {
+    "build": {
       "executor": "nx:run-commands",
-      "options": { "command": "docker build -t bnpb/token-exchange services/token-exchange", "cwd": "{workspaceRoot}" },
+      "options": { "command": "docker buildx build --push -f services/token-exchange/Dockerfile -t \"$PROJECT_IMAGE_REMOTE/token-exchange:$(git rev-parse HEAD)\" -t bnpb/token-exchange .", "cwd": "{workspaceRoot}" },
       "cache": false
     }
   }

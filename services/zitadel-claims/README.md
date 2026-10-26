@@ -51,5 +51,5 @@ Log JSON request tetap ditulis ke stdout; telemetri hanya menambah span.
 ```powershell
 npx nx run zitadel-claims:test
 npx nx run zitadel-claims:lint
-npx nx run zitadel-claims:docker
+npx nx run zitadel-claims:build
 ```

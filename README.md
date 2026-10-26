@@ -155,9 +155,9 @@ reset Auth gunakan `down -v`. Provisioning ulang Zitadel:
 
 ```bash
 npm ci                                         # Nx, buf, openapi-generator
-npx nx run-many -t build                       # semua project Nx (generate stub lalu build)
-npx nx run api-gateway:build                   # atau per project
-(cd services/aggregator && go build ./...)     # aggregator dan webhook-provider bukan project Nx
+npx nx run-many -t compile                     # semua project Nx (generate stub lalu compile)
+npx nx run api-gateway:compile                 # atau per project
+npx nx run api-gateway:build                   # image Docker, push ke $PROJECT_IMAGE_REMOTE/<project>:<commit>
 ```
 
 Generasi kode kontrak: `npx nx run bnpb-aggregator-go:check-proto` (stub gRPC

@@ -4,7 +4,7 @@
   "projectType": "application",
   "sourceRoot": "services/zitadel-claims/src",
   "targets": {
-    "build": {
+    "compile": {
       "executor": "nx:run-commands",
       "options": { "command": "cargo build --release --locked", "cwd": "services/zitadel-claims" },
       "cache": true,
@@ -27,9 +27,9 @@
       "cache": true,
       "inputs": ["{projectRoot}/src/**/*", "{projectRoot}/Cargo.toml", "{projectRoot}/Cargo.lock", "{projectRoot}/rustfmt.toml"]
     },
-    "docker": {
+    "build": {
       "executor": "nx:run-commands",
-      "options": { "command": "docker build -t bnpb/zitadel-claims services/zitadel-claims", "cwd": "{workspaceRoot}" },
+      "options": { "command": "docker buildx build --push -f services/zitadel-claims/Dockerfile -t \"$PROJECT_IMAGE_REMOTE/zitadel-claims:$(git rev-parse HEAD)\" -t bnpb/zitadel-claims .", "cwd": "{workspaceRoot}" },
       "cache": false
     }
   }

@@ -1,0 +1,7 @@
+*
+!services/auth-bridge/**
+services/auth-bridge/node_modules
+services/auth-bridge/.env*
+services/auth-bridge/data
+services/auth-bridge/coverage
+services/auth-bridge/*.log

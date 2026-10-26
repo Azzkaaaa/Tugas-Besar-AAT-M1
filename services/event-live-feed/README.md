@@ -105,7 +105,7 @@ Nilai berisi `REPLACE_` ditolak saat start. Di Compose service bernama `feed-ser
 npx nx run-many -t generate-proto -p bnpb-common-rust,bnpb-event-rust,bnpb-feed-rust
 npx nx run event-live-feed:test
 npx nx run event-live-feed:lint     # cargo fmt --check + clippy -D warnings
-npx nx run event-live-feed:docker   # docker build -f services/event-live-feed/Dockerfile .
+npx nx run event-live-feed:build    # docker buildx build --push -f services/event-live-feed/Dockerfile .
 ```
 
 Dockerfile dibangun dari root repository dan menjalankan `buf generate` sendiri.

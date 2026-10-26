@@ -1,0 +1,11 @@
+*
+!services/frontend/**
+services/frontend/node_modules
+services/frontend/dist
+services/frontend/.env
+services/frontend/.env.*
+!services/frontend/.env.example
+services/frontend/coverage
+services/frontend/playwright-report
+services/frontend/test-results
+services/frontend/*.log
