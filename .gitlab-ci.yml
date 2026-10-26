@@ -92,20 +92,40 @@ rebuild-runner-image:
     - '[ -n "$NX_STEPS" ] || { echo "NX_STEPS must list at least one target" >&2; exit 1; }'
     - npm ci
     - |
+      if [ "$NX_RUN_MANY" != "true" ]; then
+        git fetch --quiet origin "$CI_DEFAULT_BRANCH"
+        base=""
+        if [ -n "$CI_MERGE_REQUEST_DIFF_BASE_SHA" ]; then
+          base="$CI_MERGE_REQUEST_DIFF_BASE_SHA"
+        elif [ -n "$CI_COMMIT_BRANCH" ] && [ -n "$NX_BASE_TOKEN" ]; then
+          last=$(curl -sSf --get -H "PRIVATE-TOKEN: $NX_BASE_TOKEN" \
+            --data-urlencode "ref=$CI_COMMIT_BRANCH" -d status=success -d source=push -d per_page=1 \
+            "$CI_API_V4_URL/projects/$CI_PROJECT_ID/pipelines" \
+            | python3 -c 'import json, sys; print(next(iter(json.load(sys.stdin)), {}).get("sha", ""))' 2>/dev/null) || last=""
+          if [ -n "$last" ] && git merge-base --is-ancestor "$last" HEAD 2>/dev/null; then
+            base="$last"
+          else
+            echo "no usable last successful pipeline on $CI_COMMIT_BRANCH"
+          fi
+        elif [ -n "$CI_COMMIT_BRANCH" ] && git cat-file -e "$CI_COMMIT_BEFORE_SHA^{commit}" 2>/dev/null; then
+          echo "NX_BASE_TOKEN not set, falling back to the previous push"
+          base="$CI_COMMIT_BEFORE_SHA"
+        fi
+        if [ -z "$base" ] && [ "$CI_COMMIT_BRANCH" != "$CI_DEFAULT_BRANCH" ]; then
+          base=$(git merge-base "origin/$CI_DEFAULT_BRANCH" HEAD)
+        fi
+        if [ -z "$base" ]; then
+          echo "no affected base, running every project"
+          NX_RUN_MANY=true
+        fi
+      fi
+    - |
       if [ "$NX_RUN_MANY" = "true" ]; then
         echo "$NX_PROJECTS" | tr ',' '\n' | while read -r pattern; do
           [ -z "$pattern" ] || npx nx show projects -p "$pattern" | grep -q '"' || { echo "NX_PROJECTS entry matches no project: $pattern" >&2; exit 1; }
         done
         npx nx run-many -t "$NX_STEPS" ${NX_PROJECTS:+-p "$NX_PROJECTS"} --graph=stdout > nx-graph.json
       else
-        git fetch --quiet origin "$CI_DEFAULT_BRANCH"
-        if [ -n "$CI_MERGE_REQUEST_DIFF_BASE_SHA" ]; then
-          base="$CI_MERGE_REQUEST_DIFF_BASE_SHA"
-        elif [ "$CI_COMMIT_BRANCH" = "$CI_DEFAULT_BRANCH" ] && git cat-file -e "$CI_COMMIT_BEFORE_SHA^{commit}" 2>/dev/null; then
-          base="$CI_COMMIT_BEFORE_SHA"
-        else
-          base=$(git merge-base "origin/$CI_DEFAULT_BRANCH" HEAD)
-        fi
         echo "nx affected base: $base"
         npx nx affected -t "$NX_STEPS" --base="$base" --head="$CI_COMMIT_SHA" --graph=stdout > nx-graph.json
       fi
