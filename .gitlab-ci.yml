@@ -74,9 +74,38 @@ prepare-runner-image:
     reports:
       dotenv: bootstrap.env
 
-ci:
+generate-pipeline:
   stage: ci
   needs: ["prepare-runner-image"]
   image: $RUNNER_IMAGE
+  variables:
+    GIT_DEPTH: 0
+    NX_DAEMON: "false"
   script:
-    - echo "running ci pipeline for each project"
+    - git fetch --quiet origin "$CI_DEFAULT_BRANCH"
+    - |
+      if [ -n "$CI_MERGE_REQUEST_DIFF_BASE_SHA" ]; then
+        base="$CI_MERGE_REQUEST_DIFF_BASE_SHA"
+      elif [ "$CI_COMMIT_BRANCH" = "$CI_DEFAULT_BRANCH" ] && git cat-file -e "$CI_COMMIT_BEFORE_SHA^{commit}" 2>/dev/null; then
+        base="$CI_COMMIT_BEFORE_SHA"
+      else
+        base=$(git merge-base "origin/$CI_DEFAULT_BRANCH" HEAD)
+      fi
+      echo "nx affected base: $base"
+    - npm ci
+    - npx nx affected -t lint compile test build --base="$base" --head="$CI_COMMIT_SHA" --graph=stdout > nx-graph.json
+    - python3 ci/gitlab.gen.py "$RUNNER_IMAGE" < nx-graph.json > child-pipeline.yml
+  artifacts:
+    paths:
+      - child-pipeline.yml
+      - nx-graph.json
+    expire_in: 1 day
+
+nx-pipeline:
+  stage: ci
+  needs: ["generate-pipeline"]
+  trigger:
+    include:
+      - artifact: child-pipeline.yml
+        job: generate-pipeline
+    strategy: depend
