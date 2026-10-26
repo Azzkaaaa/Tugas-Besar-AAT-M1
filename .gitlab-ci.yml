@@ -55,7 +55,7 @@ prepare-runner-image:
   script:
     - echo "$DOCKER_AUTH_CONFIG" > /kaniko/.docker/config.json
     - |
-      if [ -n "$RUNNER_IMAGE" ]; then
+      if [ -n "$RUNNER_IMAGE" ] && [ "$RUNNER_IMAGE_REBUILD" != "true" ]; then
         echo "RUNNER_IMAGE=$RUNNER_IMAGE" > "$CI_PROJECT_DIR/bootstrap.env"
         exit 0
       fi
@@ -74,7 +74,13 @@ prepare-runner-image:
     reports:
       dotenv: bootstrap.env
 
-generate-pipeline:
+rebuild-runner-image:
+  extends: prepare-runner-image
+  when: manual
+  variables:
+    RUNNER_IMAGE_REBUILD: "true"
+
+.generate-pipeline:
   stage: ci
   needs: ["prepare-runner-image"]
   image: $RUNNER_IMAGE
@@ -82,24 +88,40 @@ generate-pipeline:
     GIT_DEPTH: 0
     NX_DAEMON: "false"
   script:
-    - git fetch --quiet origin "$CI_DEFAULT_BRANCH"
-    - |
-      if [ -n "$CI_MERGE_REQUEST_DIFF_BASE_SHA" ]; then
-        base="$CI_MERGE_REQUEST_DIFF_BASE_SHA"
-      elif [ "$CI_COMMIT_BRANCH" = "$CI_DEFAULT_BRANCH" ] && git cat-file -e "$CI_COMMIT_BEFORE_SHA^{commit}" 2>/dev/null; then
-        base="$CI_COMMIT_BEFORE_SHA"
-      else
-        base=$(git merge-base "origin/$CI_DEFAULT_BRANCH" HEAD)
-      fi
-      echo "nx affected base: $base"
     - npm ci
-    - npx nx affected -t lint compile test build --base="$base" --head="$CI_COMMIT_SHA" --graph=stdout > nx-graph.json
+    - |
+      if [ "$NX_RUN_MANY" = "true" ]; then
+        echo "$NX_PROJECTS" | tr ',' '\n' | while read -r pattern; do
+          [ -z "$pattern" ] || npx nx show projects -p "$pattern" | grep -q '"' || { echo "NX_PROJECTS entry matches no project: $pattern" >&2; exit 1; }
+        done
+        npx nx run-many -t lint compile test build ${NX_PROJECTS:+-p "$NX_PROJECTS"} --graph=stdout > nx-graph.json
+      else
+        git fetch --quiet origin "$CI_DEFAULT_BRANCH"
+        if [ -n "$CI_MERGE_REQUEST_DIFF_BASE_SHA" ]; then
+          base="$CI_MERGE_REQUEST_DIFF_BASE_SHA"
+        elif [ "$CI_COMMIT_BRANCH" = "$CI_DEFAULT_BRANCH" ] && git cat-file -e "$CI_COMMIT_BEFORE_SHA^{commit}" 2>/dev/null; then
+          base="$CI_COMMIT_BEFORE_SHA"
+        else
+          base=$(git merge-base "origin/$CI_DEFAULT_BRANCH" HEAD)
+        fi
+        echo "nx affected base: $base"
+        npx nx affected -t lint compile test build --base="$base" --head="$CI_COMMIT_SHA" --graph=stdout > nx-graph.json
+      fi
     - python3 ci/gitlab.gen.py "$RUNNER_IMAGE" < nx-graph.json > child-pipeline.yml
   artifacts:
     paths:
       - child-pipeline.yml
       - nx-graph.json
     expire_in: 1 day
+
+generate-pipeline:
+  extends: .generate-pipeline
+
+generate-pipeline-manual:
+  extends: .generate-pipeline
+  when: manual
+  variables:
+    NX_RUN_MANY: "true"
 
 nx-pipeline:
   stage: ci
@@ -108,4 +130,14 @@ nx-pipeline:
     include:
       - artifact: child-pipeline.yml
         job: generate-pipeline
+    strategy: depend
+
+nx-pipeline-manual:
+  stage: ci
+  needs: ["generate-pipeline-manual"]
+  when: manual
+  trigger:
+    include:
+      - artifact: child-pipeline.yml
+        job: generate-pipeline-all
     strategy: depend
