@@ -4,6 +4,8 @@
   "projectType": "application",
   "sourceRoot": "services/danger-notification",
   "implicitDependencies": [
+    "bnpb-aggregator-dotnet",
+    "bnpb-event-dotnet",
     "bnpb-notification-dotnet"
   ],
   "targets": {
@@ -21,7 +23,8 @@
         "{projectRoot}/**/*",
         "!{projectRoot}/.gitignore",
         "!{projectRoot}/Dockerfile",
-        "!{projectRoot}/README.md"
+        "!{projectRoot}/README.md",
+        "^default"
       ],
       "outputs": [
         "{projectRoot}/**/bin/**/*",

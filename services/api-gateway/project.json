@@ -10,7 +10,7 @@
       "executor": "nx:run-commands",
       "options": { "command": "go build -o bin/api-gateway ./cmd", "cwd": "{projectRoot}" },
       "cache": true,
-      "inputs": ["{projectRoot}/**/*.go", "{projectRoot}/go.mod", "{projectRoot}/go.sum"],
+      "inputs": ["{projectRoot}/**/*.go", "{projectRoot}/go.mod", "{projectRoot}/go.sum", "^default"],
       "outputs": ["{projectRoot}/bin/api-gateway"]
     },
     "test": {
@@ -18,7 +18,7 @@
       "executor": "nx:run-commands",
       "options": { "command": "go test ./...", "cwd": "{projectRoot}" },
       "cache": true,
-      "inputs": ["{projectRoot}/**/*.go", "{projectRoot}/go.mod", "{projectRoot}/go.sum", "{workspaceRoot}/contracts/openapi/gateway.yaml"]
+      "inputs": ["{projectRoot}/**/*.go", "{projectRoot}/go.mod", "{projectRoot}/go.sum", "{workspaceRoot}/contracts/openapi/gateway.yaml", "^default"]
     },
     "lint": {
       "dependsOn": ["^compile"],
@@ -29,7 +29,7 @@
         "cwd": "{projectRoot}"
       },
       "cache": true,
-      "inputs": ["{projectRoot}/**/*.go", "{projectRoot}/go.mod", "{projectRoot}/go.sum"]
+      "inputs": ["{projectRoot}/**/*.go", "{projectRoot}/go.mod", "{projectRoot}/go.sum", "^default"]
     },
     "build": {
       "executor": "nx:run-commands",

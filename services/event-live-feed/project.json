@@ -10,7 +10,7 @@
       "executor": "nx:run-commands",
       "options": { "command": "cargo build --release --locked", "cwd": "services/event-live-feed" },
       "cache": true,
-      "inputs": ["{projectRoot}/src/**/*", "{projectRoot}/Cargo.toml", "{projectRoot}/Cargo.lock"],
+      "inputs": ["{projectRoot}/src/**/*", "{projectRoot}/Cargo.toml", "{projectRoot}/Cargo.lock", "^default"],
       "outputs": ["{projectRoot}/target/release/event-live-feed"]
     },
     "test": {
@@ -18,7 +18,7 @@
       "executor": "nx:run-commands",
       "options": { "command": "cargo test --locked", "cwd": "services/event-live-feed" },
       "cache": true,
-      "inputs": ["{projectRoot}/src/**/*", "{projectRoot}/Cargo.toml", "{projectRoot}/Cargo.lock"]
+      "inputs": ["{projectRoot}/src/**/*", "{projectRoot}/Cargo.toml", "{projectRoot}/Cargo.lock", "^default"]
     },
     "lint": {
       "dependsOn": ["^compile"],
@@ -29,7 +29,7 @@
         "cwd": "services/event-live-feed"
       },
       "cache": true,
-      "inputs": ["{projectRoot}/src/**/*", "{projectRoot}/Cargo.toml", "{projectRoot}/Cargo.lock", "{projectRoot}/rustfmt.toml"]
+      "inputs": ["{projectRoot}/src/**/*", "{projectRoot}/Cargo.toml", "{projectRoot}/Cargo.lock", "{projectRoot}/rustfmt.toml", "^default"]
     },
     "build": {
       "executor": "nx:run-commands",
