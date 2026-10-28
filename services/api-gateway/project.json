@@ -5,23 +5,23 @@
   "sourceRoot": "services/api-gateway",
   "implicitDependencies": ["bnpb-gateway-go", "bnpb-aggregator-go"],
   "targets": {
-    "build": {
-      "dependsOn": ["^build"],
+    "compile": {
+      "dependsOn": ["^compile"],
       "executor": "nx:run-commands",
       "options": { "command": "go build -o bin/api-gateway ./cmd", "cwd": "{projectRoot}" },
       "cache": true,
-      "inputs": ["{projectRoot}/**/*.go", "{projectRoot}/go.mod", "{projectRoot}/go.sum"],
+      "inputs": ["{projectRoot}/**/*.go", "{projectRoot}/go.mod", "{projectRoot}/go.sum", "^default"],
       "outputs": ["{projectRoot}/bin/api-gateway"]
     },
     "test": {
-      "dependsOn": ["^build"],
+      "dependsOn": ["^compile"],
       "executor": "nx:run-commands",
       "options": { "command": "go test ./...", "cwd": "{projectRoot}" },
       "cache": true,
-      "inputs": ["{projectRoot}/**/*.go", "{projectRoot}/go.mod", "{projectRoot}/go.sum", "{workspaceRoot}/contracts/openapi/gateway.yaml"]
+      "inputs": ["{projectRoot}/**/*.go", "{projectRoot}/go.mod", "{projectRoot}/go.sum", "{workspaceRoot}/contracts/openapi/gateway.yaml", "^default"]
     },
     "lint": {
-      "dependsOn": ["^build"],
+      "dependsOn": ["^compile"],
       "executor": "nx:run-commands",
       "options": {
         "commands": ["test -z \"$(gofmt -l .)\" || (gofmt -l . && exit 1)", "go vet ./..."],
@@ -29,11 +29,11 @@
         "cwd": "{projectRoot}"
       },
       "cache": true,
-      "inputs": ["{projectRoot}/**/*.go", "{projectRoot}/go.mod", "{projectRoot}/go.sum"]
+      "inputs": ["{projectRoot}/**/*.go", "{projectRoot}/go.mod", "{projectRoot}/go.sum", "^default"]
     },
-    "docker": {
+    "build": {
       "executor": "nx:run-commands",
-      "options": { "command": "docker build -f services/api-gateway/Dockerfile -t bnpb/api-gateway .", "cwd": "{workspaceRoot}" },
+      "options": { "command": "docker buildx build --push -f services/api-gateway/Dockerfile -t \"$PROJECT_IMAGE_REMOTE/api-gateway:$(git rev-parse HEAD)\" -t bnpb/api-gateway .", "cwd": "{workspaceRoot}" },
       "cache": false
     }
   }

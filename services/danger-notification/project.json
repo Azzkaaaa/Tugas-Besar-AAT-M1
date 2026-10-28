@@ -4,12 +4,14 @@
   "projectType": "application",
   "sourceRoot": "services/danger-notification",
   "implicitDependencies": [
+    "bnpb-aggregator-dotnet",
+    "bnpb-event-dotnet",
     "bnpb-notification-dotnet"
   ],
   "targets": {
-    "build": {
+    "compile": {
       "dependsOn": [
-        "^build"
+        "^compile"
       ],
       "executor": "nx:run-commands",
       "options": {
@@ -21,7 +23,8 @@
         "{projectRoot}/**/*",
         "!{projectRoot}/.gitignore",
         "!{projectRoot}/Dockerfile",
-        "!{projectRoot}/README.md"
+        "!{projectRoot}/README.md",
+        "^default"
       ],
       "outputs": [
         "{projectRoot}/**/bin/**/*",
@@ -30,12 +33,23 @@
     },
     "test": {
       "dependsOn": [
-        "build"
+        "compile"
       ],
       "executor": "nx:run-commands",
       "options": {
         "command": "dotnet test",
         "cwd": "{projectRoot}"
+      },
+      "cache": false
+    },
+    "build": {
+      "dependsOn": [
+        "^compile"
+      ],
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "docker buildx build --push -f services/danger-notification/Dockerfile -t \"$PROJECT_IMAGE_REMOTE/danger-notification:$(git rev-parse HEAD)\" -t bnpb/danger-notification .",
+        "cwd": "{workspaceRoot}"
       },
       "cache": false
     }

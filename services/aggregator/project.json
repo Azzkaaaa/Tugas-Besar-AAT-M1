@@ -1,0 +1,21 @@
+{
+  "$schema": "../../node_modules/nx/schemas/project-schema.json",
+  "name": "aggregator",
+  "projectType": "application",
+  "sourceRoot": "services/aggregator",
+  "implicitDependencies": ["bnpb-aggregator-go"],
+  "targets": {
+    "compile": {
+      "dependsOn": ["^compile"],
+      "executor": "nx:run-commands",
+      "options": { "command": "go build ./...", "cwd": "{projectRoot}" },
+      "cache": true,
+      "inputs": ["{projectRoot}/**/*.go", "{projectRoot}/go.mod", "{projectRoot}/go.sum", "^default"]
+    },
+    "build": {
+      "executor": "nx:run-commands",
+      "options": { "command": "docker buildx build --push -f services/aggregator/Dockerfile -t \"$PROJECT_IMAGE_REMOTE/aggregator:$(git rev-parse HEAD)\" -t bnpb/aggregator .", "cwd": "{workspaceRoot}" },
+      "cache": false
+    }
+  }
+}

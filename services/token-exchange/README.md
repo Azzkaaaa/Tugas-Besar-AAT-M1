@@ -51,5 +51,5 @@ Envoy (`http.gateway.ext_authz.ok`, `.denied`, `.error`).
 ```bash
 npx nx run token-exchange:test
 npx nx run token-exchange:lint
-npx nx run token-exchange:docker
+npx nx run token-exchange:build
 ```

@@ -28,7 +28,7 @@
       },
       "cache": false
     },
-    "build": {
+    "compile": {
       "executor": "nx:run-commands",
       "options": { "command": "go build ./...", "cwd": "{projectRoot}" }
     }

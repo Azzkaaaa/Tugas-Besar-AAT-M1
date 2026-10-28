@@ -27,7 +27,7 @@
     },
     "build": {
       "executor": "nx:run-commands",
-      "options": { "command": "docker build -t bnpb/auth-bridge services/auth-bridge", "cwd": "{workspaceRoot}" },
+      "options": { "command": "docker buildx build --push -f services/auth-bridge/Dockerfile -t \"$PROJECT_IMAGE_REMOTE/auth-bridge:$(git rev-parse HEAD)\" -t bnpb/auth-bridge .", "cwd": "{workspaceRoot}" },
       "cache": false
     }
   }

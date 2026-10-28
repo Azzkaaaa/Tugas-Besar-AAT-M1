@@ -32,7 +32,7 @@
     "clean": {
       "dependsOn": ["clean-proto"]
     },
-    "build": {
+    "compile": {
       "dependsOn": ["generate-proto"]
     }
   }

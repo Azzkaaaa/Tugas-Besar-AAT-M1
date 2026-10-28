@@ -7,7 +7,7 @@
     "build": {
       "executor": "nx:run-commands",
       "options": {
-        "command": "docker build -f services/envoy/Dockerfile -t bnpb/envoy .",
+        "command": "docker buildx build --push -f services/envoy/Dockerfile -t \"$PROJECT_IMAGE_REMOTE/envoy:$(git rev-parse HEAD)\" -t bnpb/envoy .",
         "cwd": "{workspaceRoot}"
       },
       "cache": false

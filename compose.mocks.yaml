@@ -2,7 +2,8 @@
 services:
   bmkg-mock:
     build:
-      context: ./services/bmkg-mock
+      context: .
+      dockerfile: services/bmkg-mock/Dockerfile
     environment:
       BMKG_API_KEY: ${BMKG_API_KEY:?Run python tools/setup_mock_env.py first}
       BMKG_HTTP_PORT: "8080"
@@ -24,7 +25,8 @@ services:
 
   pvmbg-mock:
     build:
-      context: ./services/pvmbg-mock
+      context: .
+      dockerfile: services/pvmbg-mock/Dockerfile
     environment:
       PVMBG_BEARER_TOKEN: ${PVMBG_BEARER_TOKEN:?Run python tools/setup_mock_env.py first}
       PVMBG_HTTP_PORT: "8080"

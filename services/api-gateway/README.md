@@ -62,7 +62,7 @@ miliknya. `GET /healthz` dan `/api-gateway --healthcheck` dipakai healthcheck co
 npx nx run bnpb-gateway-go:generate-openapi   # gatewayapi/gateway.gen.go (tidak di-commit)
 npx nx run api-gateway:test                   # suite kontrak (lihat di bawah)
 npx nx run api-gateway:lint                   # gofmt + go vet
-npx nx run api-gateway:docker                 # docker build -f services/api-gateway/Dockerfile .
+npx nx run api-gateway:build                  # docker buildx build --push -f services/api-gateway/Dockerfile .
 ```
 
 Versi oapi-codegen dikunci sebagai Go `tool` di `packages/bnpb-gateway-go/go.mod`;

@@ -1,0 +1,4 @@
+*
+!packages/bnpb-aggregator-go/**
+!services/webhook-provider/**
+**/.env

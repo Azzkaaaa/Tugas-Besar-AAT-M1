@@ -1,9 +1,11 @@
+# Build context: repository root.
+#   docker build -f services/token-exchange/Dockerfile .
 FROM rust:1.96-alpine AS build
 WORKDIR /src
 # Cache dependencies separately from the service sources.
-COPY Cargo.toml Cargo.lock ./
+COPY services/token-exchange/Cargo.toml services/token-exchange/Cargo.lock ./
 RUN mkdir src && echo 'fn main() {}' > src/main.rs && cargo build --release --locked && rm -rf src
-COPY src ./src
+COPY services/token-exchange/src ./src
 RUN touch src/main.rs && cargo build --release --locked
 
 FROM gcr.io/distroless/static-debian12:nonroot

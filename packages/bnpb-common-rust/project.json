@@ -34,7 +34,7 @@
         "clean-proto"
       ]
     },
-    "build": {
+    "compile": {
       "dependsOn": [
         "generate-proto"
       ]

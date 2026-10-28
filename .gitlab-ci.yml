@@ -1,0 +1,173 @@
+workflow:
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+
+stages:
+  - bootstrap
+  - ci
+
+default:
+  tags:
+    - gitlab--duo
+
+find-runner-tag:
+  stage: bootstrap
+  image:
+    name: docker.io/alpine/git:2.54.0@sha256:4fac439ee3b9204bec99c712b8a15942999632458f716ae8149fbb97cb760cd4
+    entrypoint: [""]
+  variables:
+    GIT_DEPTH: 1
+  script:
+    - git config --global --add safe.directory "$CI_PROJECT_DIR"
+    - echo "RUNNER_IMAGE_TAG=$(git rev-parse HEAD:ci/runner)" >> bootstrap.env
+  artifacts:
+    reports:
+      dotenv: bootstrap.env
+
+find-runner-image:
+  stage: bootstrap
+  needs: ["find-runner-tag"]
+  image:
+    name: gcr.io/go-containerregistry/crane/debug:v0.22.1@sha256:e78770b31258a3846f878036d9c1f63fbe4c871f9f56990bf77fd95c013e3c1b
+    entrypoint: [""]
+  script:
+    - mkdir -p ~/.docker && echo "$DOCKER_AUTH_CONFIG" > ~/.docker/config.json
+    - |
+      touch bootstrap.env
+      ref="$RUNNER_IMAGE_REMOTE/$RUNNER_IMAGE_NAME:$RUNNER_IMAGE_TAG"
+      if digest=$(crane digest "$ref" 2>err); then
+        echo "RUNNER_IMAGE_DIGEST=$digest" >> bootstrap.env
+        echo "RUNNER_IMAGE=$ref@$digest" >> bootstrap.env
+      elif grep -qiE 'MANIFEST_UNKNOWN|NAME_UNKNOWN|404' err; then
+        echo "image not found, will build"
+      else
+        cat err
+        exit 1
+      fi
+  artifacts:
+    reports:
+      dotenv: bootstrap.env
+
+prepare-runner-image:
+  stage: bootstrap
+  needs:
+    - find-runner-tag
+    - find-runner-image
+  image:
+    name: ghcr.io/osscontainertools/kaniko:v1.28.6-debug@sha256:7ab44d0131c3051b6dea128067e258c7afb5c4815082a93b9cf6c624f2140bf0
+    entrypoint: [""]
+  script:
+    - echo "$DOCKER_AUTH_CONFIG" > /kaniko/.docker/config.json
+    - |
+      if [ -n "$RUNNER_IMAGE" ] && [ "$RUNNER_IMAGE_REBUILD" != "true" ]; then
+        echo "RUNNER_IMAGE=$RUNNER_IMAGE" > "$CI_PROJECT_DIR/bootstrap.env"
+        exit 0
+      fi
+
+      ref="$RUNNER_IMAGE_REMOTE/$RUNNER_IMAGE_NAME:$RUNNER_IMAGE_TAG"
+      /kaniko/executor \
+        --context "$CI_PROJECT_DIR/ci/runner" \
+        --dockerfile "$CI_PROJECT_DIR/ci/runner/Dockerfile" \
+        --destination "$ref" \
+        --digest-file "$CI_PROJECT_DIR/digest" \
+        --cleanup
+
+      read -r digest < "$CI_PROJECT_DIR/digest" || [ -n "$digest" ]
+      echo "RUNNER_IMAGE=$ref@$digest" > "$CI_PROJECT_DIR/bootstrap.env"
+  artifacts:
+    reports:
+      dotenv: bootstrap.env
+
+rebuild-runner-image:
+  extends: prepare-runner-image
+  when: manual
+  variables:
+    RUNNER_IMAGE_REBUILD: "true"
+
+.generate-pipeline:
+  stage: ci
+  needs: ["prepare-runner-image"]
+  image: $RUNNER_IMAGE
+  variables:
+    GIT_DEPTH: 0
+    NX_DAEMON: "false"
+    NX_STEPS: "lint,test,build"
+  script:
+    - '[ -n "$NX_STEPS" ] || { echo "NX_STEPS must list at least one target" >&2; exit 1; }'
+    - npm ci
+    - |
+      if [ "$NX_RUN_MANY" != "true" ]; then
+        git fetch --quiet origin "$CI_DEFAULT_BRANCH"
+        base=""
+        if [ -n "$CI_MERGE_REQUEST_DIFF_BASE_SHA" ]; then
+          base="$CI_MERGE_REQUEST_DIFF_BASE_SHA"
+        elif [ -n "$CI_COMMIT_BRANCH" ] && [ -n "$NX_BASE_TOKEN" ]; then
+          last=$(curl -sSf --get -H "PRIVATE-TOKEN: $NX_BASE_TOKEN" \
+            --data-urlencode "ref=$CI_COMMIT_BRANCH" -d status=success -d source=push -d per_page=1 \
+            "$CI_API_V4_URL/projects/$CI_PROJECT_ID/pipelines" \
+            | python3 -c 'import json, sys; print(next(iter(json.load(sys.stdin)), {}).get("sha", ""))' 2>/dev/null) || last=""
+          if [ -n "$last" ] && git merge-base --is-ancestor "$last" HEAD 2>/dev/null; then
+            base="$last"
+          else
+            echo "no usable last successful pipeline on $CI_COMMIT_BRANCH"
+          fi
+        elif [ -n "$CI_COMMIT_BRANCH" ] && git cat-file -e "$CI_COMMIT_BEFORE_SHA^{commit}" 2>/dev/null; then
+          echo "NX_BASE_TOKEN not set, falling back to the previous push"
+          base="$CI_COMMIT_BEFORE_SHA"
+        fi
+        if [ -z "$base" ] && [ "$CI_COMMIT_BRANCH" != "$CI_DEFAULT_BRANCH" ]; then
+          base=$(git merge-base "origin/$CI_DEFAULT_BRANCH" HEAD)
+        fi
+        if [ -z "$base" ]; then
+          echo "no affected base, running every project"
+          NX_RUN_MANY=true
+        fi
+      fi
+    - |
+      if [ "$NX_RUN_MANY" = "true" ]; then
+        echo "$NX_PROJECTS" | tr ',' '\n' | while read -r pattern; do
+          [ -z "$pattern" ] || npx nx show projects -p "$pattern" | grep -q '"' || { echo "NX_PROJECTS entry matches no project: $pattern" >&2; exit 1; }
+        done
+        npx nx run-many -t "$NX_STEPS" ${NX_PROJECTS:+-p "$NX_PROJECTS"} --graph=stdout > nx-graph.json
+      else
+        echo "nx affected base: $base"
+        npx nx affected -t "$NX_STEPS" --base="$base" --head="$CI_COMMIT_SHA" --graph=stdout > nx-graph.json
+      fi
+    - |
+      publish=""
+      [ "$CI_COMMIT_BRANCH" = "$CI_DEFAULT_BRANCH" ] && publish="--publish"
+      python3 ci/gitlab.gen.py "$RUNNER_IMAGE" --steps "$NX_STEPS" $publish < nx-graph.json > child-pipeline.yml
+  artifacts:
+    paths:
+      - child-pipeline.yml
+      - nx-graph.json
+    expire_in: 1 day
+
+generate-pipeline:
+  extends: .generate-pipeline
+
+generate-pipeline-manual:
+  extends: .generate-pipeline
+  when: manual
+  variables:
+    NX_RUN_MANY: "true"
+
+nx-pipeline:
+  stage: ci
+  needs: ["generate-pipeline"]
+  trigger:
+    include:
+      - artifact: child-pipeline.yml
+        job: generate-pipeline
+    strategy: depend
+
+nx-pipeline-manual:
+  stage: ci
+  needs: ["generate-pipeline-manual"]
+  when: manual
+  trigger:
+    include:
+      - artifact: child-pipeline.yml
+        job: generate-pipeline-manual
+    strategy: depend

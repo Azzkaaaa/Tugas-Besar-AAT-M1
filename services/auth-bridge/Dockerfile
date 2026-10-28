@@ -1,8 +1,10 @@
+# Build context: repository root.
+#   docker build -f services/auth-bridge/Dockerfile .
 FROM node:24-alpine
 WORKDIR /app
-COPY package.json package-lock.json ./
+COPY services/auth-bridge/package.json services/auth-bridge/package-lock.json ./
 RUN npm ci --omit=dev
-COPY src ./src
+COPY services/auth-bridge/src ./src
 RUN mkdir -p /data && chown node:node /data
 USER node
 EXPOSE 3001

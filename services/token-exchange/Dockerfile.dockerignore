@@ -1,0 +1,6 @@
+*
+!services/token-exchange/**
+services/token-exchange/target
+services/token-exchange/.gitignore
+services/token-exchange/README.md
+services/token-exchange/project.json
