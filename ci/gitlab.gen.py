@@ -2,6 +2,7 @@
 
 import argparse
 import json
+import os
 import sys
 from dataclasses import dataclass, field
 from typing import Self
@@ -11,6 +12,7 @@ RUNNER_TAG = 'gitlab--duo'
 KANIKO_IMAGE = 'ghcr.io/osscontainertools/kaniko:v1.28.6-debug@sha256:7ab44d0131c3051b6dea128067e258c7afb5c4815082a93b9cf6c624f2140bf0'
 CACHE_DIR = '.nx-remote-cache'
 CACHE_PORT = 4300
+IMAGES_DIR = 'images'
 
 
 q = json.dumps
@@ -76,6 +78,12 @@ class NxGraph:
         }
 
         return cls(NxTaskGraph(tasks, edges), targets)
+
+
+@dataclass
+class InfraTarget:
+    project: str
+    branch: str
 
 
 @dataclass
@@ -241,21 +249,37 @@ def build_build_deps_job(job: Job) -> str:
     )
 
 
-def build_build_job(job: Job) -> str:
+def build_build_job(job: Job, publish: bool) -> str:
+    digest_file = f'{IMAGES_DIR}/{job.project}.digest'
+    record_file = f'{IMAGES_DIR}/{job.project}.json'
     executor = (
         '/kaniko/executor'
         ' --context "$CI_PROJECT_DIR"'
         f' --dockerfile "$CI_PROJECT_DIR/{job.project_root}/Dockerfile"'
-        f' --destination "$PROJECT_IMAGE_REMOTE/{job.project}:$CI_COMMIT_SHA"'
+        ' --destination "$IMAGE_REF:$CI_COMMIT_SHA"'
+        + (' --destination "$IMAGE_REF:latest"' if publish else '')
+        + f' --digest-file "$CI_PROJECT_DIR/{digest_file}"'
         ' --cleanup'
+    )
+    record = (
+        'printf \'{"project":"%s","repository":"%s","tag":"%s","digest":"%s"}\\n\''
+        f' {job.project} "$IMAGE_REF" "$CI_COMMIT_SHA" "$(cat {digest_file})"'
+        f' > {record_file}'
     )
 
     kaniko_job = (
         f'{q(job.name)}:\n'
         f'  extends: ".kaniko-task"\n'
         f'{_needs([_deps_job_name(job)] if job.needs else [], job.order_needs)}'
+        f'  variables:\n'
+        f'    IMAGE_REF: {q(f"$PROJECT_IMAGE_REMOTE/{job.project}")}\n'
         f'  script:\n'
+        f'    - {q(f"mkdir -p {IMAGES_DIR}")}\n'
         f'    - {q(executor)}\n'
+        f'    - {q(record)}\n'
+        f'  artifacts:\n'
+        f'{_list("paths", [record_file])}'
+        f'    expire_in: "1 day"\n'
     )
 
     if not job.needs:
@@ -264,11 +288,50 @@ def build_build_job(job: Job) -> str:
     return build_build_deps_job(job) + '\n' + kaniko_job
 
 
-def build_pipeline(jobs: list[Job], runner_image: str) -> str:
+def build_publish_jobs(jobs: list[Job], infra: InfraTarget) -> str:
+    builds = [job for job in jobs if is_build_task(job)]
+
+    if not builds:
+        return ''
+
+    expected = ','.join(job.project for job in builds)
+    return (
+        f'"collect-images":\n'
+        f'  stage: "publish"\n'
+        f'  dependencies:\n'
+        + ''.join(f'    - {q(job.name)}\n' for job in builds)
+        + f'  variables:\n'
+        f'    EXPECTED_IMAGES: {q(expected)}\n'
+        f'  script:\n'
+        f'    - {q(f"python3 ci/collect-images.py {IMAGES_DIR} --expect \"$EXPECTED_IMAGES\" > images.json")}\n'
+        f'    - {q("echo AAT_IMAGES_JOB_ID=$CI_JOB_ID > publish.env")}\n'
+        f'  artifacts:\n'
+        f'{_list("paths", ["images.json"])}'
+        f'    reports:\n'
+        f'      dotenv: "publish.env"\n'
+        f'    expire_in: "1 week"\n'
+        f'\n'
+        f'"infra-pipeline":\n'
+        f'  stage: "publish"\n'
+        f'{_needs(["collect-images"])}'
+        f'  variables:\n'
+        f'    AAT_IMAGES_JOB_ID: "$AAT_IMAGES_JOB_ID"\n'
+        f'    AAT_PROJECT_ID: "$CI_PROJECT_ID"\n'
+        f'    AAT_COMMIT_SHA: "$CI_COMMIT_SHA"\n'
+        f'    AAT_PIPELINE_IID: "$CI_PIPELINE_IID"\n'
+        f'  trigger:\n'
+        f'    project: {q(infra.project)}\n'
+        f'    branch: {q(infra.branch)}\n'
+        f'    strategy: "depend"\n'
+    )
+
+
+def build_pipeline(jobs: list[Job], runner_image: str, infra: InfraTarget | None) -> str:
     cache_server = f'http://127.0.0.1:{CACHE_PORT}'
     header = (
         f'stages:\n'
         f'  - "nx"\n'
+        f'  - "publish"\n'
         f'\n'
         f'default:\n'
         f'  image: {q(runner_image)}\n'
@@ -300,7 +363,7 @@ def build_pipeline(jobs: list[Job], runner_image: str) -> str:
         f'    - "npm ci"\n'
         f'\n'
         f'.kaniko-task:\n'
-        f'  extends: ".cache-artifacts"\n'
+        f'  stage: "nx"\n'
         f'  image:\n'
         f'    name: {q(KANIKO_IMAGE)}\n'
         f'    entrypoint: [""]\n'
@@ -318,15 +381,18 @@ def build_pipeline(jobs: list[Job], runner_image: str) -> str:
         )
 
     blocks = [
-        build_build_job(job) if is_build_task(job) else build_generic_job(job)
+        build_build_job(job, infra is not None) if is_build_task(job) else build_generic_job(job)
         for job in jobs
     ]
+
+    if infra and (publish_jobs := build_publish_jobs(jobs, infra)):
+        blocks.append(publish_jobs)
 
     return header + '\n' + '\n'.join(blocks)
 
 
-def main(nx_graph: NxGraph, runner_image: str, steps: list[str]):
-    print(build_pipeline(build_job_list(nx_graph, steps), runner_image), end='')
+def main(nx_graph: NxGraph, runner_image: str, steps: list[str], infra: InfraTarget | None):
+    print(build_pipeline(build_job_list(nx_graph, steps), runner_image, infra), end='')
 
 
 if __name__ == '__main__':
@@ -339,7 +405,26 @@ if __name__ == '__main__':
         default='',
         help='comma separated targets that run one after another within each project',
     )
+    parser.add_argument(
+        '--publish',
+        action='store_true',
+        help='also tag images latest, collect their digests and trigger the infra pipeline',
+    )
+    parser.add_argument(
+        '--infra-project',
+        default=os.environ.get('INFRA_PROJECT', ''),
+        help='path of the project whose pipeline --publish triggers (default: $INFRA_PROJECT)',
+    )
+    parser.add_argument(
+        '--infra-branch',
+        default=os.environ.get('INFRA_BRANCH', ''),
+        help='branch of that project to run the pipeline on (default: $INFRA_BRANCH)',
+    )
     args = parser.parse_args()
 
+    if args.publish and not (args.infra_project and args.infra_branch):
+        parser.error('--publish needs --infra-project and --infra-branch (or $INFRA_PROJECT and $INFRA_BRANCH)')
+
     steps = [step for step in args.steps.split(',') if step]
-    main(NxGraph.from_json(sys.stdin.read()), args.runner_image, steps)
+    infra = InfraTarget(args.infra_project, args.infra_branch) if args.publish else None
+    main(NxGraph.from_json(sys.stdin.read()), args.runner_image, steps, infra)

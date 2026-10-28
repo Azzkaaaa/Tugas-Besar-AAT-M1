@@ -93,6 +93,8 @@ rebuild-runner-image:
     GIT_DEPTH: 0
     NX_DAEMON: "false"
     NX_STEPS: "lint,test,build"
+    INFRA_PROJECT: "if4054-2026-t1-13523137-13523161-13523162/xops_infrastructure"
+    INFRA_BRANCH: "main"
   script:
     - '[ -n "$NX_STEPS" ] || { echo "NX_STEPS must list at least one target" >&2; exit 1; }'
     - npm ci
@@ -134,7 +136,10 @@ rebuild-runner-image:
         echo "nx affected base: $base"
         npx nx affected -t "$NX_STEPS" --base="$base" --head="$CI_COMMIT_SHA" --graph=stdout > nx-graph.json
       fi
-    - python3 ci/gitlab.gen.py "$RUNNER_IMAGE" --steps "$NX_STEPS" < nx-graph.json > child-pipeline.yml
+    - |
+      publish=""
+      [ "$CI_COMMIT_BRANCH" = "$CI_DEFAULT_BRANCH" ] && publish="--publish"
+      python3 ci/gitlab.gen.py "$RUNNER_IMAGE" --steps "$NX_STEPS" $publish < nx-graph.json > child-pipeline.yml
   artifacts:
     paths:
       - child-pipeline.yml
