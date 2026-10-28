@@ -93,8 +93,6 @@ rebuild-runner-image:
     GIT_DEPTH: 0
     NX_DAEMON: "false"
     NX_STEPS: "lint,test,build"
-    INFRA_PROJECT: "if4054-2026-t1-13523137-13523161-13523162/xops_infrastructure"
-    INFRA_BRANCH: "main"
   script:
     - '[ -n "$NX_STEPS" ] || { echo "NX_STEPS must list at least one target" >&2; exit 1; }'
     - npm ci
