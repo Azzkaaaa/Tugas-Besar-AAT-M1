@@ -329,6 +329,10 @@ def build_publish_jobs(jobs: list[Job], infra: InfraTarget) -> str:
 def build_pipeline(jobs: list[Job], runner_image: str, infra: InfraTarget | None) -> str:
     cache_server = f'http://127.0.0.1:{CACHE_PORT}'
     header = (
+        f'workflow:\n'
+        f'  rules:\n'
+        f'    - if: \'$CI_PIPELINE_SOURCE == "parent_pipeline"\'\n'
+        f'\n'
         f'stages:\n'
         f'  - "nx"\n'
         f'  - "publish"\n'
