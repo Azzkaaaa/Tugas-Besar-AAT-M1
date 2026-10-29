@@ -92,7 +92,7 @@ rebuild-runner-image:
   variables:
     GIT_DEPTH: 0
     NX_DAEMON: "false"
-    NX_STEPS: "lint,test,build"
+    NX_STEPS: "scan-fs,lint,test,build,scan-image"
   script:
     - '[ -n "$NX_STEPS" ] || { echo "NX_STEPS must list at least one target" >&2; exit 1; }'
     - npm ci
