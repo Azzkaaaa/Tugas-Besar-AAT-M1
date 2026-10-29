@@ -33,6 +33,7 @@
       "dependsOn": ["generate-openapi"],
       "executor": "nx:run-commands",
       "options": { "command": "go build ./...", "cwd": "{projectRoot}" }
-    }
+    },
+    "scan-fs": {}
   }
 }

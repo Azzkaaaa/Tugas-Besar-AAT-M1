@@ -1,0 +1,9 @@
+severity:
+  - HIGH
+  - CRITICAL
+exit-code: 1
+scan:
+  scanners:
+    - vuln
+vulnerability:
+  ignore-unfixed: true
