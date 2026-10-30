@@ -23,6 +23,7 @@ default:
     - if: $CI_PIPELINE_SOURCE == "schedule"
       when: never
     - when: manual
+      allow_failure: true
 
 find-runner-tag:
   stage: bootstrap
