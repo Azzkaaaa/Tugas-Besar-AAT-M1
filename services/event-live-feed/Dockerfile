@@ -11,7 +11,7 @@ COPY packages/bnpb-event-rust packages/bnpb-event-rust
 COPY packages/bnpb-feed-rust packages/bnpb-feed-rust
 RUN for package in common event feed; do (cd packages/bnpb-$package-rust && buf generate) || exit 1; done
 
-FROM rust:1.96-bookworm AS build
+FROM rust:1.96-alpine AS build
 WORKDIR /workspace
 COPY --from=proto /workspace/packages packages
 # Cache dependencies separately from the service sources.
@@ -21,7 +21,7 @@ RUN mkdir src && echo 'fn main() {}' > src/main.rs && cargo build --release --lo
 COPY services/event-live-feed/src ./src
 RUN touch src/main.rs && cargo build --release --locked
 
-FROM gcr.io/distroless/cc-debian12:nonroot
+FROM gcr.io/distroless/static-debian12:nonroot
 COPY --from=build /workspace/services/event-live-feed/target/release/event-live-feed /event-live-feed
 EXPOSE 9093
 HEALTHCHECK --interval=5s --timeout=5s --retries=20 CMD ["/event-live-feed", "--healthcheck"]
