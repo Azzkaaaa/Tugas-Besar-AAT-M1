@@ -6,10 +6,24 @@ workflow:
 stages:
   - bootstrap
   - ci
+  - scan
 
 default:
   tags:
     - gitlab--duo
+
+.unscheduled:
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "schedule"
+      when: never
+    - when: on_success
+
+.unscheduled-manual:
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "schedule"
+      when: never
+    - when: manual
+      allow_failure: true
 
 find-runner-tag:
   stage: bootstrap
@@ -86,13 +100,14 @@ rebuild-runner-image:
     RUNNER_IMAGE_REBUILD: "true"
 
 .generate-pipeline:
+  extends: .unscheduled
   stage: ci
   needs: ["prepare-runner-image"]
   image: $RUNNER_IMAGE
   variables:
     GIT_DEPTH: 0
     NX_DAEMON: "false"
-    NX_STEPS: "lint,test,build"
+    NX_STEPS: "scan-fs,lint,test,build,scan-image"
   script:
     - '[ -n "$NX_STEPS" ] || { echo "NX_STEPS must list at least one target" >&2; exit 1; }'
     - npm ci
@@ -148,12 +163,14 @@ generate-pipeline:
   extends: .generate-pipeline
 
 generate-pipeline-manual:
-  extends: .generate-pipeline
-  when: manual
+  extends:
+    - .generate-pipeline
+    - .unscheduled-manual
   variables:
     NX_RUN_MANY: "true"
 
 nx-pipeline:
+  extends: .unscheduled
   stage: ci
   needs: ["generate-pipeline"]
   trigger:
@@ -163,11 +180,72 @@ nx-pipeline:
     strategy: depend
 
 nx-pipeline-manual:
+  extends: .unscheduled-manual
   stage: ci
   needs: ["generate-pipeline-manual"]
-  when: manual
   trigger:
     include:
       - artifact: child-pipeline.yml
         job: generate-pipeline-manual
     strategy: depend
+
+.scheduled-scan:
+  stage: scan
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "schedule"
+  variables:
+    GIT_DEPTH: 1
+    TRIVY_NO_PROGRESS: "true"
+  artifacts:
+    when: always
+    paths:
+      - trivy-reports/
+    expire_in: 30 days
+
+scan-repo:
+  extends: .scheduled-scan
+  needs: []
+  image:
+    name: ghcr.io/aquasecurity/trivy:0.76.1@sha256:790fd66d1697395d8693d1acaa1ea702406a20f109b6fc7bac8db623eca6c06c
+    entrypoint: [""]
+  variables:
+    TRIVY_SKIP_DIRS: "**/node_modules,**/target,**/bin,**/obj"
+  script:
+    - mkdir -p trivy-reports
+    - >-
+      trivy fs --severity UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL --ignore-unfixed=false --include-dev-deps
+      --exit-code 0 --format json --output trivy-reports/repo.json .
+    - trivy fs .
+
+scan-images:
+  extends: .scheduled-scan
+  needs: ["prepare-runner-image"]
+  image: $RUNNER_IMAGE
+  variables:
+    NX_DAEMON: "false"
+  cache:
+    key:
+      files:
+        - package-lock.json
+    paths:
+      - node_modules/
+  script:
+    - npm ci
+    - '[ -z "$DOCKER_AUTH_CONFIG" ] || { mkdir -p ~/.docker && echo "$DOCKER_AUTH_CONFIG" > ~/.docker/config.json; }'
+    - mkdir -p trivy-reports/images
+    - |
+      full="--severity UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL --ignore-unfixed=false --exit-code 0 --format json"
+      failed=""
+      projects=$(npx nx show projects --withTarget build --json=false)
+      [ -n "$projects" ] || { echo "nx reported no projects with a build target" >&2; exit 1; }
+      for name in $projects; do
+        ref="$PROJECT_IMAGE_REMOTE/$name:latest"
+        trivy image $full --output "trivy-reports/images/$name.json" "$ref" || { failed="$failed $name"; continue; }
+        trivy image "$ref" || failed="$failed $name"
+      done
+      for ref in $(grep -hE '^[[:space:]]+image:' compose*.yaml | awk '{print $2}' | sort -u); do
+        case "$ref" in *'$'*) echo "unresolved compose image ref: $ref" >&2; failed="$failed $ref"; continue ;; esac
+        trivy image $full --output "trivy-reports/images/third-party_$(echo "$ref" | tr '/:' '__').json" "$ref" \
+          || echo "could not scan $ref" >&2
+      done
+      [ -z "$failed" ] || { echo "blocking findings or scan errors:$failed" >&2; exit 1; }

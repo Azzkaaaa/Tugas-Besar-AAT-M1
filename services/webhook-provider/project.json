@@ -16,6 +16,8 @@
       "executor": "nx:run-commands",
       "options": { "command": "docker buildx build --push -f services/webhook-provider/Dockerfile -t \"$PROJECT_IMAGE_REMOTE/webhook-provider:$(git rev-parse HEAD)\" -t bnpb/webhook-provider .", "cwd": "{workspaceRoot}" },
       "cache": false
-    }
+    },
+    "scan-fs": {},
+    "scan-image": {}
   }
 }

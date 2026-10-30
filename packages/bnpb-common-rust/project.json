@@ -38,6 +38,7 @@
       "dependsOn": [
         "generate-proto"
       ]
-    }
+    },
+    "scan-fs": {}
   }
 }

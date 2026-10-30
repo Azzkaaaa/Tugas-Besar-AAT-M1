@@ -40,6 +40,8 @@
         "cwd": "{workspaceRoot}"
       },
       "cache": false
-    }
+    },
+    "scan-fs": {},
+    "scan-image": {}
   }
 }

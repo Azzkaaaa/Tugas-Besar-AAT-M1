@@ -1,5 +1,23 @@
 {
   "$schema": "./node_modules/nx/schemas/nx-schema.json",
   "neverConnectToCloud": true,
-  "analytics": false
+  "analytics": false,
+  "targetDefaults": {
+    "scan-fs": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "trivy fs --skip-dirs '**/node_modules' --skip-dirs '**/target' --skip-dirs '**/bin' --skip-dirs '**/obj' {projectRoot}",
+        "cwd": "{workspaceRoot}"
+      },
+      "cache": false
+    },
+    "scan-image": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "trivy image \"${PROJECT_IMAGE_REMOTE:?PROJECT_IMAGE_REMOTE must be set}/{projectName}:$(git rev-parse HEAD)\"",
+        "cwd": "{workspaceRoot}"
+      },
+      "cache": false
+    }
+  }
 }

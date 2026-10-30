@@ -7,13 +7,14 @@
 FROM mcr.microsoft.com/dotnet/sdk:10.0 AS builder
 WORKDIR /src
 
-# Restore against project files only so the layer survives source changes.
+# Restore against project files and the lockfile only so the layer survives
+# source changes. Locked mode fails the build if the lockfile is out of date.
 COPY packages/bnpb-common-dotnet/BNPB.Common/BNPB.Common.csproj packages/bnpb-common-dotnet/BNPB.Common/
 COPY packages/bnpb-event-dotnet/BNPB.Event/BNPB.Event.csproj packages/bnpb-event-dotnet/BNPB.Event/
 COPY packages/bnpb-aggregator-dotnet/BNPB.Aggregator/BNPB.Aggregator.csproj packages/bnpb-aggregator-dotnet/BNPB.Aggregator/
 COPY packages/bnpb-notification-dotnet/BNPB.Notification/BNPB.Notification.csproj packages/bnpb-notification-dotnet/BNPB.Notification/
-COPY services/danger-notification/BNPB.Notification.Server/BNPB.Notification.Server.csproj services/danger-notification/BNPB.Notification.Server/
-RUN dotnet restore services/danger-notification/BNPB.Notification.Server/BNPB.Notification.Server.csproj
+COPY services/danger-notification/BNPB.Notification.Server/BNPB.Notification.Server.csproj services/danger-notification/BNPB.Notification.Server/packages.lock.json services/danger-notification/BNPB.Notification.Server/
+RUN dotnet restore --locked-mode services/danger-notification/BNPB.Notification.Server/BNPB.Notification.Server.csproj
 
 COPY packages/bnpb-common-dotnet packages/bnpb-common-dotnet
 COPY packages/bnpb-event-dotnet packages/bnpb-event-dotnet
@@ -24,7 +25,7 @@ COPY services/danger-notification/BNPB.Notification.Server services/danger-notif
 # obj/ folders can overwrite the restore output above. Restoring again is a
 # cheap no-op when they don't.
 RUN dotnet publish services/danger-notification/BNPB.Notification.Server/BNPB.Notification.Server.csproj \
-    -c Release -o /app
+    -c Release -o /app -p:RestoreLockedMode=true
 
 ###
 FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS runtime

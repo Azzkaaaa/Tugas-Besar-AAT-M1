@@ -163,5 +163,28 @@ RUN set -eux; \
     dotnet help > /dev/null; \
     dotnet --version
 
+# ---------------------------------------------------------------------------
+# Trivy: release tarball
+# ---------------------------------------------------------------------------
+ARG TRIVY_VERSION=0.76.1
+RUN set -eux; \
+    case "$(dpkg --print-architecture)" in \
+        amd64) \
+            ARCH='64bit'; \
+            trivySha256='c7cbe3137fb8a48a17574bede3dd6beb16742d1e9772929940fc90082c39d9c0'; \
+            ;; \
+        arm64) \
+            ARCH='ARM64'; \
+            trivySha256='e174dff2a6dba5e3ae41f8d0537a6324405bd08132497340304c6b20e0f16a1f'; \
+            ;; \
+        *) echo >&2 "unsupported architecture"; exit 1 ;; \
+    esac; \
+    tarball="trivy_${TRIVY_VERSION}_Linux-${ARCH}.tar.gz"; \
+    curl -fsSLo "/tmp/${tarball}" "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/${tarball}"; \
+    echo "${trivySha256} */tmp/${tarball}" | sha256sum -c -; \
+    tar -xzf "/tmp/${tarball}" -C /usr/local/bin --no-same-owner trivy; \
+    rm -rf /tmp/*; \
+    trivy --version
+
 WORKDIR /workspace
 CMD ["bash"]
