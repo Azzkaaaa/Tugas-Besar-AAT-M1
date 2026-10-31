@@ -34,10 +34,10 @@ var (
 	Meter  metric.Meter
 
 	// Webhook metric instruments
-	EventsConsumedCounter      metric.Int64Counter
-	ConsumerErrorsCounter      metric.Int64Counter
-	DeliveriesCounter          metric.Int64Counter
-	DeliveryDurationHistogram  metric.Float64Histogram
+	EventsConsumedCounter     metric.Int64Counter
+	ConsumerErrorsCounter     metric.Int64Counter
+	DeliveriesCounter         metric.Int64Counter
+	DeliveryDurationHistogram metric.Float64Histogram
 )
 
 // Init initializes the OpenTelemetry SDK (TracerProvider, MeterProvider, and Propagator).
@@ -81,7 +81,7 @@ func Init(ctx context.Context, defaultServiceName string) (func(context.Context)
 	}
 
 	var (
-		traceExp sdktrace.SpanExporter
+		traceExp  sdktrace.SpanExporter
 		metricExp sdkmetric.Exporter
 	)
 
