@@ -41,6 +41,17 @@ tidak sesuai OpenAPI: prefiks enum, pembungkus `oneof`, `secret` webhook ikut te
   - Status lain di tengah stream (misalnya token habis) menutup stream.
 - **Batas.** Request unary dibatasi `GATEWAY_MAX_IN_FLIGHT` dan diberi deadline
   `GATEWAY_REQUEST_TIMEOUT_MS`. Feed tidak dihitung dan tidak diberi deadline.
+- **Load balancing ke backend.** Setiap backend di-dial dengan policy `round_robin`
+  (`internal/backend`), sehingga setiap RPC (termasuk awal setiap stream feed) dibagi
+  ke semua replika yang dikembalikan DNS. Nama backend di-resolve ulang setiap
+  `GATEWAY_GRPC_RESOLVE_INTERVAL_SECONDS`, jadi replika yang baru start ikut menerima
+  panggilan tanpa menunggu koneksi putus (resolver DNS gRPC sendiri membatasi lookup
+  paling sering 30 detik sekali). Replika yang hilang dari DNS ditutup dengan GOAWAY;
+  stream yang sedang berjalan tetap selesai di replika itu. **Di Kubernetes setiap backend
+  butuh Service headless (`clusterIP: None`)** agar DNS mengembalikan IP semua pod yang
+  ready; dengan Service ClusterIP biasa DNS hanya mengembalikan satu IP virtual dan semua
+  panggilan tetap ke satu pod. Di Compose, DNS Docker sudah mengembalikan IP semua
+  replika satu service.
 
 ## Konfigurasi
 
@@ -51,6 +62,7 @@ tidak sesuai OpenAPI: prefiks enum, pembungkus `oneof`, `secret` webhook ikut te
 | `WEBHOOK_GRPC_ADDRESS` / `EVENT_FEED_GRPC_ADDRESS` | `webhook-provider:9094` / `feed-service:9093` |
 | `GATEWAY_REQUEST_TIMEOUT_MS` / `GATEWAY_MAX_IN_FLIGHT` | `2000` / `100` |
 | `GATEWAY_RETRY_AFTER_SECONDS` / `GATEWAY_SSE_HEARTBEAT_SECONDS` | `5` / `15` |
+| `GATEWAY_GRPC_RESOLVE_INTERVAL_SECONDS` | `30` (efektif minimal 30) |
 | `LOG_LEVEL`, `OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_SERVICE_NAME` | `info`, kosong (trace nonaktif), `api-gateway` |
 
 Koneksi gRPC bersifat lazy. Backend yang tidak ada menghasilkan 503 hanya pada route

@@ -15,6 +15,7 @@ type Config struct {
 	NotificationAddress string
 	WebhookAddress      string
 	FeedAddress         string
+	ResolveInterval     time.Duration
 	RequestTimeout      time.Duration
 	MaxInFlight         int
 	RetryAfterSeconds   int
@@ -48,6 +49,7 @@ func Load() (Config, error) {
 		NotificationAddress: text("NOTIFICATION_GRPC_ADDRESS", "notification-service:9095"),
 		WebhookAddress:      text("WEBHOOK_GRPC_ADDRESS", "webhook-provider:9094"),
 		FeedAddress:         text("EVENT_FEED_GRPC_ADDRESS", "feed-service:9093"),
+		ResolveInterval:     time.Duration(number("GATEWAY_GRPC_RESOLVE_INTERVAL_SECONDS", 30)) * time.Second,
 		RequestTimeout:      time.Duration(number("GATEWAY_REQUEST_TIMEOUT_MS", 2000)) * time.Millisecond,
 		MaxInFlight:         number("GATEWAY_MAX_IN_FLIGHT", 100),
 		RetryAfterSeconds:   number("GATEWAY_RETRY_AFTER_SECONDS", 5),

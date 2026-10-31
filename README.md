@@ -238,6 +238,7 @@ Variabel shell mengalahkan nilai dari `--env-file`. Variabel `VITE_*`/`FIREBASE_
 | `GATEWAY_MAX_IN_FLIGHT` | `100` | Batas request unary serentak; kelebihan → 429/503 |
 | `GATEWAY_RETRY_AFTER_SECONDS` | `5` | Header `Retry-After` pada 429/503 |
 | `GATEWAY_SSE_HEARTBEAT_SECONDS` | `15` | Interval heartbeat SSE |
+| `GATEWAY_GRPC_RESOLVE_INTERVAL_SECONDS` | `30` | Interval resolve ulang nama backend untuk menemukan replika baru (minimal efektif 30 detik) |
 | `FEED_REPLAY_RETENTION_SECONDS` / `FEED_REPLAY_MAX_ENTRIES` | `600` / `10000` | Buffer replay feed (Redis di Compose) |
 | `FEED_REDIS_URL` | Compose: `redis://feed-redis.local:6379/0` | Kosong di luar Compose = buffer di memori, satu replika |
 | `WEBHOOK_MAX_RETRIES` / `WEBHOOK_HTTP_TIMEOUT_MS` | `5` / `10000` | Retry dan timeout pengiriman webhook |
