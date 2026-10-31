@@ -182,7 +182,9 @@ services:
       APP_ENV: ${APP_ENV:-development}
       LOG_LEVEL: ${LOG_LEVEL:-info}
       WEBHOOK_GRPC_PORT: ${WEBHOOK_GRPC_PORT:-9094}
-      WEBHOOK_STORE_DSN: ${WEBHOOK_STORE_DSN:-file:/data/webhook.db}
+      WEBHOOK_STORE_DSN: postgres://webhook:${WEBHOOK_DB_PASSWORD}@webhook-db.local:5432/webhook?sslmode=disable
+      # Delivery dedup claims, shared by every replica.
+      WEBHOOK_REDIS_URL: redis://webhook-redis.local:6379/0
       WEBHOOK_AMQP_URL: ${WEBHOOK_AMQP_URL}
       RABBITMQ_EXCHANGE: ${RABBITMQ_EXCHANGE}
       WEBHOOK_CONSUMER_QUEUE: ${WEBHOOK_CONSUMER_QUEUE:-bnpb.webhook-provider.v1}
@@ -190,6 +192,7 @@ services:
       WEBHOOK_SERVICE_TOKEN: ${WEBHOOK_SERVICE_TOKEN}
       WEBHOOK_MAX_RETRIES: ${WEBHOOK_MAX_RETRIES:-5}
       WEBHOOK_HTTP_TIMEOUT_MS: ${WEBHOOK_HTTP_TIMEOUT_MS:-10000}
+      WEBHOOK_DEDUP_TTL_HOURS: ${WEBHOOK_DEDUP_TTL_HOURS:-168}
       AUTH_AUTHORITY: ${WEBHOOK_AUTH_AUTHORITY:-http://auth.localhost:8080}
       AUTH_AUDIENCE: ${AUTH_AUDIENCE:-}
       AUTH_INSECURE_SKIP_VERIFY: ${AUTH_INSECURE_SKIP_VERIFY:-false}
@@ -201,10 +204,12 @@ services:
     # Lets e2e tests (tests/test_e2e_webhooks.py) receive deliveries on the host under Linux.
     extra_hosts:
       - "host.docker.internal:host-gateway"
-    volumes:
-      - webhook_data:/data
     depends_on:
       rabbitmq:
+        condition: service_healthy
+      webhook-db:
+        condition: service_healthy
+      webhook-redis:
         condition: service_healthy
       otel-lgtm:
         condition: service_started
@@ -231,7 +236,8 @@ services:
       RabbitMq__QueueName: ${NOTIFICATION_CONSUMER_QUEUE}
       RabbitMq__DeadLetterQueue: ${NOTIFICATION_CONSUMER_DLQ}
       Fcm__Topic: ${NOTIFICATION_FCM_TOPIC:-hazard-alerts}
-      ConnectionStrings__Notifications: ${NOTIFICATION_STORE_CONNECTION:-Data Source=/data/notifications.db}
+      Persistence__Provider: postgres
+      ConnectionStrings__Notifications: Host=notification-db.local;Port=5432;Database=notifications;Username=notification;Password=${NOTIFICATION_DB_PASSWORD}
       Auth__Authority: ${NOTIFICATION_AUTH_AUTHORITY:-http://auth.localhost:8080}
       # The local Zitadel only serves plain HTTP.
       Auth__RequireHttpsMetadata: ${NOTIFICATION_AUTH_REQUIRE_HTTPS_METADATA:-false}
@@ -250,9 +256,10 @@ services:
         read_only: true
         bind:
           create_host_path: false
-      - notification_data:/data
     depends_on:
       rabbitmq:
+        condition: service_healthy
+      notification-db:
         condition: service_healthy
       aggregator-service:
         condition: service_started
@@ -277,6 +284,8 @@ services:
       EVENT_FEED_CONSUMER_DLQ: ${EVENT_FEED_CONSUMER_DLQ}
       FEED_REPLAY_RETENTION_SECONDS: ${FEED_REPLAY_RETENTION_SECONDS:-600}
       FEED_REPLAY_MAX_ENTRIES: ${FEED_REPLAY_MAX_ENTRIES:-10000}
+      # Replay buffer shared by every replica.
+      FEED_REDIS_URL: redis://feed-redis.local:6379/0
       FEED_AUTH_AUTHORITY: ${FEED_AUTH_AUTHORITY:-http://auth.localhost:8080}
       FEED_TOKEN_RENEW_BEFORE_SECONDS: ${FEED_TOKEN_RENEW_BEFORE_SECONDS:-15}
       FEED_MAX_STREAM_SECONDS: ${FEED_MAX_STREAM_SECONDS:-3600}
@@ -294,6 +303,8 @@ services:
       - auth_client_config:/bootstrap:ro
     depends_on:
       rabbitmq:
+        condition: service_healthy
+      feed-redis:
         condition: service_healthy
       # The token-exchange client is read once at startup.
       auth-bootstrap:
@@ -380,6 +391,81 @@ services:
       timeout: 5s
       retries: 5
 
+  notification-db:
+    image: postgres:17
+    environment:
+      POSTGRES_USER: notification
+      POSTGRES_PASSWORD: ${NOTIFICATION_DB_PASSWORD}
+      POSTGRES_DB: notifications
+    volumes:
+      - notification_db_data:/var/lib/postgresql/data
+    restart: unless-stopped
+    networks:
+      bnpb_net:
+        aliases:
+          - notification-db.local
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U notification -d notifications"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  webhook-db:
+    image: postgres:17
+    profiles:
+      - manual
+    environment:
+      POSTGRES_USER: webhook
+      POSTGRES_PASSWORD: ${WEBHOOK_DB_PASSWORD}
+      POSTGRES_DB: webhook
+    volumes:
+      - webhook_db_data:/var/lib/postgresql/data
+    restart: unless-stopped
+    networks:
+      bnpb_net:
+        aliases:
+          - webhook-db.local
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U webhook -d webhook"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # Delivery dedup claims of webhook-provider, shared by its replicas. Ephemeral by choice:
+  # lost keys only allow an at-least-once resend. noeviction makes a full Redis fail writes
+  # loudly instead of silently dropping claims.
+  webhook-redis:
+    image: redis:8
+    profiles:
+      - manual
+    command: ["redis-server", "--save", "", "--appendonly", "no", "--maxmemory", "128mb", "--maxmemory-policy", "noeviction"]
+    restart: unless-stopped
+    networks:
+      bnpb_net:
+        aliases:
+          - webhook-redis.local
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # Replay buffer of feed-service, shared by its replicas. Ephemeral by choice: lost keys
+  # start a new epoch (clients take a new snapshot). noeviction for the same reason as above.
+  feed-redis:
+    image: redis:8
+    command: ["redis-server", "--save", "", "--appendonly", "no", "--maxmemory", "256mb", "--maxmemory-policy", "noeviction"]
+    restart: unless-stopped
+    networks:
+      bnpb_net:
+        aliases:
+          - feed-redis.local
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
   rabbitmq:
     image: rabbitmq:4-management
     hostname: rabbitmq-node
@@ -433,6 +519,6 @@ volumes:
   bmkg_data:
   pvmbg_data:
   aggregator_data:
-  webhook_data:
-  notification_data:
+  webhook_db_data:
+  notification_db_data:
   rabbitmq_data:

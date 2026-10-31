@@ -20,6 +20,8 @@ public class NotificationStoreMigrator : IHostedService
   {
     await using var db = await _contextFactory.CreateDbContextAsync(cancellationToken);
 
+    // EF takes a migration lock (Npgsql: LOCK TABLE on the history table), so replicas
+    // starting together apply each migration once.
     await db.Database.MigrateAsync(cancellationToken);
 
     // WAL lets list/get read while the consumer or outbox writes. It persists in the file.

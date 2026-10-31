@@ -10,6 +10,7 @@ import (
 	commonv1 "github.com/Azzkaaaa/Tugas-Besar-AAT-M1/packages/bnpb-aggregator-go/bnpb/common/v1"
 	eventv1 "github.com/Azzkaaaa/Tugas-Besar-AAT-M1/packages/bnpb-aggregator-go/bnpb/event/v1"
 	"github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/webhook-provider/internal/config"
+	"github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/webhook-provider/internal/dedup"
 	"github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/webhook-provider/internal/dispatcher"
 	"github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/webhook-provider/internal/store"
 	amqp "github.com/rabbitmq/amqp091-go"
@@ -65,7 +66,7 @@ func sampleEvent(t *testing.T, schemaVersion uint32) []byte {
 
 func TestHandleMessage_DispatchFailureAcksMessage(t *testing.T) {
 	ctx := context.Background()
-	db, err := store.Connect(ctx, ":memory:")
+	db, err := store.Open(ctx, ":memory:")
 	if err != nil {
 		t.Fatalf("failed to open in-memory db: %v", err)
 	}
@@ -97,7 +98,7 @@ func TestHandleMessage_DispatchFailureAcksMessage(t *testing.T) {
 		HTTPTimeoutMS:      1 * time.Second,
 	}
 	disp := dispatcher.New(cfg.HTTPTimeoutMS, cfg.MaxDeliveryRetries)
-	c := New(cfg, db, disp)
+	c := New(cfg, db, dedup.NewMemory(time.Hour), disp)
 
 	ack := &mockAcknowledger{}
 	msg := amqp.Delivery{
@@ -133,7 +134,7 @@ func TestHandleMessage_DispatchFailureAcksMessage(t *testing.T) {
 
 func TestHandleMessage_InternalFailure_RequeuesFirstTime(t *testing.T) {
 	ctx := context.Background()
-	db, err := store.Connect(ctx, ":memory:")
+	db, err := store.Open(ctx, ":memory:")
 	if err != nil {
 		t.Fatalf("failed to open in-memory db: %v", err)
 	}
@@ -142,7 +143,7 @@ func TestHandleMessage_InternalFailure_RequeuesFirstTime(t *testing.T) {
 
 	cfg := &config.Config{MaxDeliveryRetries: 1, HTTPTimeoutMS: 1 * time.Second}
 	disp := dispatcher.New(cfg.HTTPTimeoutMS, cfg.MaxDeliveryRetries)
-	c := New(cfg, db, disp)
+	c := New(cfg, db, dedup.NewMemory(time.Hour), disp)
 
 	ack := &mockAcknowledger{}
 	msg := amqp.Delivery{
@@ -165,7 +166,7 @@ func TestHandleMessage_InternalFailure_RequeuesFirstTime(t *testing.T) {
 
 func TestHandleMessage_InternalFailure_DeadLettersOnRedelivery(t *testing.T) {
 	ctx := context.Background()
-	db, err := store.Connect(ctx, ":memory:")
+	db, err := store.Open(ctx, ":memory:")
 	if err != nil {
 		t.Fatalf("failed to open in-memory db: %v", err)
 	}
@@ -174,7 +175,7 @@ func TestHandleMessage_InternalFailure_DeadLettersOnRedelivery(t *testing.T) {
 
 	cfg := &config.Config{MaxDeliveryRetries: 1, HTTPTimeoutMS: 1 * time.Second}
 	disp := dispatcher.New(cfg.HTTPTimeoutMS, cfg.MaxDeliveryRetries)
-	c := New(cfg, db, disp)
+	c := New(cfg, db, dedup.NewMemory(time.Hour), disp)
 
 	ack := &mockAcknowledger{}
 	msg := amqp.Delivery{
@@ -197,7 +198,7 @@ func TestHandleMessage_InternalFailure_DeadLettersOnRedelivery(t *testing.T) {
 
 func TestHandleMessage_UnmarshalFailure_DeadLetters(t *testing.T) {
 	ctx := context.Background()
-	db, err := store.Connect(ctx, ":memory:")
+	db, err := store.Open(ctx, ":memory:")
 	if err != nil {
 		t.Fatalf("failed to open in-memory db: %v", err)
 	}
@@ -205,7 +206,7 @@ func TestHandleMessage_UnmarshalFailure_DeadLetters(t *testing.T) {
 
 	cfg := &config.Config{MaxDeliveryRetries: 1, HTTPTimeoutMS: 1 * time.Second}
 	disp := dispatcher.New(cfg.HTTPTimeoutMS, cfg.MaxDeliveryRetries)
-	c := New(cfg, db, disp)
+	c := New(cfg, db, dedup.NewMemory(time.Hour), disp)
 
 	ack := &mockAcknowledger{}
 	msg := amqp.Delivery{
@@ -227,7 +228,7 @@ func TestHandleMessage_UnmarshalFailure_DeadLetters(t *testing.T) {
 
 func TestHandleMessage_SchemaVersionMismatch_DeadLetters(t *testing.T) {
 	ctx := context.Background()
-	db, err := store.Connect(ctx, ":memory:")
+	db, err := store.Open(ctx, ":memory:")
 	if err != nil {
 		t.Fatalf("failed to open in-memory db: %v", err)
 	}
@@ -235,7 +236,7 @@ func TestHandleMessage_SchemaVersionMismatch_DeadLetters(t *testing.T) {
 
 	cfg := &config.Config{MaxDeliveryRetries: 1, HTTPTimeoutMS: 1 * time.Second}
 	disp := dispatcher.New(cfg.HTTPTimeoutMS, cfg.MaxDeliveryRetries)
-	c := New(cfg, db, disp)
+	c := New(cfg, db, dedup.NewMemory(time.Hour), disp)
 
 	ack := &mockAcknowledger{}
 	msg := amqp.Delivery{

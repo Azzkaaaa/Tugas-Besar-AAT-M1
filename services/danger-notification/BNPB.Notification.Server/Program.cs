@@ -14,6 +14,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
+using Npgsql;
 using OpenTelemetry;
 using OpenTelemetry.Logs;
 using OpenTelemetry.Metrics;
@@ -35,7 +36,8 @@ var otel = builder.Services
     .AddSource(NotificationTelemetry.Name)
     .AddAspNetCoreInstrumentation(options =>
       options.Filter = context => !context.Request.Path.StartsWithSegments("/grpc.health.v1.Health"))
-    .AddHttpClientInstrumentation())
+    .AddHttpClientInstrumentation()
+    .AddNpgsql())
   .WithMetrics(metrics => metrics
     .AddMeter(NotificationTelemetry.Name)
     .AddAspNetCoreInstrumentation()
@@ -92,22 +94,31 @@ builder.Services
 
 builder.Services.AddScoped<IOutboundSourceProvider, AggregatorClient>();
 
-// Notification store. Only SQLite for now; another provider needs its own branch and migrations.
+// Notification store. Postgres for deployments (any number of replicas); SQLite for tests and
+// single-replica local runs. Each provider has its own context type and migrations.
 var outboxOptions = builder.Configuration.GetSection("Outbox").Get<OutboxOptions>() ?? new OutboxOptions();
 var storeProvider = builder.Configuration["Persistence:Provider"] ?? "sqlite";
 var storeConnection = builder.Configuration.GetConnectionString("Notifications");
 
-builder.Services.AddDbContextFactory<NotificationDbContext>(options =>
+switch (storeProvider)
 {
-  switch (storeProvider)
-  {
-    case "sqlite":
-      options.UseSqlite(storeConnection);
-      break;
-    default:
-      throw new InvalidOperationException($"Unsupported Persistence:Provider '{storeProvider}'");
-  }
-});
+  case "postgres":
+    // Query spans only under a caller's span, so the outbox poll doesn't start a trace every tick.
+    builder.Services.AddDbContextFactory<PostgresNotificationDbContext>(options => options.UseNpgsql(
+      storeConnection,
+      npgsql => npgsql.ConfigureDataSource(dataSource => dataSource.ConfigureTracing(tracing =>
+        tracing.ConfigureCommandFilter(_ => System.Diagnostics.Activity.Current is not null)))));
+    builder.Services.AddSingleton<IDbContextFactory<NotificationDbContext>,
+      NotificationDbContextFactory<PostgresNotificationDbContext>>();
+    break;
+  case "sqlite":
+    builder.Services.AddDbContextFactory<SqliteNotificationDbContext>(options => options.UseSqlite(storeConnection));
+    builder.Services.AddSingleton<IDbContextFactory<NotificationDbContext>,
+      NotificationDbContextFactory<SqliteNotificationDbContext>>();
+    break;
+  default:
+    throw new InvalidOperationException($"Unsupported Persistence:Provider '{storeProvider}'");
+}
 builder.Services.AddSingleton(TimeProvider.System);
 builder.Services.AddSingleton(outboxOptions);
 builder.Services.AddSingleton<PushOutboxSignal>();

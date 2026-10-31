@@ -7,7 +7,7 @@ COPY packages/bnpb-aggregator-go packages/bnpb-aggregator-go
 COPY services/webhook-provider services/webhook-provider
 
 WORKDIR /app/services/webhook-provider
-# Pure-Go SQLite: CGO_ENABLED=0 is safe with modernc.org/sqlite
+# Pure-Go SQLite (local runs; deployments use Postgres): CGO_ENABLED=0 is safe with modernc.org/sqlite
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
     go build -ldflags="-s -w" -o /app/webhook-provider ./cmd/main.go
 
@@ -18,7 +18,7 @@ WORKDIR /app
 RUN apk add --no-cache ca-certificates
 RUN addgroup -S appgroup && adduser -S appuser -G appgroup
 
-# Data directory for SQLite database file
+# Data directory for a SQLite database file (only when WEBHOOK_STORE_DSN is not Postgres)
 RUN mkdir -p /data && chown appuser:appgroup /data
 
 USER appuser

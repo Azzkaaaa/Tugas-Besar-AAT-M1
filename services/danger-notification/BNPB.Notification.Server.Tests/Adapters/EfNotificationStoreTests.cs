@@ -166,6 +166,17 @@ public class EfNotificationStoreTests : IAsyncLifetime
   }
 
   [Fact]
+  public async Task Schema_RejectsTwoCurrentRevisionsOfOneHazard()
+  {
+    await using var db = await _contextFactory.CreateDbContextAsync();
+    db.Notifications.Add(new NotificationRecord { Id = "e1", HazardId = "h1", IsCurrent = true });
+    db.Notifications.Add(new NotificationRecord { Id = "e2", HazardId = "h1", IsCurrent = true });
+    db.Notifications.Add(new NotificationRecord { Id = "e3", HazardId = "h1", IsCurrent = false });
+
+    await Assert.ThrowsAsync<DbUpdateException>(() => db.SaveChangesAsync());
+  }
+
+  [Fact]
   public async Task Claim_ConcurrentClaimers_GetDisjointRows()
   {
     await Ingest(TestData.Published("e1", "h1"));
@@ -338,7 +349,7 @@ public class EfNotificationStoreTests : IAsyncLifetime
   private sealed class ContextFactory(string connectionString) : IDbContextFactory<NotificationDbContext>
   {
     public NotificationDbContext CreateDbContext()
-      => new(new DbContextOptionsBuilder<NotificationDbContext>()
+      => new SqliteNotificationDbContext(new DbContextOptionsBuilder<SqliteNotificationDbContext>()
         .UseSqlite(connectionString)
         .Options);
   }

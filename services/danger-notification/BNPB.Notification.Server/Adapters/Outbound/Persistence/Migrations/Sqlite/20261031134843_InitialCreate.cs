@@ -3,7 +3,7 @@ using Microsoft.EntityFrameworkCore.Migrations;
 
 #nullable disable
 
-namespace BNPB.Notification.Server.Adapters.Outbound.Persistence.Migrations
+namespace BNPB.Notification.Server.Adapters.Outbound.Persistence.Migrations.Sqlite
 {
     /// <inheritdoc />
     public partial class InitialCreate : Migration
@@ -37,6 +37,13 @@ namespace BNPB.Notification.Server.Adapters.Outbound.Persistence.Migrations
                 {
                     table.PrimaryKey("PK_notifications", x => x.Id);
                 });
+
+            migrationBuilder.CreateIndex(
+                name: "IX_notifications_HazardId",
+                table: "notifications",
+                column: "HazardId",
+                unique: true,
+                filter: "\"IsCurrent\" = 1");
 
             migrationBuilder.CreateIndex(
                 name: "IX_notifications_HazardId_IsCurrent",

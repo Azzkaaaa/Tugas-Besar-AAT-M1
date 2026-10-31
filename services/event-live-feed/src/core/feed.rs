@@ -5,19 +5,25 @@ use tokio::sync::broadcast::Receiver;
 use tokio::sync::broadcast::error::RecvError;
 
 use crate::core::models::{Publication, SharedEntry};
-use crate::core::ports::{ReplayExpired, ReplayStore};
+use crate::core::ports::{Position, ReplayError, ReplayStore, StoreUnavailable, StreamMeta};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FeedError {
-    /// Events the subscriber has not seen were evicted; it must take a new snapshot.
+    /// Events the subscriber has not seen were evicted, or the stream was reset; it must take
+    /// a new snapshot.
     Expired,
     /// The feed is shutting down.
     Closed,
+    /// The replay store could not be reached.
+    Unavailable,
 }
 
-impl From<ReplayExpired> for FeedError {
-    fn from(_: ReplayExpired) -> Self {
-        FeedError::Expired
+impl From<ReplayError> for FeedError {
+    fn from(error: ReplayError) -> Self {
+        match error {
+            ReplayError::Expired => FeedError::Expired,
+            ReplayError::Unavailable => FeedError::Unavailable,
+        }
     }
 }
 
@@ -30,22 +36,26 @@ impl<S: ReplayStore> FeedService<S> {
         Self { store }
     }
 
-    pub fn epoch(&self) -> u64 {
-        self.store.epoch()
+    pub fn meta(&self) -> StreamMeta {
+        self.store.meta()
     }
 
     /// Returns `true` when the publication was new, `false` for a broker redelivery.
-    pub fn ingest(&self, publication: Publication) -> bool {
-        self.store.append(publication).is_some()
+    pub async fn ingest(&self, publication: Publication) -> Result<bool, StoreUnavailable> {
+        Ok(self.store.append(publication).await?.is_some())
     }
 
     /// Starts after `after`, or at the live head when `None`.
-    pub fn subscribe(&self, after: Option<u64>) -> Result<FeedSubscription<S>, FeedError> {
-        let snapshot = self.store.subscribe(after)?;
+    pub async fn subscribe(&self, after: Option<Position>) -> Result<FeedSubscription<S>, FeedError> {
+        let snapshot = self.store.subscribe(after).await?;
+        if after.is_some_and(|after| after.epoch != snapshot.meta.epoch) {
+            return Err(FeedError::Expired);
+        }
         Ok(FeedSubscription {
             store: self.store.clone(),
+            meta: snapshot.meta,
             backlog: snapshot.backlog.into(),
-            last: after.unwrap_or(snapshot.head),
+            last: after.map_or(snapshot.head, |after| after.sequence),
             live: snapshot.live,
         })
     }
@@ -54,12 +64,18 @@ impl<S: ReplayStore> FeedService<S> {
 /// Yields every entry after the starting position exactly once, in sequence order.
 pub struct FeedSubscription<S> {
     store: Arc<S>,
+    meta: StreamMeta,
     backlog: VecDeque<SharedEntry>,
     last: u64,
     live: Receiver<SharedEntry>,
 }
 
 impl<S: ReplayStore> FeedSubscription<S> {
+    /// The stream this subscription reads; its entries' cursors belong to it.
+    pub fn meta(&self) -> StreamMeta {
+        self.meta
+    }
+
     pub async fn next(&mut self) -> Result<SharedEntry, FeedError> {
         loop {
             let entry = match self.backlog.pop_front() {
@@ -68,9 +84,11 @@ impl<S: ReplayStore> FeedSubscription<S> {
                     Ok(entry) => entry,
                     // A slow subscriber fell behind the broadcast buffer: refill from replay.
                     Err(RecvError::Lagged(_)) => {
-                        self.refill()?;
+                        self.refill().await?;
                         continue;
                     }
+                    // The store ends a stream's broadcast when it moves to a new epoch.
+                    Err(RecvError::Closed) if self.store.meta().epoch != self.meta.epoch => return Err(FeedError::Expired),
                     Err(RecvError::Closed) => return Err(FeedError::Closed),
                 },
             };
@@ -80,7 +98,7 @@ impl<S: ReplayStore> FeedSubscription<S> {
             }
             if entry.sequence != self.last + 1 {
                 self.backlog.push_front(entry);
-                self.refill()?;
+                self.refill().await?;
                 continue;
             }
             self.last = entry.sequence;
@@ -88,8 +106,8 @@ impl<S: ReplayStore> FeedSubscription<S> {
         }
     }
 
-    fn refill(&mut self) -> Result<(), FeedError> {
-        let entries = self.store.read_after(self.last)?;
+    async fn refill(&mut self) -> Result<(), FeedError> {
+        let entries = self.store.read_after(Position { epoch: self.meta.epoch, sequence: self.last }).await?;
         if entries.first().is_some_and(|first| first.sequence != self.last + 1) {
             return Err(FeedError::Expired);
         }

@@ -22,7 +22,8 @@ komposisi hanya di `main.rs`.
 | `src/adapters/inbound/grpc.rs` | `SubscribeEvents`: autentikasi, view, filter, proyeksi, cursor |
 | `src/adapters/inbound/session.rs` | Umur stream dan rotasi token aktor |
 | `src/adapters/inbound/{cursor,hazard}.rs` | Cursor ber-HMAC; filter, scope, proyeksi summary |
-| `src/adapters/outbound/memory_store.rs` | Buffer replay, deduplikasi, sequence |
+| `src/adapters/outbound/redis_store.rs` | Buffer replay bersama di Redis (stream, dedup, sequence, epoch) |
+| `src/adapters/outbound/memory_store.rs` | Buffer replay di memori untuk satu replika dan test |
 | `src/adapters/outbound/oidc.rs` | Verifikasi JWT via JWKS Zitadel; token exchange RFC 8693 |
 
 ## Perilaku
@@ -34,8 +35,16 @@ komposisi hanya di `main.rs`.
   sendiri lalu mengikat queue ke exchange; Aggregator hanya mendeklarasikan exchange.
 - **Replay.** Event ID yang sama selama jendela retensi tidak ditambahkan dua kali.
   Sequence naik mulai 1 per epoch. Buffer dibatasi `FEED_REPLAY_RETENTION_SECONDS`
-  dan `FEED_REPLAY_MAX_ENTRIES`. Buffer berada di memori: restart membuat epoch acak
-  baru sehingga cursor lama ditolak `OUT_OF_RANGE`, sesuai kontrak.
+  dan `FEED_REPLAY_MAX_ENTRIES`. Dengan `FEED_REDIS_URL`, buffer, sequence, dedup,
+  epoch, dan kunci cursor ada di Redis dan dipakai bersama semua replika: event yang
+  di-consume replika mana pun diteruskan (XREAD) ke subscriber di setiap replika, dan
+  cursor dari satu replika bisa dilanjutkan di replika lain. Redis berjalan tanpa
+  persistence; bila key hilang, epoch baru dibuat sehingga subscriber aktif dan
+  cursor lama mendapat `OUT_OF_RANGE` (ambil snapshot baru). Bila Redis tidak dapat
+  dihubungi, event di-nack dengan requeue (tidak pernah di-ack tanpa tersimpan),
+  health menjadi NOT_SERVING, dan subscribe menghasilkan `UNAVAILABLE`. Tanpa
+  `FEED_REDIS_URL` buffer berada di memori: restart membuat epoch acak baru sehingga
+  cursor lama ditolak `OUT_OF_RANGE`, sesuai kontrak (satu replika saja).
 - **Subscribe.** Urutan pemeriksaan: bearer JWT (tanda tangan JWKS, issuer, `exp`),
   resolusi view (UNSPECIFIED→SUMMARY), scope (`hazards:read:summary`; FULL juga
   `hazards:read:full`, tanpa downgrade), filter, lalu cursor. Replay dan live diambil
@@ -90,6 +99,7 @@ token baru dari sesinya.
 | `RABBITMQ_EXCHANGE` | `bnpb.hazards.v1` |
 | `EVENT_FEED_CONSUMER_QUEUE` / `EVENT_FEED_CONSUMER_DLQ` | `bnpb.event-live-feed.v1` / kosong (pesan ditolak dibuang) |
 | `FEED_REPLAY_RETENTION_SECONDS` / `FEED_REPLAY_MAX_ENTRIES` | `600` / `10000` |
+| `FEED_REDIS_URL` | kosong (buffer di memori, satu replika) |
 | `FEED_AUTH_AUTHORITY` | `http://auth.localhost:8080` |
 | `OIDC_CONFIG_FILE` | kosong |
 | `FEED_TOKEN_EXCHANGE_CLIENT_ID` / `_SECRET` | kosong; override nilai `oidc.json` |
@@ -115,6 +125,5 @@ Image distroless memakai `/event-live-feed --healthcheck` sebagai healthcheck gR
 
 - SSE, `Last-Event-ID` → `resume_after`, `reset_required`, dan heartbeat ditangani
   [api-gateway](../api-gateway/README.md).
-- Store replay Redis (port `ReplayStore` sudah memisahkannya).
 - Pengujian end-to-end (Aggregator → RabbitMQ → feed → SSE dengan login Zitadel,
   termasuk stream yang bertahan melewati 60 detik) dilakukan di sesi terpisah.

@@ -14,6 +14,8 @@ type Config struct {
 	LogLevel               string
 	GRPCPort               string
 	StoreDSN               string
+	RedisURL               string
+	DedupTTL               time.Duration
 	AMQPURL                string
 	RabbitMQExchange       string
 	ConsumerQueue          string
@@ -69,6 +71,8 @@ func Load() (*Config, error) {
 		LogLevel:               requireEnv("LOG_LEVEL"),
 		GRPCPort:               optionalEnv("WEBHOOK_GRPC_PORT", "9094"),
 		StoreDSN:               requireEnv("WEBHOOK_STORE_DSN"),
+		RedisURL:               os.Getenv("WEBHOOK_REDIS_URL"),
+		DedupTTL:               time.Duration(optionalInt("WEBHOOK_DEDUP_TTL_HOURS", 168)) * time.Hour,
 		AMQPURL:                requireEnv("WEBHOOK_AMQP_URL"),
 		RabbitMQExchange:       requireEnv("RABBITMQ_EXCHANGE"),
 		ConsumerQueue:          optionalEnv("WEBHOOK_CONSUMER_QUEUE", "bnpb.webhook-provider.v1"),

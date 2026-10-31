@@ -12,7 +12,19 @@ Implementasi dan bahasa belum dipilih.
   manajemen webhook ke Gateway.
 - **Storage milik sendiri:** `WEBHOOK_STORE_DSN` untuk menyimpan data pendaftaran
   webhook, secret penandatanganan, status langganan, dan riwayat upaya pengiriman
-  (delivery log); bukan Canonical Store.
+  (delivery log); bukan Canonical Store. DSN `postgres://` memakai Postgres
+  (service Compose `webhook-db`, migrasi goose di `internal/store/migrations/postgres`
+  dengan session lock sehingga replika yang start bersamaan aman); DSN lain
+  dianggap SQLite (satu replika, juga dipakai oleh test).
+- **Deduplikasi antar replika:** sebelum dispatch, setiap pasangan
+  (`event_id`, webhook) diklaim di Redis (`WEBHOOK_REDIS_URL`, key
+  `webhook:dedup:*`) dengan lease yang mencakup seluruh retry dispatcher. Hanya
+  pemegang klaim yang mengirim; redelivery yang tiba di replika lain menunggu
+  klaim selesai. Pengiriman sukses ditandai `delivered` selama
+  `WEBHOOK_DEDUP_TTL_HOURS` (default 168); kegagalan melepas klaim. Redis berjalan
+  tanpa persistence: bila key hilang, event yang di-redeliver bisa terkirim lagi
+  (at-least-once), sehingga penerima tetap melakukan dedup dengan `event_id`.
+  Tanpa `WEBHOOK_REDIS_URL` klaim disimpan di memori proses (satu replika).
 - **Tanggung jawab:**
   - Evaluasi filter langganan terhadap setiap event masuk dari broker.
   - Penegakan proyeksi data: webhook milik client Media hanya menerima payload

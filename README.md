@@ -10,9 +10,10 @@ menampilkan dashboard.
 | --- | --- | --- |
 | `bmkg-mock`, `pvmbg-mock` | Python 3.12 + SQLite | API sumber eksternal tiruan, data dan kredensial terpisah |
 | `aggregator-service` | Go + PostgreSQL | Polling kedua mock, store kanonik, outbox → RabbitMQ (gRPC `:9091`) |
-| `feed-service` | Rust | Event Live Feed, consumer RabbitMQ, stream gRPC (`:9093`) |
-| `webhook-provider` | Go + SQLite | Langganan webhook dan pengiriman bertanda tangan HMAC (`:9094`, opsional) |
-| `notification-service` | .NET 10 + SQLite | Danger Notification, push FCM (`:9095`) |
+| `feed-service` | Rust + Redis | Event Live Feed, consumer RabbitMQ, stream gRPC (`:9093`); buffer replay bersama di Redis |
+| `webhook-provider` | Go + PostgreSQL + Redis | Langganan webhook dan pengiriman bertanda tangan HMAC (`:9094`, opsional); klaim dedup di Redis |
+| `notification-service` | .NET 10 + PostgreSQL | Danger Notification, push FCM (`:9095`) |
+| `notification-db`, `webhook-db`, `webhook-redis`, `feed-redis` | PostgreSQL, Redis | Store milik masing-masing service di atas; Redis tanpa persistence (state bersama antar replika satu service) |
 | `api-gateway` | Go | REST `/api/v1` dari OpenAPI, memanggil service gRPC |
 | `envoy` | Envoy | Satu-satunya pintu masuk publik `http://localhost:8080` |
 | `token-exchange`, `zitadel-claims` | Rust | Token exchange `ext_authz` Envoy; klaim `role`/`scopes` Zitadel |
@@ -211,7 +212,7 @@ Variabel shell mengalahkan nilai dari `--env-file`. Variabel `VITE_*`/`FIREBASE_
 | `NOTIFICATION_AUTH_SCOPE_CLAIM` | `scopes` | Nama klaim scope dari `zitadel-claims` |
 | `NOTIFICATION_RABBITMQ_HOST` / `_PORT` | `rabbitmq` / `5672` | Lokasi broker |
 | `NOTIFICATION_FCM_TOPIC` | `hazard-alerts` | Topik FCM tujuan push |
-| `NOTIFICATION_STORE_CONNECTION` | `Data Source=/data/notifications.db` | SQLite notifikasi + outbox push |
+| `NOTIFICATION_DB_PASSWORD` | kosong → **isi manual** | Password PostgreSQL `notification-db` (notifikasi + outbox push); Compose menyusun connection string-nya |
 | `FIREBASE_CREDENTIALS_PATH` | `./.secrets/firebase-credentials.json` | Service account Firebase yang di-mount read-only (wajib ada) |
 | `FIREBASE_WEB_API_KEY`, `_PROJECT_ID`, `_MESSAGING_SENDER_ID`, `_APP_ID`, `_VAPID_KEY` | kosong | Identitas publik web app Firebase untuk push browser; kosong = tanpa push |
 
@@ -237,7 +238,8 @@ Variabel shell mengalahkan nilai dari `--env-file`. Variabel `VITE_*`/`FIREBASE_
 | `GATEWAY_MAX_IN_FLIGHT` | `100` | Batas request unary serentak; kelebihan → 429/503 |
 | `GATEWAY_RETRY_AFTER_SECONDS` | `5` | Header `Retry-After` pada 429/503 |
 | `GATEWAY_SSE_HEARTBEAT_SECONDS` | `15` | Interval heartbeat SSE |
-| `FEED_REPLAY_RETENTION_SECONDS` / `FEED_REPLAY_MAX_ENTRIES` | `600` / `10000` | Buffer replay feed di memori |
+| `FEED_REPLAY_RETENTION_SECONDS` / `FEED_REPLAY_MAX_ENTRIES` | `600` / `10000` | Buffer replay feed (Redis di Compose) |
+| `FEED_REDIS_URL` | Compose: `redis://feed-redis.local:6379/0` | Kosong di luar Compose = buffer di memori, satu replika |
 | `WEBHOOK_MAX_RETRIES` / `WEBHOOK_HTTP_TIMEOUT_MS` | `5` / `10000` | Retry dan timeout pengiriman webhook |
 | `OUTBOX_MAX_RETRIES` | `5` | Retry publish outbox aggregator |
 
@@ -247,7 +249,8 @@ Variabel shell mengalahkan nilai dari `--env-file`. Variabel `VITE_*`/`FIREBASE_
 | --- | --- | --- |
 | `BMKG_STORE_DSN` / `PVMBG_STORE_DSN` | `sqlite:///data/bmkg.sqlite3` / `…pvmbg.sqlite3` | File SQLite tiap mock (harus berbeda) |
 | `AGGREGATOR_DB_PASSWORD` | kosong → **isi manual** | Password PostgreSQL store kanonik aggregator |
-| `WEBHOOK_STORE_DSN` | `file:/data/webhook.db` | SQLite webhook-provider |
+| `WEBHOOK_DB_PASSWORD` | kosong → **isi manual** | Password PostgreSQL `webhook-db`; Compose menyusun `WEBHOOK_STORE_DSN` |
+| `WEBHOOK_DEDUP_TTL_HOURS` | `168` | Lama penanda "sudah terkirim" di Redis untuk dedup webhook |
 | `RABBITMQ_DEFAULT_USER` / `_PASS` / `_VHOST` | `guest` / `guest` / `vhost` | Akun broker yang dibuat Compose |
 | `AGGREGATOR_AMQP_URL` / `WEBHOOK_AMQP_URL` | `amqp://guest:guest@rabbitmq:5672/vhost` | Koneksi broker; sesuaikan bila akun di atas diubah |
 | `RABBITMQ_EXCHANGE` | `bnpb.hazards.v1` | Exchange fan-out |

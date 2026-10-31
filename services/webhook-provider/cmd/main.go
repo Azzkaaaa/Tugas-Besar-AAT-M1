@@ -11,6 +11,7 @@ import (
 	"github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/webhook-provider/internal/auth"
 	"github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/webhook-provider/internal/config"
 	"github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/webhook-provider/internal/consumer"
+	"github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/webhook-provider/internal/dedup"
 	"github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/webhook-provider/internal/dispatcher"
 	grpcserver "github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/webhook-provider/internal/grpc"
 	"github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/webhook-provider/internal/store"
@@ -51,14 +52,26 @@ func main() {
 		cancel()
 	}()
 
-	// 1. Open SQLite store.
-	log.Println("[WebhookProvider] Opening SQLite store...")
-	db, err := store.Connect(ctx, cfg.StoreDSN)
+	// 1. Open the store (Postgres, or SQLite for local runs) and the delivery dedup claims.
+	log.Println("[WebhookProvider] Opening store...")
+	db, err := store.Open(ctx, cfg.StoreDSN)
 	if err != nil {
 		log.Fatalf("[WebhookProvider] FATAL: Failed to open store: %v", err)
 	}
 	defer db.Close()
-	log.Println("[WebhookProvider] SQLite store ready.")
+	log.Println("[WebhookProvider] Store ready.")
+
+	var claims dedup.Claimer
+	if cfg.RedisURL != "" {
+		claims, err = dedup.NewRedis(ctx, cfg.RedisURL, cfg.DedupTTL)
+		if err != nil {
+			log.Fatalf("[WebhookProvider] FATAL: Failed to connect dedup store: %v", err)
+		}
+	} else {
+		log.Println("[WebhookProvider] WEBHOOK_REDIS_URL is not set; dedup claims are in-process (single replica only)")
+		claims = dedup.NewMemory(cfg.DedupTTL)
+	}
+	defer claims.Close()
 
 	// 2. Initialize Auth JWT Verifier. Discovery and JWKS load in the background (retried until the
 	// issuer behind Envoy answers), so ingestion never waits on auth; only bad config is fatal.
@@ -78,7 +91,7 @@ func main() {
 
 	// 4. Start RabbitMQ consumer (background goroutine).
 	log.Println("[WebhookProvider] Starting RabbitMQ consumer...")
-	cons := consumer.New(cfg, db, disp)
+	cons := consumer.New(cfg, db, claims, disp)
 	go cons.Start(ctx)
 
 	// 5. Start gRPC server (blocks until ctx done).

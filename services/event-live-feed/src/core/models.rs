@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use std::time::SystemTime;
 
 use bnpb_common::bnpb::common::v1::HazardEvent;
 use prost_types::Timestamp;
@@ -22,7 +23,8 @@ pub struct Publication {
 #[derive(Debug, PartialEq)]
 pub struct FeedEntry {
     pub sequence: u64,
-    pub stored_at: Instant,
+    /// Wall clock, so it means the same on every replica.
+    pub stored_at: SystemTime,
     pub publication: Publication,
 }
 

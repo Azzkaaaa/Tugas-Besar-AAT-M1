@@ -8,6 +8,7 @@ import (
 	commonv1 "github.com/Azzkaaaa/Tugas-Besar-AAT-M1/packages/bnpb-aggregator-go/bnpb/common/v1"
 	eventv1 "github.com/Azzkaaaa/Tugas-Besar-AAT-M1/packages/bnpb-aggregator-go/bnpb/event/v1"
 	"github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/webhook-provider/internal/config"
+	"github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/webhook-provider/internal/dedup"
 	"github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/webhook-provider/internal/dispatcher"
 	"github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/webhook-provider/internal/store"
 	"github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/webhook-provider/internal/telemetry"
@@ -20,16 +21,46 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
+// claimPollInterval is how often a consumer re-checks a delivery another replica is dispatching.
+const claimPollInterval = time.Second
+
 // Consumer listens on the RabbitMQ queue and dispatches events to matching webhooks.
 type Consumer struct {
-	cfg  *config.Config
-	db   *store.DB
-	disp *dispatcher.Dispatcher
+	cfg    *config.Config
+	db     store.Store
+	claims dedup.Claimer
+	disp   *dispatcher.Dispatcher
+	lease  time.Duration
 }
 
 // New creates a Consumer.
-func New(cfg *config.Config, db *store.DB, disp *dispatcher.Dispatcher) *Consumer {
-	return &Consumer{cfg: cfg, db: db, disp: disp}
+func New(cfg *config.Config, db store.Store, claims dedup.Claimer, disp *dispatcher.Dispatcher) *Consumer {
+	return &Consumer{cfg: cfg, db: db, claims: claims, disp: disp, lease: claimLease(cfg)}
+}
+
+// claimLease covers the dispatcher's worst case: every attempt timing out plus its backoff
+// (1s, 2s, 4s, ...), with a margin for logging the delivery.
+func claimLease(cfg *config.Config) time.Duration {
+	retries := max(cfg.MaxDeliveryRetries, 0)
+	backoff := time.Duration(1<<uint(min(retries, 20))) * time.Second
+	return time.Duration(retries+1)*cfg.HTTPTimeoutMS + backoff + 30*time.Second
+}
+
+// claim takes the (event, webhook) delivery. While another replica holds it (a redelivery after
+// a channel loss), it waits until that replica marks, releases, or its lease runs out.
+func (c *Consumer) claim(ctx context.Context, eventID, webhookID string) (dedup.Claim, dedup.Result, error) {
+	deadline := time.Now().Add(c.lease)
+	for {
+		claim, result, err := c.claims.Claim(ctx, eventID, webhookID, c.lease)
+		if err != nil || result != dedup.HeldElsewhere || time.Now().After(deadline) {
+			return claim, result, err
+		}
+		select {
+		case <-ctx.Done():
+			return dedup.Claim{}, result, ctx.Err()
+		case <-time.After(claimPollInterval):
+		}
+	}
 }
 
 // Start runs the consumer loop until ctx is cancelled. It reconnects automatically
@@ -225,15 +256,20 @@ func (c *Consumer) handleMessage(ctx context.Context, msg amqp.Delivery) {
 			continue
 		}
 
-		// Idempotency: skip if already successfully delivered.
-		delivered, err := c.db.IsDelivered(ctxMsg, ev.EventId, sub.WebhookID)
+		// Idempotency: claim the delivery; skip it if it already succeeded.
+		claim, result, err := c.claim(ctxMsg, ev.EventId, sub.WebhookID)
 		if err != nil {
-			logf("[Consumer] Dedup check failed for event %s / webhook %s: %v", ev.EventId, sub.WebhookID, err)
+			logf("[Consumer] Dedup claim failed for event %s / webhook %s: %v", ev.EventId, sub.WebhookID, err)
 			allOK = false
 			continue
 		}
-		if delivered {
+		switch result {
+		case dedup.AlreadyDelivered:
 			logf("[Consumer] Event %s already delivered to webhook %s — skipping", ev.EventId, sub.WebhookID)
+			continue
+		case dedup.HeldElsewhere:
+			logf("[Consumer] Event %s / webhook %s still claimed elsewhere after %s", ev.EventId, sub.WebhookID, c.lease)
+			allOK = false
 			continue
 		}
 
@@ -241,20 +277,21 @@ func (c *Consumer) handleMessage(ctx context.Context, msg amqp.Delivery) {
 		payload, err := dispatcher.BuildPayload(&ev, view)
 		if err != nil {
 			logf("[Consumer] Failed building payload for event %s / webhook %s: %v", ev.EventId, sub.WebhookID, err)
+			c.release(ctxMsg, claim, logf)
 			allOK = false
 			continue
 		}
 
-		result := c.disp.Dispatch(ctxMsg, sub.URL, sub.Secret, payload)
+		dispatchResult := c.disp.Dispatch(ctxMsg, sub.URL, sub.Secret, payload)
 
 		deliveryID := uuid.NewString()
 		status := "FAILED"
-		if result.Err == nil && result.StatusCode >= 200 && result.StatusCode < 300 {
+		if dispatchResult.Err == nil && dispatchResult.StatusCode >= 200 && dispatchResult.StatusCode < 300 {
 			status = "SUCCESS"
 		}
 		errMsg := ""
-		if result.Err != nil {
-			errMsg = result.Err.Error()
+		if dispatchResult.Err != nil {
+			errMsg = dispatchResult.Err.Error()
 		}
 
 		d := &store.Delivery{
@@ -262,12 +299,21 @@ func (c *Consumer) handleMessage(ctx context.Context, msg amqp.Delivery) {
 			WebhookID:    sub.WebhookID,
 			EventID:      ev.EventId,
 			HazardID:     ev.GetPayload().GetHazardId(),
-			StatusCode:   int32(result.StatusCode),
+			StatusCode:   int32(dispatchResult.StatusCode),
 			Status:       status,
 			Attempt:      int32(c.cfg.MaxDeliveryRetries),
-			DurationMS:   result.DurationMS,
+			DurationMS:   dispatchResult.DurationMS,
 			ErrorMessage: errMsg,
 			DeliveredAt:  time.Now().UTC(),
+		}
+
+		// Mark before logging: a successful send must not be repeated even if the log write fails.
+		if status == "SUCCESS" {
+			if err := c.claims.MarkDelivered(ctxMsg, claim); err != nil {
+				logf("[Consumer] Failed marking delivered for event %s / webhook %s: %v", ev.EventId, sub.WebhookID, err)
+			}
+		} else {
+			c.release(ctxMsg, claim, logf)
 		}
 
 		if err := c.db.InsertDelivery(ctxMsg, d); err != nil {
@@ -276,13 +322,9 @@ func (c *Consumer) handleMessage(ctx context.Context, msg amqp.Delivery) {
 			continue
 		}
 
-		if status == "SUCCESS" {
-			if err := c.db.MarkDelivered(ctxMsg, ev.EventId, sub.WebhookID); err != nil {
-				logf("[Consumer] Failed marking delivered for event %s / webhook %s: %v", ev.EventId, sub.WebhookID, err)
-			}
-		} else {
+		if status != "SUCCESS" {
 			logf("[Consumer] Delivery failed for event %s to webhook %s (url=%s): status=%d err=%v",
-				ev.EventId, sub.WebhookID, sub.URL, result.StatusCode, result.Err)
+				ev.EventId, sub.WebhookID, sub.URL, dispatchResult.StatusCode, dispatchResult.Err)
 			// Dispatch failures alone do not block the ack — they have already completed their own retries
 			// and are recorded in the delivery log.
 		}
@@ -307,3 +349,9 @@ func (c *Consumer) handleMessage(ctx context.Context, msg amqp.Delivery) {
 	}
 }
 
+// release gives a claim up after a failed dispatch. A failure only delays a retry until the lease expires.
+func (c *Consumer) release(ctx context.Context, claim dedup.Claim, logf func(string, ...any)) {
+	if err := c.claims.Release(ctx, claim); err != nil {
+		logf("[Consumer] Failed releasing claim for event %s / webhook %s: %v", claim.EventID, claim.WebhookID, err)
+	}
+}

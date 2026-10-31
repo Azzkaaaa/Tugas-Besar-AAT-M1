@@ -26,14 +26,14 @@ import (
 // Server implements the WebhookService gRPC server.
 type Server struct {
 	cfg  *config.Config
-	db   *store.DB
+	db   store.Store
 	auth *auth.JWTVerifier
 	disp *dispatcher.Dispatcher
 	webhookv1.UnimplementedWebhookServiceServer
 }
 
 // NewServer creates a new Server.
-func NewServer(cfg *config.Config, db *store.DB, verifier *auth.JWTVerifier, disp *dispatcher.Dispatcher) *Server {
+func NewServer(cfg *config.Config, db store.Store, verifier *auth.JWTVerifier, disp *dispatcher.Dispatcher) *Server {
 	return &Server{cfg: cfg, db: db, auth: verifier, disp: disp}
 }
 
