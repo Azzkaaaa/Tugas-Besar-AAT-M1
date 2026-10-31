@@ -32,8 +32,14 @@ Implementasi dan bahasa belum dipilih.
   revisi yang sama dengan `event_id` berbeda, yang tidak bisa di-dedup consumer.
 - **Retensi outbox:** baris yang sudah terbit atau di-dead-letter dihapus setelah
   `OUTBOX_RETENTION_HOURS` (default 168); isi `outbox_dead_letters` tetap disimpan.
-- **Migrasi:** skema diterapkan saat startup di bawah advisory lock, sehingga
-  replika yang start bersamaan aman.
+- **Migrasi:** goose, file SQL di `internal/store/migrations/postgres` yang
+  di-embed ke binary dan dijalankan saat startup dengan session lock Postgres,
+  sehingga replika yang start bersamaan aman. `00001_baseline.sql` adalah skema
+  lama (sebelum goose) yang ditulis idempoten: database baru dibuat lengkap,
+  database lama hanya dicatat di versi 1. Migrasi berikutnya menambah file
+  `0000N_<nama>.sql` (`-- +goose Up`) dan mengikuti expand/contract. Build lama
+  yang di-rollback melewati migrasi yang tidak dikenalnya, jadi skema yang lebih
+  baru tidak ditimpa.
 
 Health memakai `grpc.health.v1.Health` standar. TODO: runtime/Dockerfile,
 storage fleksibel, worker polling, referensi gunung api, retry/deadline,

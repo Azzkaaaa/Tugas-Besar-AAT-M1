@@ -10,14 +10,14 @@
       "executor": "nx:run-commands",
       "options": { "command": "go build ./...", "cwd": "{projectRoot}" },
       "cache": true,
-      "inputs": ["{projectRoot}/**/*.go", "{projectRoot}/go.mod", "{projectRoot}/go.sum", "^default"]
+      "inputs": ["{projectRoot}/**/*.go", "{projectRoot}/**/*.sql", "{projectRoot}/go.mod", "{projectRoot}/go.sum", "^default"]
     },
     "test": {
       "dependsOn": ["^compile"],
       "executor": "nx:run-commands",
       "options": { "command": "go test ./...", "cwd": "{projectRoot}" },
       "cache": true,
-      "inputs": ["{projectRoot}/**/*.go", "{projectRoot}/go.mod", "{projectRoot}/go.sum", "^default"]
+      "inputs": ["{projectRoot}/**/*.go", "{projectRoot}/**/*.sql", "{projectRoot}/go.mod", "{projectRoot}/go.sum", "^default"]
     },
     "lint": {
       "dependsOn": ["^compile"],
