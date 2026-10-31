@@ -8,7 +8,8 @@
   },
   "scripts": {
     "start": "node src/server.mjs",
-    "test": "node --test test/*.test.mjs"
+    "test": "node --test test/*.test.mjs",
+    "lint": "oxlint"
   },
   "dependencies": {
     "@opentelemetry/api": "1.9.1",
@@ -16,5 +17,8 @@
     "@opentelemetry/sdk-node": "0.223.0",
     "cookie": "2.0.1",
     "openid-client": "6.8.8"
+  },
+  "devDependencies": {
+    "oxlint": "1.88.0"
   }
 }

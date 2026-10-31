@@ -83,7 +83,7 @@ func Init(ctx context.Context, defaultServiceName string) (func(context.Context)
 	}
 
 	var (
-		traceExp sdktrace.SpanExporter
+		traceExp  sdktrace.SpanExporter
 		metricExp sdkmetric.Exporter
 	)
 

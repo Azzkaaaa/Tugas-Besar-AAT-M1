@@ -36,6 +36,13 @@
       "executor": "nx:run-commands",
       "options": { "command": "npm test", "cwd": "services/frontend" }
     },
+    "lint": {
+      "dependsOn": ["install"],
+      "executor": "nx:run-commands",
+      "options": { "command": "npm run lint", "cwd": "services/frontend" },
+      "cache": true,
+      "inputs": ["{projectRoot}/src/**/*", "{projectRoot}/e2e/**/*", "{projectRoot}/*.ts", "{projectRoot}/.oxlintrc.json", "{projectRoot}/package.json", "{projectRoot}/package-lock.json"]
+    },
     "test-e2e": {
       "dependsOn": ["install"],
       "executor": "nx:run-commands",

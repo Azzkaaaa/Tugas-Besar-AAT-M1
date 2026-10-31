@@ -12,6 +12,24 @@
       "cache": true,
       "inputs": ["{projectRoot}/**/*.go", "{projectRoot}/go.mod", "{projectRoot}/go.sum", "^default"]
     },
+    "test": {
+      "dependsOn": ["^compile"],
+      "executor": "nx:run-commands",
+      "options": { "command": "go test ./...", "cwd": "{projectRoot}" },
+      "cache": true,
+      "inputs": ["{projectRoot}/**/*.go", "{projectRoot}/go.mod", "{projectRoot}/go.sum", "^default"]
+    },
+    "lint": {
+      "dependsOn": ["^compile"],
+      "executor": "nx:run-commands",
+      "options": {
+        "commands": ["test -z \"$(gofmt -l .)\" || (gofmt -l . && exit 1)", "go vet ./..."],
+        "parallel": false,
+        "cwd": "{projectRoot}"
+      },
+      "cache": true,
+      "inputs": ["{projectRoot}/**/*.go", "{projectRoot}/go.mod", "{projectRoot}/go.sum", "^default"]
+    },
     "build": {
       "executor": "nx:run-commands",
       "options": { "command": "docker buildx build --push -f services/aggregator/Dockerfile -t \"$PROJECT_IMAGE_REMOTE/aggregator:$(git rev-parse HEAD)\" -t bnpb/aggregator .", "cwd": "{workspaceRoot}" },

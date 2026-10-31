@@ -287,7 +287,9 @@ Variabel shell mengalahkan nilai dari `--env-file`. Variabel `VITE_*`/`FIREBASE_
 ```bash
 python -m unittest discover -s tests -v       # mock BMKG/PVMBG; tes e2e/problem otomatis dilewati
 python -m unittest discover -s services/bmkg-mock -p test_storage.py -v
+python -m unittest discover -s services/pvmbg-mock -p test_storage.py -v
 npx nx run-many -t test                       # tes per service (butuh toolchain pengembangan)
+npx nx run-many -t lint                       # lint per service; mock Python butuh ruff (lihat ci/runner)
 ```
 
 ### End-to-end (stack berjalan)

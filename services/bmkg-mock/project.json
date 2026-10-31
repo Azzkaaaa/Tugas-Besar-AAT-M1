@@ -2,7 +2,7 @@
   "$schema": "../../node_modules/nx/schemas/project-schema.json",
   "name": "bmkg-mock",
   "projectType": "application",
-  "sourceRoot": "services/bmgk-mock",
+  "sourceRoot": "services/bmkg-mock",
   "targets": {
     "compile": {
       "dependsOn": ["^compile"],
@@ -11,6 +11,18 @@
         "{workspaceRoot}/contracts/openapi/bmkg.yaml",
         "{projectRoot}/**/*.py"
       ]
+    },
+    "test": {
+      "executor": "nx:run-commands",
+      "options": { "command": "python3 -m unittest discover -p 'test_*.py'", "cwd": "{projectRoot}" },
+      "cache": true,
+      "inputs": ["{projectRoot}/**/*.py"]
+    },
+    "lint": {
+      "executor": "nx:run-commands",
+      "options": { "command": "ruff check .", "cwd": "{projectRoot}" },
+      "cache": true,
+      "inputs": ["{projectRoot}/**/*.py", "{workspaceRoot}/ruff.toml"]
     },
     "build": {
       "executor": "nx:run-commands",

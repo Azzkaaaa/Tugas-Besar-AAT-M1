@@ -233,6 +233,9 @@ test('logout deletes persisted session and revokes tokens at the provider', asyn
 
 test('encrypted SQLite sessions survive reopening and retain token denylist', () => {
   const folder = mkdtempSync(join(tmpdir(), 'bnpb-auth-test-'));
+  // Checked before the test body, so a failed assertion is never masked by a cleanup error.
+  const target = resolve(folder);
+  if (!target.startsWith(resolve(tmpdir()) + '\\bnpb-auth-test-') && !target.startsWith(resolve(tmpdir()) + '/bnpb-auth-test-')) throw new Error('Invalid test cleanup path');
   const path = join(folder, 'sessions.sqlite'); const key = randomBytes(32).toString('hex');
   const session = { accessToken: 'access-secret-test', refreshToken: 'refresh-secret-test', expiresAt: Date.now() + 60000, sessionExpires: Date.now() + 60000 };
   let store = new SessionStore(path, key);
@@ -245,8 +248,6 @@ test('encrypted SQLite sessions survive reopening and retain token denylist', ()
     assert.equal(store.getSession('opaque-id-test'), null);
   } finally {
     store.close();
-    const target = resolve(folder);
-    if (!target.startsWith(resolve(tmpdir()) + '\\bnpb-auth-test-') && !target.startsWith(resolve(tmpdir()) + '/bnpb-auth-test-')) throw new Error('Invalid test cleanup path');
     rmSync(target, { recursive: true });
   }
 });

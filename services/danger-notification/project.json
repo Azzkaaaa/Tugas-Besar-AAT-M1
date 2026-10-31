@@ -42,6 +42,23 @@
       },
       "cache": false
     },
+    "lint": {
+      "dependsOn": [
+        "^compile"
+      ],
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "dotnet format --verify-no-changes --exclude BNPB.Notification.Server/Adapters/Outbound/Persistence/Migrations",
+        "cwd": "{projectRoot}"
+      },
+      "cache": true,
+      "inputs": [
+        "{projectRoot}/**/*.cs",
+        "{projectRoot}/**/*.csproj",
+        "{workspaceRoot}/.editorconfig",
+        "^default"
+      ]
+    },
     "build": {
       "dependsOn": [
         "^compile"

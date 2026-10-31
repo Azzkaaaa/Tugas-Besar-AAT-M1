@@ -1,0 +1,13 @@
+# Python lint for the mock services (nx `lint` targets). Lint only, no formatter: line length is
+# left to review. Imports are sorted by module name, `import x` and `from x import y` mixed, as
+# the existing code already does.
+target-version = "py312"
+
+[lint]
+# Explicit, so a ruff upgrade does not change what CI enforces: pyflakes, the error-level pycodestyle
+# rules, bugbear and import order.
+select = ["E4", "E7", "E9", "F", "B", "I"]
+
+[lint.isort]
+force-sort-within-sections = true
+lines-after-imports = 2
