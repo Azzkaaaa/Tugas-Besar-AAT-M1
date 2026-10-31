@@ -63,6 +63,7 @@ def main(images_dir: Path, expected: list[str]):
     commit = os.environ['CI_COMMIT_SHA']
     images = collect(read_records(images_dir), expected, commit)
     json.dump({
+        'runtimeContract': 'shared-stores-v1',
         'commit': commit,
         'pipeline_iid': int(os.environ['CI_PIPELINE_IID']),
         'pipeline_url': os.environ['CI_PIPELINE_URL'],
