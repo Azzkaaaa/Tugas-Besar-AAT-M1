@@ -8,7 +8,7 @@ import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { createAuthServer } from '../src/server.mjs';
-import { SessionStore } from '../src/store.mjs';
+import { SqliteSessionStore } from '../src/store.mjs';
 import { ZitadelProvider } from '../src/provider.mjs';
 
 const oidcConfig = {
@@ -106,8 +106,16 @@ async function fixture(t, options = {}) {
     json(404, {});
   });
   issuer = await listen(idp);
+  // With replicas: 2, a second server shares the session file through its own store, like two pods
+  // sharing Redis.
+  let databasePath = ':memory:';
+  if (options.replicas) {
+    const folder = mkdtempSync(join(tmpdir(), 'bnpb-auth-test-'));
+    t.after(() => rmSync(folder, { recursive: true, force: true }));
+    databasePath = join(folder, 'sessions.sqlite');
+  }
   const config = { appUrl: 'http://127.0.0.1', issuer, allowHttp: true, secureCookies: false,
-    sessionTtl: 3600, databasePath: ':memory:', sessionKey: randomBytes(32).toString('hex'), oidc: { ...oidcConfig } };
+    sessionTtl: 3600, databasePath, sessionKey: randomBytes(32).toString('hex'), oidc: { ...oidcConfig } };
   const logger = message => state.logs.push(message);
   const provider = new ZitadelProvider(config, logger);
   const complete = provider.complete.bind(provider);
@@ -117,11 +125,19 @@ async function fixture(t, options = {}) {
   };
   const { server, store } = createAuthServer(config, { provider, logger });
   config.appUrl = await listen(server);
-  t.after(async () => { await stop(server); store.close(); await stop(idp); });
+  t.after(async () => { await stop(server); await store.close(); await stop(idp); });
+  let replica;
+  if (options.replicas) {
+    const second = createAuthServer(config, { provider: new ZitadelProvider(config, logger), logger,
+      store: new SqliteSessionStore(databasePath, config.sessionKey) });
+    replica = await listen(second.server);
+    t.after(async () => { await stop(second.server); await second.store.close(); });
+  }
   const jar = new Map();
   const cookieHeader = () => [...jar].map(([key, value]) => `${key}=${value}`).join('; ');
-  async function request(path, init = {}) {
-    const response = await fetch(new URL(path, config.appUrl), { ...init, redirect: 'manual', headers: { Cookie: cookieHeader(), ...init.headers } });
+  async function request(path, init = {}, base = config.appUrl) {
+    const target = new URL(path, config.appUrl);
+    const response = await fetch(new URL(target.pathname + target.search, base), { ...init, redirect: 'manual', headers: { Cookie: cookieHeader(), ...init.headers } });
     for (const header of response.headers.getSetCookie()) {
       const [pair] = header.split(';'), index = pair.indexOf('=');
       const key = pair.slice(0, index), value = pair.slice(index + 1);
@@ -141,7 +157,7 @@ async function fixture(t, options = {}) {
     assert.equal(response.headers.get('location'), `${config.appUrl}/#/dashboard`, `${state.loginError}; ${state.providerFailure}`);
     return response;
   }
-  return { state, config, store, tokens, jar, request, login, authorization, cookieHeader };
+  return { state, config, store, replica, tokens, jar, request, login, authorization, cookieHeader };
 }
 
 test('signed code+PKCE login sets HttpOnly cookies, hides tokens, and returns action-issued scopes', async t => {
@@ -201,7 +217,7 @@ test('refresh requires Origin and CSRF; simultaneous requests share rotation and
   assert.notEqual(f.jar.get('bnpb_access'), oldAccess);
   const stale = `bnpb_session=${f.jar.get('bnpb_session')}; bnpb_access=${oldAccess}`;
   assert.equal((await f.request('/auth/session', { headers: { Cookie: stale } })).status, 401);
-  assert.equal(f.store.isRevoked(oldAccess), true);
+  assert.equal(await f.store.isRevoked(oldAccess), true);
   // Revoked at the provider too, so the gateway's token exchange rejects it.
   await delay(50);
   assert.equal(f.tokens.has(oldAccess), false);
@@ -231,23 +247,68 @@ test('logout deletes persisted session and revokes tokens at the provider', asyn
   assert.equal(f.tokens.has(oldAccess), false);
 });
 
-test('encrypted SQLite sessions survive reopening and retain token denylist', () => {
+test('encrypted SQLite sessions survive reopening and retain token denylist', async () => {
   const folder = mkdtempSync(join(tmpdir(), 'bnpb-auth-test-'));
   // Checked before the test body, so a failed assertion is never masked by a cleanup error.
   const target = resolve(folder);
   if (!target.startsWith(resolve(tmpdir()) + '\\bnpb-auth-test-') && !target.startsWith(resolve(tmpdir()) + '/bnpb-auth-test-')) throw new Error('Invalid test cleanup path');
   const path = join(folder, 'sessions.sqlite'); const key = randomBytes(32).toString('hex');
   const session = { accessToken: 'access-secret-test', refreshToken: 'refresh-secret-test', expiresAt: Date.now() + 60000, sessionExpires: Date.now() + 60000 };
-  let store = new SessionStore(path, key);
+  let store = new SqliteSessionStore(path, key);
   try {
-    store.putSession('opaque-id-test', session); store.close();
+    await store.putSession('opaque-id-test', session); await store.close();
     assert.equal(readFileSync(path).includes(Buffer.from(session.refreshToken)), false);
     assert.equal(readFileSync(path).includes(Buffer.from('opaque-id-test')), false);
-    store = new SessionStore(path, key); assert.deepEqual(store.getSession('opaque-id-test'), session);
-    store.rotate('opaque-id-test', session, null); assert.equal(store.isRevoked(session.accessToken), true);
-    assert.equal(store.getSession('opaque-id-test'), null);
+    store = new SqliteSessionStore(path, key); assert.deepEqual(await store.getSession('opaque-id-test'), session);
+    await store.rotate('opaque-id-test', session, null); assert.equal(await store.isRevoked(session.accessToken), true);
+    assert.equal(await store.getSession('opaque-id-test'), null);
   } finally {
-    store.close();
+    await store.close();
     rmSync(target, { recursive: true });
+  }
+});
+
+test('replicas refresh a session once: concurrent refreshes on two instances share one rotation', async t => {
+  const f = await fixture(t, { replicas: 2 }); await f.login();
+  const session = await (await f.request('/auth/session')).json();
+  const oldAccess = f.jar.get('bnpb_access');
+  const headers = { Origin: f.config.appUrl, 'X-CSRF-Token': session.csrf_token };
+  // Zitadel-style refresh token rotation: without a shared lock the second refresh gets
+  // invalid_grant and ends the session.
+  const responses = await Promise.all([f.config.appUrl, f.replica].map(base => f.request('/auth/refresh', { method: 'POST', headers }, base)));
+  assert.deepEqual(responses.map(r => r.status), [200, 200]);
+  assert.equal(f.state.refreshes, 1);
+  const bodies = await Promise.all(responses.map(r => r.json()));
+  assert.equal(bodies[0].expires_at, bodies[1].expires_at);
+  assert.equal(await f.store.isRevoked(oldAccess), true);
+  assert.equal((await f.request('/auth/session', {}, f.replica)).status, 200);
+  assert.equal((await f.request('/auth/session')).status, 200);
+});
+
+test('a callback used on one replica is rejected on the other', async t => {
+  const f = await fixture(t, { replicas: 2 });
+  const callback = await f.authorization();
+  assert.match((await f.request(callback)).headers.get('location'), /dashboard$/);
+  assert.match((await f.request(callback, {}, f.replica)).headers.get('location'), /error=login_failed/);
+  assert.equal(f.state.exchanges, 1);
+});
+
+test('store locks exclude a second holder, ignore stale tokens and expire', async () => {
+  const store = new SqliteSessionStore(':memory:', randomBytes(32).toString('hex'));
+  try {
+    const first = await store.tryLock('refresh:a', 60000);
+    assert.ok(first);
+    assert.equal(await store.tryLock('refresh:a', 60000), null);
+    assert.ok(await store.tryLock('refresh:b', 60000), 'locks are per name');
+    await store.unlock('refresh:a', 'stale-token');
+    assert.equal(await store.isLocked('refresh:a'), true);
+    await store.unlock('refresh:a', first);
+    assert.equal(await store.isLocked('refresh:a'), false);
+    assert.ok(await store.tryLock('refresh:c', 20));
+    await delay(40);
+    assert.equal(await store.isLocked('refresh:c'), false);
+    assert.ok(await store.tryLock('refresh:c', 60000), 'an expired lease can be taken over');
+  } finally {
+    await store.close();
   }
 });

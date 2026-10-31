@@ -27,5 +27,5 @@ export function loadConfig(env = process.env) {
   const secureCookies = env.AUTH_COOKIE_SECURE !== 'false';
   if (!secureCookies && (!allowHttp || !appUrl.startsWith('http:'))) throw new Error('Insecure cookies are only supported for explicit local HTTP');
   return { appUrl, issuer, oidc, allowHttp, secureCookies, sessionTtl, sessionKey: env.AUTH_SESSION_KEY,
-    databasePath: env.AUTH_DATABASE_PATH || '/data/sessions.sqlite', port: Number(env.PORT || 3001) };
+    databasePath: env.AUTH_DATABASE_PATH || '/data/sessions.sqlite', redisUrl: env.AUTH_REDIS_URL || '', port: Number(env.PORT || 3001) };
 }

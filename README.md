@@ -17,7 +17,7 @@ menampilkan dashboard.
 | `api-gateway` | Go | REST `/api/v1` dari OpenAPI, memanggil service gRPC |
 | `envoy` | Envoy | Satu-satunya pintu masuk publik `http://localhost:8080` |
 | `token-exchange`, `zitadel-claims` | Rust | Token exchange `ext_authz` Envoy; klaim `role`/`scopes` Zitadel |
-| `auth-bridge`, `zitadel`, `auth-db` | Node.js, Zitadel, PostgreSQL | OIDC, cookie HttpOnly, sesi |
+| `auth-bridge`, `zitadel`, `auth-db`, `auth-redis` | Node.js, Zitadel, PostgreSQL, Redis | OIDC, cookie HttpOnly, sesi (Redis tanpa persistence, dibagi antar replika) |
 | `spa-server` | React + nginx | Frontend |
 | `rabbitmq` | RabbitMQ 4 | Exchange fan-out `bnpb.hazards.v1` |
 | `otel-lgtm`, `blackbox` | Grafana LGTM | Trace, metrics, log, health probe |

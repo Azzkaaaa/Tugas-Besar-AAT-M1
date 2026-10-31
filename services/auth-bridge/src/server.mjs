@@ -5,7 +5,9 @@ import { parseCookie, stringifySetCookie } from 'cookie';
 import { setTimeout as delay } from 'node:timers/promises';
 import { context, propagation, trace, INVALID_SPAN_CONTEXT, SpanKind, SpanStatusCode } from '@opentelemetry/api';
 import { loadConfig, ProvisioningPending } from './config.mjs';
-import { SessionStore, randomSecret, equal } from './store.mjs';
+import { SqliteSessionStore, randomSecret, equal } from './store.mjs';
+import { RedisSessionStore } from './redis-store.mjs';
+import { refreshOnce, waitForRefresh } from './refresh.mjs';
 import { ZitadelProvider, AuthError, requestContext } from './provider.mjs';
 
 // No-op until telemetry.mjs starts the SDK (only when run as the service, never in tests).
@@ -14,7 +16,7 @@ const tracer = trace.getTracer('auth-bridge');
 const payload = session => ({ user: session.user, csrf_token: session.csrf,
   expires_at: new Date(session.expiresAt).toISOString() });
 
-export function createAuthServer(config, { store = new SessionStore(config.databasePath, config.sessionKey),
+export function createAuthServer(config, { store = new SqliteSessionStore(config.databasePath, config.sessionKey),
   provider = new ZitadelProvider(config), logger = console.log } = {}) {
   const refreshes = new Map();
   function cookie(name, value, seconds) {
@@ -41,7 +43,7 @@ export function createAuthServer(config, { store = new SessionStore(config.datab
     if (req.headers.origin !== config.appUrl || !equal(req.headers['x-csrf-token'], session.csrf)) throw new AuthError(403, 'csrf_failed');
   }
   async function inspect(token) {
-    if (!token || store.isRevoked(token)) throw new AuthError(401, 'invalid_token');
+    if (!token || await store.isRevoked(token)) throw new AuthError(401, 'invalid_token');
     return provider.inspect(token);
   }
   async function handle(req, res) {
@@ -56,7 +58,7 @@ export function createAuthServer(config, { store = new SessionStore(config.datab
     if (url.pathname === '/auth/login' && req.method === 'GET') {
       const pending = await provider.begin();
       const binding = randomSecret();
-      store.putLogin(pending.state, binding, pending);
+      await store.putLogin(pending.state, binding, pending);
       res.setHeader('Set-Cookie', cookie('bnpb_login', binding, 600));
       res.writeHead(302, { Location: pending.url });
       return res.end();
@@ -64,15 +66,15 @@ export function createAuthServer(config, { store = new SessionStore(config.datab
     if (url.pathname === '/auth/callback' && req.method === 'GET') {
       res.setHeader('Set-Cookie', cookie('bnpb_login', '', 0));
       try {
-        const pending = store.takeLogin(url.searchParams.get('state'), cookies.bnpb_login);
+        const pending = await store.takeLogin(url.searchParams.get('state'), cookies.bnpb_login);
         if (!pending) throw new AuthError(401, 'invalid_state');
         const result = await provider.complete(url, pending);
         const session = { ...result, csrf: randomSecret(), sessionExpires: Date.now() + config.sessionTtl * 1000 };
         const id = randomSecret();
         sessionCookies(res, id, session);
-        const previous = store.getSession(cookies.bnpb_session);
-        if (previous) store.rotate(cookies.bnpb_session, previous, null);
-        store.putSession(id, session);
+        const previous = await store.getSession(cookies.bnpb_session);
+        if (previous) await store.rotate(cookies.bnpb_session, previous, null);
+        await store.putSession(id, session);
         res.appendHeader('Set-Cookie', cookie('bnpb_login', '', 0));
         res.writeHead(302, { Location: `${config.appUrl}/#/dashboard` });
       } catch {
@@ -81,7 +83,7 @@ export function createAuthServer(config, { store = new SessionStore(config.datab
       return res.end();
     }
     if (url.pathname === '/auth/session' && req.method === 'GET') {
-      const session = store.getSession(cookies.bnpb_session);
+      const session = await store.getSession(cookies.bnpb_session);
       if (!session) throw new AuthError(401, 'session_required');
       if (session.expiresAt <= Date.now() || !cookies.bnpb_access) {
         return problem(res, 401, 'refresh_required', { csrf_token: session.csrf, refresh_required: true });
@@ -94,28 +96,29 @@ export function createAuthServer(config, { store = new SessionStore(config.datab
     }
     if (url.pathname === '/auth/refresh' && req.method === 'POST') {
       const id = cookies.bnpb_session;
-      const session = store.getSession(id);
+      const session = await store.getSession(id);
       if (!session) throw new AuthError(401, 'session_required');
       csrf(req, session);
-      // One provider refresh per session at a time, including concurrent tabs.
+      // One provider refresh per session at a time: concurrent tabs on this replica share one
+      // call, and refreshOnce extends that across replicas.
       if (!refreshes.has(id)) {
-        const operation = (async () => {
+        const operation = refreshOnce(store, id, session, async () => {
           let tokens;
           try { tokens = await provider.refresh(session); }
           catch (error) {
             if (error instanceof AuthError || error.error === 'invalid_grant') {
-              store.rotate(id, session, null);
+              await store.rotate(id, session, null);
               throw new AuthError(401, 'session_expired');
             }
             throw error;
           }
-          if (!store.getSession(id)) { await provider.revoke(tokens); throw new AuthError(401, 'session_expired'); }
+          if (!(await store.getSession(id))) { await provider.revoke(tokens); throw new AuthError(401, 'session_expired'); }
           if (Buffer.byteLength(tokens.accessToken) > 3500) throw new AuthError(502, 'token_too_large');
           const next = { ...session, ...tokens };
-          store.rotate(id, session, next);
+          await store.rotate(id, session, next);
           provider.revokeAccessToken(session.accessToken).catch(() => { /* expires within the access TTL */ });
           return next;
-        })().finally(() => refreshes.delete(id));
+        }).finally(() => refreshes.delete(id));
         refreshes.set(id, operation);
       }
       const next = await refreshes.get(id);
@@ -124,12 +127,14 @@ export function createAuthServer(config, { store = new SessionStore(config.datab
     }
     if (url.pathname === '/auth/logout' && req.method === 'POST') {
       const id = cookies.bnpb_session;
-      let session = store.getSession(id);
+      let session = await store.getSession(id);
       if (!session) throw new AuthError(401, 'session_required');
       csrf(req, session);
+      // Let a refresh in flight (here or on another replica) finish, then end what it stored.
       if (refreshes.has(id)) await refreshes.get(id).catch(() => {});
-      session = store.getSession(id) || session;
-      store.rotate(id, session, null);
+      await waitForRefresh(store, id).catch(() => {});
+      session = (await store.getSession(id)) || session;
+      await store.rotate(id, session, null);
       clearCookies(res);
       // Local invalidation succeeds even if Zitadel is temporarily unreachable.
       let logoutUrl = `${config.appUrl}/`;
@@ -164,7 +169,7 @@ export function createAuthServer(config, { store = new SessionStore(config.datab
   });
   server.requestTimeout = 15000;
   server.headersTimeout = 10000;
-  const cleanup = setInterval(() => store.cleanup(), 60000);
+  const cleanup = setInterval(() => store.cleanup().catch(() => { /* retried next minute */ }), 60000);
   cleanup.unref();
   server.on('close', () => clearInterval(cleanup));
   return { server, store };
@@ -187,10 +192,16 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   const telemetry = startTelemetry();
   try {
     const config = await provisionedConfig();
-    const { server, store } = createAuthServer(config);
+    let store;
+    if (config.redisUrl) store = await RedisSessionStore.connect(config.redisUrl, config.sessionKey);
+    else {
+      console.log(JSON.stringify({ event: 'local_session_store', detail: 'AUTH_REDIS_URL is not set; sessions are per instance (single replica only)' }));
+      store = new SqliteSessionStore(config.databasePath, config.sessionKey);
+    }
+    const { server } = createAuthServer(config, { store });
     server.listen(config.port, '0.0.0.0', () => console.log(JSON.stringify({ event: 'started', port: config.port })));
     for (const signal of ['SIGINT', 'SIGTERM']) process.on(signal, () => {
-      server.close(async () => { store.close(); await telemetry?.shutdown().catch(() => {}); process.exit(0); });
+      server.close(async () => { await store.close().catch(() => {}); await telemetry?.shutdown().catch(() => {}); process.exit(0); });
       server.closeAllConnections();
     });
   } catch {

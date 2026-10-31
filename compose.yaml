@@ -98,6 +98,11 @@ services:
       file: compose.auth.yaml
       service: auth-bootstrap
 
+  auth-redis:
+    extends:
+      file: compose.auth.yaml
+      service: auth-redis
+
   auth-bridge:
     extends:
       file: compose.auth.yaml
@@ -520,7 +525,6 @@ volumes:
   zitadel_login_bootstrap:
   auth_client_config:
   auth_actions_config:
-  auth_sessions:
   bmkg_data:
   pvmbg_data:
   aggregator_data:

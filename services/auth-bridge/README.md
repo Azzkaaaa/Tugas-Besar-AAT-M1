@@ -36,12 +36,30 @@ pada kondisi itu belum dijamin.
 
 ## Penyimpanan dan akun
 
-SQLite `/data/sessions.sqlite` berada di volume `auth_sessions`. Payload sesi
-dan transaksi login dienkripsi AES-256-GCM dengan `AUTH_SESSION_KEY`; ID sesi
-serta daftar token yang ditolak diindeks dengan SHA-256. Rotasi sesi dan
-penolakan token sebelumnya dilakukan dalam satu transaksi.
+Sesi, transaksi login, dan lock refresh disimpan di Redis (`AUTH_REDIS_URL`,
+service Compose `auth-redis`) yang dipakai bersama oleh semua replika. Payload sesi
+dan transaksi login dienkripsi AES-256-GCM dengan `AUTH_SESSION_KEY`, jadi
+**semua replika harus memakai `AUTH_SESSION_KEY` yang sama**; ID sesi serta daftar
+token yang ditolak diindeks dengan SHA-256. Setiap key punya TTL sesuai datanya,
+jadi tidak ada pembersihan berkala. Rotasi sesi dan penolakan token sebelumnya
+dilakukan atomik (`MULTI`); callback login hanya bisa dipakai sekali dan hanya
+oleh browser yang memulainya (skrip Lua).
 
-SQLite ini bukan database akun. Zitadel memakai PostgreSQL volume `auth_postgres`.
+Redis berjalan tanpa persistence: bila Redis restart atau datanya hilang, semua
+pengguna harus login ulang. Token yang sudah dicabut tetap ditolak karena setiap
+token diperiksa lewat introspection Zitadel; daftar penolakan lokal hanya lapisan
+tambahan.
+
+Refresh dibatasi satu per sesi di semua replika: replika yang memegang lock
+(`SET NX PX`) memanggil Zitadel, replika lain menunggu lalu memakai sesi yang
+disimpannya. Tanpa lock ini, dua tab yang mengenai replika berbeda akan me-refresh
+dengan refresh token yang sama; Zitadel merotasi refresh token, sehingga keduanya
+ditolak dan sesi berakhir.
+
+Tanpa `AUTH_REDIS_URL` sesi disimpan di SQLite `AUTH_DATABASE_PATH` (default
+`/data/sessions.sqlite`), hanya untuk satu replika; test memakai store ini.
+
+SQLite maupun Redis ini bukan database akun. Zitadel memakai PostgreSQL volume `auth_postgres`.
 Bootstrap membuat `media-demo`, `lapangan-demo`, dan `bnpb-demo` dengan role
 masing-masing. Password berasal dari `.env.auth`. Restart/provisioning ulang
 mempertahankan password dan client secret. Mengedit password seed di env tidak
