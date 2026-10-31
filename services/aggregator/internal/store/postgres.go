@@ -46,7 +46,27 @@ func Connect(ctx context.Context, dsn string) (*DB, error) {
 	return db, nil
 }
 
+// Session advisory lock keys. Arbitrary, but fixed: every replica must use the same values.
+const (
+	migrationLockKey int64 = 0x6167675f6d696772 // "agg_migr"
+	ingestLeaderKey  int64 = 0x6167675f6c656164 // "agg_lead"
+)
+
+// Migrate applies the schema under a session advisory lock, so replicas starting together do not
+// race on CREATE ... IF NOT EXISTS (which can still fail when run concurrently).
 func (db *DB) Migrate(ctx context.Context) error {
+	conn, err := db.Pool.Acquire(ctx)
+	if err != nil {
+		return err
+	}
+	defer conn.Release()
+	if _, err := conn.Exec(ctx, "SELECT pg_advisory_lock($1)", migrationLockKey); err != nil {
+		return err
+	}
+	defer func() {
+		_, _ = conn.Exec(context.Background(), "SELECT pg_advisory_unlock($1)", migrationLockKey)
+	}()
+
 	schema := `
 	CREATE TABLE IF NOT EXISTS volcano_references (
 		volcano_id VARCHAR(64) PRIMARY KEY,
@@ -96,6 +116,13 @@ func (db *DB) Migrate(ctx context.Context) error {
 
 	CREATE INDEX IF NOT EXISTS idx_outbox_unpublished ON outbox_events (created_at ASC) WHERE published_at IS NULL AND failed_at IS NULL;
 
+	-- When a record is next due: its claim lease while a publisher holds it, its backoff after a
+	-- failed attempt. Defaults to NOW() so rows from older releases are due at once.
+	ALTER TABLE outbox_events ADD COLUMN IF NOT EXISTS next_attempt_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+	CREATE INDEX IF NOT EXISTS idx_outbox_due ON outbox_events (next_attempt_at, created_at) WHERE published_at IS NULL AND failed_at IS NULL;
+	CREATE INDEX IF NOT EXISTS idx_outbox_published ON outbox_events (published_at) WHERE published_at IS NOT NULL;
+	CREATE INDEX IF NOT EXISTS idx_outbox_failed ON outbox_events (failed_at) WHERE failed_at IS NOT NULL;
+
 	CREATE TABLE IF NOT EXISTS outbox_dead_letters (
 		event_id VARCHAR(128) PRIMARY KEY,
 		hazard_id VARCHAR(128) NOT NULL,
@@ -120,13 +147,13 @@ func (db *DB) Migrate(ctx context.Context) error {
 	ALTER TABLE ingest_watermarks ALTER COLUMN last_success_at DROP NOT NULL;
 	`
 
-	if _, err := db.Pool.Exec(ctx, schema); err != nil {
+	if _, err := conn.Exec(ctx, schema); err != nil {
 		return err
 	}
 
 	// Seed default volcanoes if empty
 	for _, v := range domain.GetAllVolcanoes() {
-		_, err := db.Pool.Exec(ctx, `
+		_, err := conn.Exec(ctx, `
 			INSERT INTO volcano_references (volcano_id, name, latitude, longitude)
 			VALUES ($1, $2, $3, $4)
 			ON CONFLICT (volcano_id) DO NOTHING

@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"encoding/json"
+	"sort"
 	"time"
 
 	"github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/aggregator/internal/telemetry"
@@ -60,18 +61,26 @@ func decodeTraceContext(raw []byte) map[string]string {
 	return carrier
 }
 
-func (db *DB) FetchUnpublishedOutbox(ctx context.Context, limit int) ([]*OutboxRecord, error) {
+// ClaimDueOutbox leases up to limit due records for lease. SKIP LOCKED makes concurrent publishers
+// (replicas, or both pods of a rolling update) take disjoint rows; a publisher that dies keeps its
+// rows only until the lease runs out. Records come back oldest first.
+func (db *DB) ClaimDueOutbox(ctx context.Context, limit int, lease time.Duration) ([]*OutboxRecord, error) {
 	if limit <= 0 {
 		limit = 50
 	}
 	query := `
-		SELECT event_id, hazard_id, source, payload, created_at, retry_count, trace_context
-		FROM outbox_events
-		WHERE published_at IS NULL AND failed_at IS NULL
-		ORDER BY created_at ASC
-		LIMIT $1
+		UPDATE outbox_events
+		SET next_attempt_at = NOW() + $2 * INTERVAL '1 millisecond'
+		WHERE event_id IN (
+			SELECT event_id FROM outbox_events
+			WHERE published_at IS NULL AND failed_at IS NULL AND next_attempt_at <= NOW()
+			ORDER BY created_at ASC
+			LIMIT $1
+			FOR UPDATE SKIP LOCKED
+		)
+		RETURNING event_id, hazard_id, source, payload, created_at, retry_count, trace_context
 	`
-	rows, err := db.Pool.Query(ctx, query, limit)
+	rows, err := db.Pool.Query(ctx, query, limit, lease.Milliseconds())
 	if err != nil {
 		return nil, err
 	}
@@ -87,6 +96,11 @@ func (db *DB) FetchUnpublishedOutbox(ctx context.Context, limit int) ([]*OutboxR
 		rec.TraceContext = decodeTraceContext(traceContext)
 		records = append(records, &rec)
 	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	// RETURNING has no order.
+	sort.Slice(records, func(i, j int) bool { return records[i].CreatedAt.Before(records[j].CreatedAt) })
 	return records, nil
 }
 
@@ -100,14 +114,50 @@ func (db *DB) MarkOutboxPublished(ctx context.Context, eventID string) error {
 	return err
 }
 
-func (db *DB) IncrementOutboxRetry(ctx context.Context, eventID, lastErr string) error {
+// RetryOutboxLater records a failed attempt; the record is due again after backoff, so it does not
+// hold up the records behind it.
+func (db *DB) RetryOutboxLater(ctx context.Context, eventID, lastErr string, backoff time.Duration) error {
 	query := `
 		UPDATE outbox_events
-		SET retry_count = retry_count + 1, last_error = $2
+		SET retry_count = retry_count + 1, last_error = $2, next_attempt_at = NOW() + $3 * INTERVAL '1 millisecond'
 		WHERE event_id = $1
 	`
-	_, err := db.Pool.Exec(ctx, query, eventID, lastErr)
+	_, err := db.Pool.Exec(ctx, query, eventID, lastErr, backoff.Milliseconds())
 	return err
+}
+
+// ReleaseOutbox makes claimed but unattempted records due at once (e.g. after the broker
+// connection dropped mid-batch) instead of waiting out their lease.
+func (db *DB) ReleaseOutbox(ctx context.Context, eventIDs []string) error {
+	if len(eventIDs) == 0 {
+		return nil
+	}
+	query := `
+		UPDATE outbox_events
+		SET next_attempt_at = NOW()
+		WHERE event_id = ANY($1) AND published_at IS NULL AND failed_at IS NULL
+	`
+	_, err := db.Pool.Exec(ctx, query, eventIDs)
+	return err
+}
+
+// PruneOutbox deletes up to limit records published or dead-lettered before retention ago
+// (dead letters stay in outbox_dead_letters). It returns how many it deleted.
+func (db *DB) PruneOutbox(ctx context.Context, retention time.Duration, limit int) (int64, error) {
+	query := `
+		DELETE FROM outbox_events
+		WHERE event_id IN (
+			SELECT event_id FROM outbox_events
+			WHERE published_at < NOW() - $1 * INTERVAL '1 millisecond'
+			   OR failed_at < NOW() - $1 * INTERVAL '1 millisecond'
+			LIMIT $2
+		)
+	`
+	tag, err := db.Pool.Exec(ctx, query, retention.Milliseconds(), limit)
+	if err != nil {
+		return 0, err
+	}
+	return tag.RowsAffected(), nil
 }
 
 func (db *DB) FailOutboxRecord(ctx context.Context, rec *OutboxRecord, reason string) error {
@@ -141,4 +191,3 @@ func (db *DB) FailOutboxRecord(ctx context.Context, rec *OutboxRecord, reason st
 
 	return tx.Commit(ctx)
 }
-

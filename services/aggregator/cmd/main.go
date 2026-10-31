@@ -5,6 +5,7 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
 	"time"
 
@@ -65,13 +66,17 @@ func main() {
 	pub := broker.NewOutboxPublisher(cfg, db)
 	pub.Start(ctx)
 
-	// 3. Initialize & Start Ingestion Pollers
-	log.Println("[Aggregator] Starting upstream ingestion pollers (BMKG & PVMBG)...")
-	bmkgPoller := ingest.NewBMKGPoller(cfg, db)
-	go bmkgPoller.Start(ctx)
-
-	pvmbgPoller := ingest.NewPVMBGPoller(cfg, db)
-	go pvmbgPoller.Start(ctx)
+	// 3. Ingestion pollers and outbox pruning run on one replica only (the ingest leader); every
+	// replica publishes the outbox and serves gRPC.
+	log.Println("[Aggregator] Waiting for ingest leadership to start pollers (BMKG & PVMBG)...")
+	go db.RunAsIngestLeader(ctx, func(ctx context.Context) {
+		var wg sync.WaitGroup
+		wg.Add(3)
+		go func() { defer wg.Done(); ingest.NewBMKGPoller(cfg, db).Start(ctx) }()
+		go func() { defer wg.Done(); ingest.NewPVMBGPoller(cfg, db).Start(ctx) }()
+		go func() { defer wg.Done(); broker.RunOutboxPruner(ctx, db, cfg.OutboxRetention) }()
+		wg.Wait()
+	})
 
 	// 4. Initialize Auth JWT Verifier. Discovery and JWKS load in the background (retried until the
 	// issuer behind Envoy answers), so ingestion never waits on auth; only bad config is fatal.

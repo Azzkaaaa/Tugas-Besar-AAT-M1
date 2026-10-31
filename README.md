@@ -242,6 +242,7 @@ Variabel shell mengalahkan nilai dari `--env-file`. Variabel `VITE_*`/`FIREBASE_
 | `FEED_REDIS_URL` | Compose: `redis://feed-redis.local:6379/0` | Kosong di luar Compose = buffer di memori, satu replika |
 | `WEBHOOK_MAX_RETRIES` / `WEBHOOK_HTTP_TIMEOUT_MS` | `5` / `10000` | Retry dan timeout pengiriman webhook |
 | `OUTBOX_MAX_RETRIES` | `5` | Retry publish outbox aggregator |
+| `OUTBOX_RETENTION_HOURS` | `168` | Lama baris outbox aggregator yang sudah terbit/di-dead-letter disimpan |
 
 ### `.env` — penyimpanan dan RabbitMQ
 
