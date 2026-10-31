@@ -12,15 +12,14 @@ import (
 	"syscall"
 	"time"
 
-	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
 	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials/insecure"
 
 	aggregatorv1 "github.com/Azzkaaaa/Tugas-Besar-AAT-M1/packages/bnpb-aggregator-go/bnpb/aggregator/v1"
 	feedv1 "github.com/Azzkaaaa/Tugas-Besar-AAT-M1/packages/bnpb-aggregator-go/bnpb/feed/v1"
 	notificationv1 "github.com/Azzkaaaa/Tugas-Besar-AAT-M1/packages/bnpb-aggregator-go/bnpb/notification/v1"
 	webhookv1 "github.com/Azzkaaaa/Tugas-Besar-AAT-M1/packages/bnpb-aggregator-go/bnpb/webhook/v1"
 
+	"github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/api-gateway/internal/backend"
 	"github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/api-gateway/internal/config"
 	"github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/api-gateway/internal/contract"
 	"github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/api-gateway/internal/handlers"
@@ -70,13 +69,8 @@ func run(cfg config.Config) error {
 		}
 	}()
 	dial := func(address string) (*grpc.ClientConn, error) {
-		// Connections are lazy: a missing backend yields 503 on its routes only.
-		// No service config is used, so skip its _grpc_config TXT lookup: a resolver that is slow to
-		// answer missing records otherwise holds every call for ~10 s after each (re)connect.
-		conn, err := grpc.NewClient(address,
-			grpc.WithTransportCredentials(insecure.NewCredentials()),
-			grpc.WithDisableServiceConfig(),
-			grpc.WithStatsHandler(otelgrpc.NewClientHandler()))
+		// Round-robin over every replica DNS returns, re-resolved every ResolveInterval.
+		conn, err := backend.Dial(address, cfg.ResolveInterval)
 		if err == nil {
 			conns = append(conns, conn)
 		}

@@ -15,12 +15,13 @@ use tonic_health::pb::HealthCheckRequest;
 use tonic_health::pb::health_check_response::ServingStatus as CheckStatus;
 use tonic_health::pb::health_client::HealthClient;
 
-use crate::adapters::inbound::cursor::CursorCodec;
 use crate::adapters::inbound::grpc::FeedGrpc;
 use crate::adapters::inbound::rabbitmq::{Consumer, FEED_SERVICE_NAME};
 use crate::adapters::inbound::session::SessionPolicy;
 use crate::adapters::outbound::memory_store::MemoryStore;
 use crate::adapters::outbound::oidc::{JwksVerifier, Oidc, ZitadelTokenExchange};
+use crate::adapters::outbound::redis_store::RedisStore;
+use crate::adapters::outbound::store::Store;
 use crate::config::Config;
 use crate::core::feed::FeedService;
 
@@ -54,8 +55,15 @@ fn main() -> ExitCode {
     }
 }
 
-async fn run(config: Config) -> Result<(), tonic::transport::Error> {
-    let feed = Arc::new(FeedService::new(Arc::new(MemoryStore::new(config.replay_retention, config.replay_max_entries))));
+async fn run(config: Config) -> Result<(), String> {
+    let store = match &config.redis_url {
+        Some(url) => Store::Redis(RedisStore::connect(url, config.replay_retention, config.replay_max_entries).await?),
+        None => {
+            tracing::warn!("FEED_REDIS_URL is not set; the replay buffer is in process memory (single replica only)");
+            Store::Memory(MemoryStore::new(config.replay_retention, config.replay_max_entries))
+        }
+    };
+    let feed = Arc::new(FeedService::new(Arc::new(store)));
     let oidc = Arc::new(Oidc::new(config.auth_authority));
     let verifier = Arc::new(JwksVerifier::new(oidc.clone()));
     let renewer = config.exchange_client.map(|client| Arc::new(ZitadelTokenExchange::new(oidc, client)));
@@ -69,6 +77,7 @@ async fn run(config: Config) -> Result<(), tonic::transport::Error> {
     let consumer = tokio::spawn(
         Consumer {
             feed: feed.clone(),
+            store_down: Default::default(),
             url: config.amqp_url,
             exchange: config.exchange,
             queue: config.queue,
@@ -78,13 +87,8 @@ async fn run(config: Config) -> Result<(), tonic::transport::Error> {
         .run(),
     );
 
-    let grpc = FeedGrpc {
-        cursors: Arc::new(CursorCodec::new(feed.epoch())),
-        feed,
-        verifier,
-        renewer,
-        policy: SessionPolicy { renew_before: config.renew_before, max_stream: config.max_stream },
-    };
+    let grpc =
+        FeedGrpc { feed, verifier, renewer, policy: SessionPolicy { renew_before: config.renew_before, max_stream: config.max_stream } };
     let address = SocketAddr::from((Ipv4Addr::UNSPECIFIED, config.port));
     let (stop, stopped) = tokio::sync::oneshot::channel::<()>();
     let mut server = tokio::spawn(
@@ -108,7 +112,7 @@ async fn run(config: Config) -> Result<(), tonic::transport::Error> {
     };
     consumer.abort();
     server.abort();
-    result.unwrap_or(Ok(()))
+    result.unwrap_or(Ok(())).map_err(|error| error.to_string())
 }
 
 async fn shutdown_signal() {

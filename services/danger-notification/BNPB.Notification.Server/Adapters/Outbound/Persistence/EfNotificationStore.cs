@@ -5,6 +5,7 @@ using BNPB.Common.V1;
 using BNPB.Event.V1;
 using Google.Protobuf;
 using Microsoft.EntityFrameworkCore;
+using Npgsql;
 using BNPB.Notification.Server.Adapters.Exceptions;
 using BNPB.Notification.Server.Adapters.Models;
 using BNPB.Notification.Server.Core.Models;
@@ -21,6 +22,7 @@ namespace BNPB.Notification.Server.Adapters.Outbound.Persistence;
 public class EfNotificationStore : IMessageStore, IPushOutbox, IMessageProvider, IMessageListProvider
 {
   private const char CursorDelimiter = '.';
+  private const int MaxUpsertAttempts = 5;
 
   private readonly ILogger<EfNotificationStore> _logger;
   private readonly IDbContextFactory<NotificationDbContext> _contextFactory;
@@ -51,8 +53,30 @@ public class EfNotificationStore : IMessageStore, IPushOutbox, IMessageProvider,
     HazardNotification message,
     CancellationToken cancellationToken)
   {
+    for (var attempt = 1; ; attempt++)
+    {
+      try
+      {
+        await UpsertOnceAsync(message, cancellationToken);
+        return;
+      }
+      catch (Exception ex) when (attempt < MaxUpsertAttempts && IsWriteConflict(ex))
+      {
+        // Another replica changed the row (or inserted the same event) first: start over,
+        // so the retry sees its write and merges into it.
+        _logger.LogDebug(ex, "Write conflict on notification {NotificationId}; retrying", message.Id);
+      }
+    }
+  }
+
+  // SQLite: Microsoft.Data.Sqlite begins IMMEDIATE transactions, so writers are serialized.
+  // Postgres: replicas write concurrently. A per-hazard advisory lock orders revisions of one
+  // hazard; the xmin row version and unique indexes turn other races into a retried conflict.
+  private async Task UpsertOnceAsync(
+    HazardNotification message,
+    CancellationToken cancellationToken)
+  {
     await using var db = await _contextFactory.CreateDbContextAsync(cancellationToken);
-    // Microsoft.Data.Sqlite begins IMMEDIATE transactions, so writers are serialized.
     await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
 
     var record = await db.Notifications.FindAsync([message.Id], cancellationToken);
@@ -80,6 +104,16 @@ public class EfNotificationStore : IMessageStore, IPushOutbox, IMessageProvider,
 
     await using var db = await _contextFactory.CreateDbContextAsync(cancellationToken);
 
+    if (db.Database.IsNpgsql())
+    {
+      var claimed = await ClaimSkipLockedAsync(db, token, now, leaseExpiresAt, maxAttempts, limit, cancellationToken);
+
+      if (claimed.Count == limit) _signal.Notify();
+
+      return claimed.Select(record => ToClaimedNotification(record, token)).ToList();
+    }
+
+    // SQLite: the IMMEDIATE transaction keeps the select and the update atomic.
     await using (var transaction = await db.Database.BeginTransactionAsync(cancellationToken))
     {
       var ids = await db.Notifications
@@ -118,6 +152,47 @@ public class EfNotificationStore : IMessageStore, IPushOutbox, IMessageProvider,
       .ToListAsync(cancellationToken);
 
     return records.Select(record => ToClaimedNotification(record, token)).ToList();
+  }
+
+  // One statement, so replicas polling together never claim the same row: SKIP LOCKED passes
+  // over rows another claim is about to lease.
+  private static async Task<List<NotificationRecord>> ClaimSkipLockedAsync(
+    NotificationDbContext db,
+    Guid token,
+    long now,
+    long leaseExpiresAt,
+    int maxAttempts,
+    int limit,
+    CancellationToken cancellationToken)
+  {
+    var pending = (int)EPushStatus.Pending;
+    var failed = (int)EPushStatus.Failed;
+
+    var records = await db.Notifications
+      .FromSql($"""
+        UPDATE notifications
+        SET "LeaseToken" = {token}, "LeaseExpiresAt" = {leaseExpiresAt}
+        WHERE "Id" IN (
+          SELECT "Id" FROM notifications
+          WHERE "IsCurrent"
+            AND ("LeaseExpiresAt" IS NULL OR "LeaseExpiresAt" <= {now})
+            AND ("PushStatus" = {pending}
+              OR ("PushStatus" = {failed}
+                AND "FailedPushAttempts" < {maxAttempts}
+                AND "NextPushAttemptAt" <= {now}))
+          ORDER BY "CreatedAt", "Id"
+          LIMIT {limit}
+          FOR UPDATE SKIP LOCKED)
+        RETURNING *, xmin
+        """)
+      .AsNoTracking()
+      .ToListAsync(cancellationToken);
+
+    // RETURNING has no order.
+    return records
+      .OrderBy(r => r.CreatedAt)
+      .ThenBy(r => r.Id, StringComparer.Ordinal)
+      .ToList();
   }
 
   public async Task ReleasePushesAsync(
@@ -253,6 +328,14 @@ public class EfNotificationStore : IMessageStore, IPushOutbox, IMessageProvider,
     var publishedAt = envelope.OccurredAt.ToDateTimeOffset().ToUnixTimeMilliseconds();
     var id = message.Id;
 
+    // Held until commit: concurrent revisions of this hazard supersede in order.
+    if (db.Database.IsNpgsql())
+    {
+      await db.Database.ExecuteSqlAsync(
+        $"SELECT pg_advisory_xact_lock(hashtextextended({hazardId}, 0))",
+        cancellationToken);
+    }
+
     var outdated = await db.Notifications.AnyAsync(r =>
       r.HazardId == hazardId
       && r.IsCurrent
@@ -342,6 +425,19 @@ public class EfNotificationStore : IMessageStore, IPushOutbox, IMessageProvider,
 
     return true;
   }
+
+  private static bool IsWriteConflict(Exception ex) => ex switch
+  {
+    DbUpdateConcurrencyException => true,
+    DbUpdateException { InnerException: PostgresException pg } => IsRetryable(pg),
+    PostgresException pg => IsRetryable(pg),
+    _ => false,
+  };
+
+  private static bool IsRetryable(PostgresException ex) => ex.SqlState is
+    PostgresErrorCodes.UniqueViolation or
+    PostgresErrorCodes.SerializationFailure or
+    PostgresErrorCodes.DeadlockDetected;
 
   private long Backoff(int failedAttempts)
   {

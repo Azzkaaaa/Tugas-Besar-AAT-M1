@@ -16,6 +16,8 @@ pub struct Config {
     pub dead_letter_queue: Option<String>,
     pub replay_retention: Duration,
     pub replay_max_entries: usize,
+    /// Shared replay store; unset keeps the replay buffer in process memory (one replica).
+    pub redis_url: Option<String>,
     pub auth_authority: String,
     pub exchange_client: Option<ClientCredentials>,
     pub renew_before: Duration,
@@ -32,6 +34,7 @@ impl Config {
             dead_letter_queue: optional("EVENT_FEED_CONSUMER_DLQ")?,
             replay_retention: Duration::from_secs(number("FEED_REPLAY_RETENTION_SECONDS", 600)?),
             replay_max_entries: number("FEED_REPLAY_MAX_ENTRIES", 10_000)?,
+            redis_url: optional("FEED_REDIS_URL")?,
             auth_authority: optional("FEED_AUTH_AUTHORITY")?
                 .unwrap_or_else(|| "http://auth.localhost:8080".into())
                 .trim_end_matches('/')

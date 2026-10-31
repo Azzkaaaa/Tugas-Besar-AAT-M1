@@ -14,12 +14,12 @@ use tonic::{Request, Response, Status};
 use tracing::Instrument;
 use tracing_opentelemetry::OpenTelemetrySpanExt;
 
-use crate::adapters::inbound::cursor::{Binding, CursorCodec, CursorError};
+use crate::adapters::inbound::cursor::{self, Binding, CursorError};
 use crate::adapters::inbound::hazard::{Filter, authorize, project, resolve_view};
 use crate::adapters::inbound::session::{SessionPolicy, supervise};
 use crate::core::feed::{FeedError, FeedService, FeedSubscription};
 use crate::core::models::FeedEntry;
-use crate::core::ports::{ActorVerifier, AuthError, ReplayStore, TokenRenewer};
+use crate::core::ports::{ActorVerifier, AuthError, Position, ReplayStore, StreamMeta, TokenRenewer};
 use crate::telemetry;
 
 const CORRELATION_HEADER: &str = "x-correlation-id";
@@ -29,7 +29,6 @@ pub struct FeedGrpc<S, V, R> {
     pub feed: Arc<FeedService<S>>,
     pub verifier: Arc<V>,
     pub renewer: Option<Arc<R>>,
-    pub cursors: Arc<CursorCodec>,
     pub policy: SessionPolicy,
 }
 
@@ -57,12 +56,16 @@ impl<S: ReplayStore, V: ActorVerifier, R: TokenRenewer> EventFeedService for Fee
         let binding = Binding { subject: &actor.subject, view, filter: &filter };
         let after = match request.resume_after.as_deref().filter(|cursor| !cursor.is_empty()) {
             None => None,
-            Some(cursor) => Some(self.cursors.decode(cursor, &binding).map_err(|error| match error {
-                CursorError::Invalid => Status::invalid_argument("resume_after is not a cursor of this feed, client and view"),
-                CursorError::Expired => expired(),
-            })?),
+            Some(resume_after) => {
+                let meta = self.feed.meta();
+                let sequence = cursor::decode(&meta, resume_after, &binding).map_err(|error| match error {
+                    CursorError::Invalid => Status::invalid_argument("resume_after is not a cursor of this feed, client and view"),
+                    CursorError::Expired => expired(),
+                })?;
+                Some(Position { epoch: meta.epoch, sequence })
+            }
         };
-        let subscription = self.feed.subscribe(after).map_err(feed_status)?;
+        let subscription = self.feed.subscribe(after).instrument(span.clone()).await.map_err(feed_status)?;
 
         let (events, data) = mpsc::channel(STREAM_BUFFER);
         let (end, ended) = mpsc::channel(2);
@@ -73,7 +76,7 @@ impl<S: ReplayStore, V: ActorVerifier, R: TokenRenewer> EventFeedService for Fee
                 let _ = end.try_send(session.await);
             })
         };
-        let forward = Forward { cursors: self.cursors.clone(), subject: actor.subject, view, filter };
+        let forward = Forward { meta: subscription.meta(), subject: actor.subject, view, filter };
         let pump = tokio::spawn(forward.run(subscription, events, end).instrument(span));
 
         let mut response = Response::new(FeedStream { data, ended, _tasks: [AbortOnDrop(session), AbortOnDrop(pump)], done: false });
@@ -98,12 +101,13 @@ fn feed_status(error: FeedError) -> Status {
     match error {
         FeedError::Expired => expired(),
         FeedError::Closed => Status::unavailable("feed is shutting down"),
+        FeedError::Unavailable => Status::unavailable("replay store is unavailable"),
     }
 }
 
 /// Filters, projects and forwards entries for one subscription.
 struct Forward {
-    cursors: Arc<CursorCodec>,
+    meta: StreamMeta,
     subject: String,
     view: View,
     filter: Filter,
@@ -144,7 +148,7 @@ impl Forward {
             "feed.deliver",
             feed.sequence = entry.sequence,
             feed.view = self.view.as_str_name(),
-            feed.lag_ms = u64::try_from(entry.stored_at.elapsed().as_millis()).unwrap_or(u64::MAX),
+            feed.lag_ms = u64::try_from(entry.stored_at.elapsed().unwrap_or_default().as_millis()).unwrap_or(u64::MAX),
             event.id = %entry.publication.event_id,
             hazard.id = %entry.publication.hazard.hazard_id,
         );
@@ -163,7 +167,7 @@ impl Forward {
                 sequence: entry.sequence,
                 hazard: Some(project(&entry.publication.hazard, self.view)),
                 published_at: entry.publication.published_at,
-                resume_cursor: self.cursors.encode(entry.sequence, &binding),
+                resume_cursor: cursor::encode(&self.meta, entry.sequence, &binding),
             }),
         }
     }
@@ -251,8 +255,7 @@ mod tests {
     fn service() -> (FeedGrpc<MemoryStore, Verifier, NoRenewer>, Arc<FeedService<MemoryStore>>) {
         let feed = Arc::new(FeedService::new(Arc::new(MemoryStore::with_epoch(5, Duration::from_secs(600), 100))));
         let policy = SessionPolicy { renew_before: Duration::from_secs(15), max_stream: Duration::from_secs(3600) };
-        let grpc =
-            FeedGrpc { feed: feed.clone(), verifier: Arc::new(Verifier), renewer: None, cursors: Arc::new(CursorCodec::new(5)), policy };
+        let grpc = FeedGrpc { feed: feed.clone(), verifier: Arc::new(Verifier), renewer: None, policy };
         (grpc, feed)
     }
 
@@ -305,9 +308,9 @@ mod tests {
         let response = grpc.subscribe_events(request("media", seismic())).await.unwrap();
         assert_eq!(response.metadata().get(CORRELATION_HEADER).unwrap(), "corr-1");
         let mut stream = response.into_inner();
-        feed.ingest(publication("v1", Source::Pvmbg, HazardType::Volcanic));
-        feed.ingest(publication("s1", Source::Bmkg, HazardType::Seismic));
-        feed.ingest(publication("s2", Source::Bmkg, HazardType::Seismic));
+        feed.ingest(publication("v1", Source::Pvmbg, HazardType::Volcanic)).await.unwrap();
+        feed.ingest(publication("s1", Source::Bmkg, HazardType::Seismic)).await.unwrap();
+        feed.ingest(publication("s2", Source::Bmkg, HazardType::Seismic)).await.unwrap();
 
         let first = stream.next().await.unwrap().unwrap().event.unwrap();
         assert_eq!((first.event_id.as_str(), first.sequence), ("s1", 2));
@@ -351,8 +354,8 @@ mod tests {
         matching.trace = crate::telemetry::carrier(&consume);
         let mut filtered = publication("v1", Source::Pvmbg, HazardType::Volcanic);
         filtered.trace = matching.trace.clone();
-        feed.ingest(filtered);
-        feed.ingest(matching);
+        feed.ingest(filtered).await.unwrap();
+        feed.ingest(matching).await.unwrap();
         assert_eq!(stream.next().await.unwrap().unwrap().event.unwrap().event_id, "s1");
         drop(stream);
         drop(consume);

@@ -9,8 +9,10 @@ Consumer dan service baca notifikasi gRPC (.NET) pada port **9095**, melalui
   RPC `ListNotifications` dan `GetNotification` dari Gateway.
 - **Output:** notifikasi turunan hazard **SIAGA/AWAS**, lengkap dengan proyeksi
   yang diizinkan bagi aktor. Teks pesan hanya dibangun dari field ringkasan.
-- **Storage:** store SQLite milik sendiri (EF Core, `ConnectionStrings:Notifications`,
-  volume `notification_data`). Satu notifikasi per `event_id` berisi snapshot
+- **Storage:** store Postgres milik sendiri (EF Core, service Compose
+  `notification-db`; `Persistence:Provider=postgres` dan
+  `ConnectionStrings:Notifications`). Tanpa konfigurasi tersebut service memakai
+  file SQLite lokal (satu replika saja; juga dipakai oleh test). Satu notifikasi per `event_id` berisi snapshot
   hazard saat notifikasi dibuat. Revisi SIAGA/AWAS yang lebih baru untuk
   `hazard_id` yang sama membuat revisi lama *usang*: tidak dikembalikan oleh
   List/Get, tidak dikirim ke FCM, dan `push_status`-nya menjadi `UNSPECIFIED`
@@ -21,12 +23,21 @@ Consumer dan service baca notifikasi gRPC (.NET) pada port **9095**, melalui
   hanya menyimpan notifikasi `PENDING` lalu ack; worker outbox mengklaim baris
   dengan lease (token + kedaluwarsa), mengirim ke topic FCM, lalu mencatat
   `DELIVERED` atau `FAILED`. `FAILED` dicoba ulang dengan backoff eksponensial
-  sampai `Outbox:MaxAttempts`. Port outbox (`IPushOutbox`) berbasis klaim/lease
-  sehingga beberapa dispatcher aman dijalankan bila store diganti ke database
-  jaringan; SQLite sendiri tetap berarti satu replika. Skema dibuat lewat migrasi
-  EF Core saat startup (`dotnet tool restore && dotnet ef migrations add <Nama>
-  --output-dir Adapters/Outbound/Persistence/Migrations` dari
-  `BNPB.Notification.Server`).
+  sampai `Outbox:MaxAttempts`.
+- **Banyak replika (Postgres):** klaim outbox memakai satu `UPDATE … FOR UPDATE
+  SKIP LOCKED`, sehingga replika yang polling bersamaan tidak pernah mengklaim
+  baris yang sama. Revisi dari hazard yang sama diserialkan dengan advisory lock
+  per `hazard_id`; partial unique index menjamin paling banyak satu revisi
+  *current* per hazard, dan row version `xmin` mengubah tulisan yang bertabrakan
+  menjadi konflik yang diulang. Di SQLite transaksi IMMEDIATE sudah menyerialkan
+  penulis.
+- **Migrasi:** dijalankan saat startup; EF memegang migration lock sehingga
+  replika yang start bersamaan aman. Setiap provider punya context dan set
+  migrasi sendiri; perubahan model butuh keduanya (`dotnet tool restore`, lalu
+  dari `BNPB.Notification.Server`: `dotnet ef migrations add <Nama> --context
+  PostgresNotificationDbContext --output-dir Adapters/Outbound/Persistence/Migrations/Postgres`
+  dan sama untuk `SqliteNotificationDbContext` ke `Migrations/Sqlite`). Migrasi
+  harus kompatibel dengan versi sebelumnya (expand/contract) agar rollback aman.
 - **Tanggung jawab:** deduplikasi event, persistensi sebelum ack, filter/order
   sesuai kontrak, dan scope notifikasi beserta scope hazard. Freshness sumber
   diminta lewat API Aggregator; metadata ini bukan jaminan consumer sudah

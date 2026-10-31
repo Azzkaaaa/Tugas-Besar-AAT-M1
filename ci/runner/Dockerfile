@@ -186,5 +186,28 @@ RUN set -eux; \
     rm -rf /tmp/*; \
     trivy --version
 
+# ---------------------------------------------------------------------------
+# Ruff (Python lint for the mock services): release tarball
+# ---------------------------------------------------------------------------
+ARG RUFF_VERSION=0.17.0
+RUN set -eux; \
+    case "$(dpkg --print-architecture)" in \
+        amd64) \
+            ARCH='x86_64'; \
+            ruffSha256='c94fc1dc71f054d06d9f1149442dcb471516aa2b7d4b7e8124e05d082d4c91d3'; \
+            ;; \
+        arm64) \
+            ARCH='aarch64'; \
+            ruffSha256='294e181ba6ccb0c2ffd778580e3c42b19f038bdbcb844f39fd9a6a26e8148804'; \
+            ;; \
+        *) echo >&2 "unsupported architecture"; exit 1 ;; \
+    esac; \
+    tarball="ruff-${ARCH}-unknown-linux-gnu.tar.gz"; \
+    curl -fsSLo "/tmp/${tarball}" "https://github.com/astral-sh/ruff/releases/download/${RUFF_VERSION}/${tarball}"; \
+    echo "${ruffSha256} */tmp/${tarball}" | sha256sum -c -; \
+    tar -xzf "/tmp/${tarball}" -C /usr/local/bin --no-same-owner --strip-components=1 "ruff-${ARCH}-unknown-linux-gnu/ruff"; \
+    rm -rf /tmp/*; \
+    ruff --version
+
 WORKDIR /workspace
 CMD ["bash"]

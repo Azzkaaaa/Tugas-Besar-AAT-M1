@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use bnpb_common::bnpb::common::v1::Source;
@@ -20,7 +21,7 @@ use tracing_opentelemetry::OpenTelemetrySpanExt;
 
 use crate::core::feed::FeedService;
 use crate::core::models::Publication;
-use crate::core::ports::ReplayStore;
+use crate::core::ports::{ReplayStore, StoreUnavailable};
 use crate::telemetry;
 
 pub const FEED_SERVICE_NAME: &str = "bnpb.feed.v1.EventFeedService";
@@ -30,6 +31,8 @@ const RECONNECT_MAX: Duration = Duration::from_secs(30);
 
 pub struct Consumer<S> {
     pub feed: Arc<FeedService<S>>,
+    /// Set while appends fail; health stays NOT_SERVING until one succeeds.
+    pub store_down: AtomicBool,
     pub url: String,
     pub exchange: String,
     pub queue: String,
@@ -76,7 +79,9 @@ impl<S: ReplayStore> Consumer<S> {
             channel.basic_consume(&self.queue, CONSUMER_TAG, BasicConsumeOptions::default(), FieldTable::default()).await?;
         tracing::info!(queue = %self.queue, "consuming hazard events");
         *backoff = RECONNECT_MIN;
-        self.set_health(ServingStatus::Serving).await;
+        if !self.store_down.load(Ordering::Relaxed) {
+            self.set_health(ServingStatus::Serving).await;
+        }
         while let Some(delivery) = deliveries.next().await {
             self.handle(delivery?).await?;
         }
@@ -119,11 +124,30 @@ impl<S: ReplayStore> Consumer<S> {
                     // Subscriber deliveries become children of this span (see grpc::Forward).
                     publication.trace = telemetry::carrier(&span);
                     let event_id = publication.event_id.clone();
-                    let stored = self.feed.ingest(publication);
-                    span.record("feed.duplicate", !stored);
-                    // Ack only after the entry is in the replay buffer; redeliveries are deduplicated.
-                    delivery.ack(BasicAckOptions::default()).await?;
-                    tracing::debug!(%event_id, duplicate = !stored, "hazard event processed");
+                    match self.feed.ingest(publication).await {
+                        Ok(stored) => {
+                            span.record("feed.duplicate", !stored);
+                            // Ack only after the entry is in the replay buffer; redeliveries are deduplicated.
+                            delivery.ack(BasicAckOptions::default()).await?;
+                            if self.store_down.swap(false, Ordering::Relaxed) {
+                                tracing::info!("replay store reachable again");
+                                self.set_health(ServingStatus::Serving).await;
+                            }
+                            tracing::debug!(%event_id, duplicate = !stored, "hazard event processed");
+                        }
+                        Err(StoreUnavailable) => {
+                            span.record("otel.status_code", "ERROR");
+                            span.record("otel.status_message", "replay store unavailable");
+                            if !self.store_down.swap(true, Ordering::Relaxed) {
+                                tracing::warn!(%event_id, "replay store unavailable; requeueing until it is back");
+                                self.set_health(ServingStatus::NotServing).await;
+                            }
+                            // Never ack an event that wasn't stored. The pause keeps the requeue
+                            // from spinning while the store is down.
+                            tokio::time::sleep(RECONNECT_MIN).await;
+                            delivery.nack(BasicNackOptions { requeue: true, ..Default::default() }).await?;
+                        }
+                    }
                 }
                 Err(reason) => {
                     // Malformed envelopes never succeed on retry: dead-letter immediately.

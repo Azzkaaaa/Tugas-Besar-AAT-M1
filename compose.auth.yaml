@@ -195,20 +195,35 @@ services:
       AUTH_ALLOW_HTTP: "true"
       AUTH_COOKIE_SECURE: "false"
       AUTH_SESSION_KEY: "${AUTH_SESSION_KEY:?Run python tools/setup_auth_env.py}"
-      AUTH_DATABASE_PATH: /data/sessions.sqlite
+      # Sessions shared by every replica (ephemeral: a Redis restart logs everyone out).
+      AUTH_REDIS_URL: redis://auth-redis:6379/0
       AUTH_SESSION_TTL_SECONDS: "${AUTH_SESSION_TTL_SECONDS:-86400}"
     volumes:
       - auth_client_config:/bootstrap:ro
-      - auth_sessions:/data
     # Starts before auth-bootstrap and waits for oidc.json (see provisionedConfig in server.mjs).
     depends_on:
       zitadel: {condition: service_healthy}
+      auth-redis: {condition: service_healthy}
     healthcheck:
       test: [CMD, node, -e, "fetch('http://127.0.0.1:3001/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
       start_period: 300s
       interval: 5s
       timeout: 5s
       retries: 20
+    restart: unless-stopped
+    networks: [bnpb_net]
+
+  # auth-bridge sessions, login transactions and refresh locks. Ephemeral by choice: losing it
+  # logs every user out, while Zitadel still rejects revoked tokens. noeviction makes a full
+  # Redis fail writes instead of silently dropping sessions.
+  auth-redis:
+    image: redis:8
+    command: ["redis-server", "--save", "", "--appendonly", "no", "--maxmemory", "64mb", "--maxmemory-policy", "noeviction"]
+    healthcheck:
+      test: [CMD, redis-cli, ping]
+      interval: 5s
+      timeout: 5s
+      retries: 5
     restart: unless-stopped
     networks: [bnpb_net]
 
@@ -306,4 +321,3 @@ volumes:
   zitadel_login_bootstrap:
   auth_client_config:
   auth_actions_config:
-  auth_sessions:

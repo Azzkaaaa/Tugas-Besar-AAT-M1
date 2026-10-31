@@ -12,6 +12,18 @@
         "{projectRoot}/**/*.py"
       ]
     },
+    "test": {
+      "executor": "nx:run-commands",
+      "options": { "command": "python3 -m unittest discover -p 'test_*.py'", "cwd": "{projectRoot}" },
+      "cache": true,
+      "inputs": ["{projectRoot}/**/*.py"]
+    },
+    "lint": {
+      "executor": "nx:run-commands",
+      "options": { "command": "ruff check .", "cwd": "{projectRoot}" },
+      "cache": true,
+      "inputs": ["{projectRoot}/**/*.py", "{workspaceRoot}/ruff.toml"]
+    },
     "build": {
       "executor": "nx:run-commands",
       "options": { "command": "docker buildx build --push -f services/pvmbg-mock/Dockerfile -t \"$PROJECT_IMAGE_REMOTE/pvmbg-mock:$(git rev-parse HEAD)\" -t bnpb/pvmbg-mock .", "cwd": "{workspaceRoot}" },

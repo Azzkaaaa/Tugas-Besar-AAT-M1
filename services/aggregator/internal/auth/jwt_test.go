@@ -20,10 +20,10 @@ import (
 // --------------------------------------------------------------------------
 
 type testJWKSServer struct {
-	server     *httptest.Server
-	key        *rsa.PrivateKey
-	kid        string
-	extraKeys  map[string]*rsa.PrivateKey // for rotation tests
+	server    *httptest.Server
+	key       *rsa.PrivateKey
+	kid       string
+	extraKeys map[string]*rsa.PrivateKey // for rotation tests
 }
 
 func newTestJWKSServer(t *testing.T) *testJWKSServer {

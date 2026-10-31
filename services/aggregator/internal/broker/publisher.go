@@ -16,6 +16,15 @@ import (
 	"go.opentelemetry.io/otel/trace"
 )
 
+const (
+	outboxBatchSize = 20
+	// outboxLease covers publishing a whole batch, each with a broker confirm; a publisher that dies
+	// mid-batch leaves its records to the others after this long.
+	outboxLease       = 30 * time.Second
+	outboxBaseBackoff = time.Second
+	outboxMaxBackoff  = time.Minute
+)
+
 type OutboxPublisher struct {
 	cfg  *config.Config
 	db   *store.DB
@@ -121,14 +130,20 @@ func (p *OutboxPublisher) processOutboxLoop(ctx context.Context) {
 			}
 			return
 		case <-ticker.C:
-			records, err := p.db.FetchUnpublishedOutbox(ctx, 20)
-			if err != nil || len(records) == 0 {
+			records, err := p.db.ClaimDueOutbox(ctx, outboxBatchSize, outboxLease)
+			if err != nil {
+				log.Printf("[OutboxPublisher] Failed claiming outbox events: %v", err)
 				continue
 			}
 
-			for _, rec := range records {
+			for i, rec := range records {
 				pubErr := p.publishOne(ctx, rec)
 				if pubErr != nil {
+					if ctx.Err() != nil {
+						// Shutting down: not the record's fault, hand the rest back at once.
+						p.release(records[i:])
+						return
+					}
 					log.Printf("[OutboxPublisher] Failed to publish outbox event %s (hazard=%s, retry=%d): %v",
 						rec.EventID, rec.HazardID, rec.RetryCount, pubErr)
 
@@ -136,10 +151,15 @@ func (p *OutboxPublisher) processOutboxLoop(ctx context.Context) {
 						log.Printf("[OutboxPublisher] Outbox event %s reached max retries (%d), marking as failed", rec.EventID, maxRetries)
 						_ = p.db.FailOutboxRecord(ctx, rec, pubErr.Error())
 					} else {
-						_ = p.db.IncrementOutboxRetry(ctx, rec.EventID, pubErr.Error())
+						_ = p.db.RetryOutboxLater(ctx, rec.EventID, pubErr.Error(), outboxBackoff(rec.RetryCount+1))
 					}
-					// Return to allow reconnection if connection is severed
-					return
+					if p.ch.IsClosed() {
+						// Reconnect; the records not yet attempted are due again at once.
+						p.release(records[i+1:])
+						return
+					}
+					// The record waits out its backoff; the ones behind it go ahead.
+					continue
 				}
 
 				if err := p.db.MarkOutboxPublished(ctx, rec.EventID); err != nil {
@@ -151,6 +171,33 @@ func (p *OutboxPublisher) processOutboxLoop(ctx context.Context) {
 			}
 		}
 	}
+}
+
+// release makes claimed records due again without counting an attempt.
+func (p *OutboxPublisher) release(records []*store.OutboxRecord) {
+	if len(records) == 0 {
+		return
+	}
+	ids := make([]string, len(records))
+	for i, rec := range records {
+		ids[i] = rec.EventID
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if err := p.db.ReleaseOutbox(ctx, ids); err != nil {
+		log.Printf("[OutboxPublisher] Failed releasing %d claimed events (they are due again when the lease ends): %v", len(ids), err)
+	}
+}
+
+// outboxBackoff is the wait before attempt+1: 1s, 2s, 4s, ... capped at outboxMaxBackoff.
+func outboxBackoff(attempt int) time.Duration {
+	if attempt < 1 {
+		attempt = 1
+	}
+	if attempt > 16 {
+		return outboxMaxBackoff
+	}
+	return min(outboxBaseBackoff<<(attempt-1), outboxMaxBackoff)
 }
 
 func (p *OutboxPublisher) publishOne(ctx context.Context, rec *store.OutboxRecord) error {

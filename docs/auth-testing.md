@@ -139,7 +139,8 @@ docker compose --env-file .env.auth -f compose.auth.yaml restart auth-bridge
 ```
 
 Reload halaman: sesi tetap tersedia; access token yang expired dipulihkan.
-Akun berada di volume PostgreSQL `auth_postgres`, SQLite sesi di `auth_sessions`.
+Akun berada di volume PostgreSQL `auth_postgres`; sesi ada di Redis `auth-redis`, jadi restart
+`auth-bridge` mempertahankan sesi, sedangkan restart `auth-redis` mengharuskan login ulang.
 Volume dibuat pada komputer masing-masing saat startup pertama, bukan dari Git.
 Helper setup tidak mengganti secret/password yang sudah diisi.
 

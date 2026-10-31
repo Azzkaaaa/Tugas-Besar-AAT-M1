@@ -1,0 +1,6 @@
+{
+  "$schema": "./node_modules/oxlint/configuration_schema.json",
+  "plugins": ["oxc", "unicorn", "node"],
+  "categories": { "correctness": "error" },
+  "env": { "node": true, "es2024": true }
+}

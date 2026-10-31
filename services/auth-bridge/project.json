@@ -25,6 +25,13 @@
         "{projectRoot}/package-lock.json"
       ]
     },
+    "lint": {
+      "dependsOn": ["install"],
+      "executor": "nx:run-commands",
+      "options": { "command": "npm run lint", "cwd": "services/auth-bridge" },
+      "cache": true,
+      "inputs": ["{projectRoot}/src/**/*", "{projectRoot}/test/**/*", "{projectRoot}/.oxlintrc.json", "{projectRoot}/package.json", "{projectRoot}/package-lock.json"]
+    },
     "build": {
       "executor": "nx:run-commands",
       "options": { "command": "docker buildx build --push -f services/auth-bridge/Dockerfile -t \"$PROJECT_IMAGE_REMOTE/auth-bridge:$(git rev-parse HEAD)\" -t bnpb/auth-bridge .", "cwd": "{workspaceRoot}" },
