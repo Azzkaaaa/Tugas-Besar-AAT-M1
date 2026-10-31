@@ -2,8 +2,10 @@ package consumer
 
 import (
 	"context"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"testing"
 	"time"
 
@@ -253,5 +255,145 @@ func TestHandleMessage_SchemaVersionMismatch_DeadLetters(t *testing.T) {
 	}
 	if ack.nackedRequeue {
 		t.Errorf("unsupported schema version must be dead-lettered immediately (requeue=false)")
+	}
+}
+
+// strictClaimer fails on a cancelled context, as the Redis claimer does, and records each call.
+type strictClaimer struct {
+	dedup.Claimer
+	mu       sync.Mutex
+	releases int
+}
+
+func (s *strictClaimer) Release(ctx context.Context, claim dedup.Claim) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	s.mu.Lock()
+	s.releases++
+	s.mu.Unlock()
+	return s.Claimer.Release(ctx, claim)
+}
+
+func (s *strictClaimer) MarkDelivered(ctx context.Context, claim dedup.Claim) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return s.Claimer.MarkDelivered(ctx, claim)
+}
+
+func newShutdownConsumer(t *testing.T, url string) (*Consumer, store.Store, *strictClaimer, *store.Subscription) {
+	t.Helper()
+	ctx := context.Background()
+	db, err := store.Open(ctx, ":memory:")
+	if err != nil {
+		t.Fatalf("failed to open in-memory db: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	sub := &store.Subscription{
+		WebhookID: "wh-shutdown", OwnerClientID: "owner-1", URL: url, Secret: "secret-1",
+		View: int32(commonv1.View_VIEW_SUMMARY), IsActive: true,
+	}
+	if err := db.CreateSubscription(ctx, sub); err != nil {
+		t.Fatalf("failed to create subscription: %v", err)
+	}
+	cfg := &config.Config{MaxDeliveryRetries: 3, HTTPTimeoutMS: 30 * time.Second}
+	claims := &strictClaimer{Claimer: dedup.NewMemory(time.Hour)}
+	return New(cfg, db, claims, dispatcher.New(cfg.HTTPTimeoutMS, cfg.MaxDeliveryRetries)), db, claims, sub
+}
+
+func TestHandleMessage_ShutdownMidDispatch_RequeuesWithoutLogging(t *testing.T) {
+	reached := make(chan struct{})
+	var once sync.Once
+	// A slow receiver: it answers only when the request is abandoned. The body is read first, or
+	// the server never notices the client going away.
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.Copy(io.Discard, r.Body)
+		once.Do(func() { close(reached) })
+		<-r.Context().Done()
+	}))
+	defer ts.Close()
+	c, db, claims, sub := newShutdownConsumer(t, ts.URL)
+
+	work, cancelWork := context.WithCancel(context.Background())
+	go func() { <-reached; cancelWork() }() // the shutdown grace runs out mid-POST
+
+	ack := &mockAcknowledger{}
+	// Redelivered: an ordinary failure would now go to the DLQ, an interruption must not.
+	c.handleMessage(work, amqp.Delivery{Acknowledger: ack, Body: sampleEvent(t, 1), MessageId: "msg-1", Redelivered: true})
+
+	if ack.ackCount != 0 || ack.nackCount != 1 || !ack.nackedRequeue {
+		t.Fatalf("want one requeueing Nack, got acks=%d nacks=%d requeue=%v", ack.ackCount, ack.nackCount, ack.nackedRequeue)
+	}
+	deliveries, _, err := db.ListDeliveries(context.Background(), sub.WebhookID, "", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(deliveries) != 0 {
+		t.Fatalf("interrupted attempt was logged as %s", deliveries[0].Status)
+	}
+	if claims.releases != 1 {
+		t.Fatalf("claim released %d times on a cancelled context, want 1", claims.releases)
+	}
+	if _, result, _ := claims.Claim(context.Background(), "evt-123", sub.WebhookID, time.Minute); result != dedup.Claimed {
+		t.Fatalf("another replica cannot take the delivery: %v", result)
+	}
+}
+
+func TestHandleMessage_ShutdownBeforeListing_RequeuesRedelivery(t *testing.T) {
+	c, _, _, _ := newShutdownConsumer(t, "http://unused.invalid")
+	work, cancelWork := context.WithCancel(context.Background())
+	cancelWork()
+
+	ack := &mockAcknowledger{}
+	c.handleMessage(work, amqp.Delivery{Acknowledger: ack, Body: sampleEvent(t, 1), MessageId: "msg-1", Redelivered: true})
+
+	if ack.nackCount != 1 || !ack.nackedRequeue {
+		t.Fatalf("want a requeueing Nack, got nacks=%d requeue=%v", ack.nackCount, ack.nackedRequeue)
+	}
+}
+
+func TestRelease_UsesALiveContextAfterShutdown(t *testing.T) {
+	c, _, claims, sub := newShutdownConsumer(t, "http://unused.invalid")
+	claim, _, err := claims.Claim(context.Background(), "evt-1", sub.WebhookID, time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cancelled, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	c.release(cancelled, claim, t.Logf)
+
+	if _, result, _ := claims.Claim(context.Background(), "evt-1", sub.WebhookID, time.Hour); result != dedup.Claimed {
+		t.Fatalf("claim still held after release on a cancelled context: %v", result)
+	}
+}
+
+func TestDrainContext_OutlivesShutdownByTheGrace(t *testing.T) {
+	parent, shutdown := context.WithCancel(context.Background())
+	work, stop := drainContext(parent, 100*time.Millisecond)
+	defer stop()
+
+	shutdown()
+	time.Sleep(30 * time.Millisecond)
+	if work.Err() != nil {
+		t.Fatal("work cancelled before the grace ran out")
+	}
+	select {
+	case <-work.Done():
+	case <-time.After(time.Second):
+		t.Fatal("work not cancelled after the grace")
+	}
+}
+
+func TestDrainContext_StopEndsItEarly(t *testing.T) {
+	parent, shutdown := context.WithCancel(context.Background())
+	defer shutdown()
+	work, stop := drainContext(parent, time.Hour)
+	stop()
+	select {
+	case <-work.Done():
+	case <-time.After(time.Second):
+		t.Fatal("stop did not end the work context")
 	}
 }

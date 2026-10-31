@@ -253,6 +253,7 @@ Variabel shell mengalahkan nilai dari `--env-file`. Variabel `VITE_*`/`FIREBASE_
 | `AGGREGATOR_DB_PASSWORD` | kosong → **isi manual** | Password PostgreSQL store kanonik aggregator |
 | `WEBHOOK_DB_PASSWORD` | kosong → **isi manual** | Password PostgreSQL `webhook-db`; Compose menyusun `WEBHOOK_STORE_DSN` |
 | `WEBHOOK_DEDUP_TTL_HOURS` | `168` | Lama penanda "sudah terkirim" di Redis untuk dedup webhook |
+| `WEBHOOK_SHUTDOWN_GRACE_SECONDS` | `25` | Waktu event webhook yang sedang dikirim boleh selesai setelah SIGTERM; harus di bawah `terminationGracePeriodSeconds` pod |
 | `RABBITMQ_DEFAULT_USER` / `_PASS` / `_VHOST` | `guest` / `guest` / `vhost` | Akun broker yang dibuat Compose |
 | `AGGREGATOR_AMQP_URL` / `WEBHOOK_AMQP_URL` | `amqp://guest:guest@rabbitmq:5672/vhost` | Koneksi broker; sesuaikan bila akun di atas diubah |
 | `RABBITMQ_EXCHANGE` | `bnpb.hazards.v1` | Exchange fan-out |

@@ -92,7 +92,11 @@ func main() {
 	// 4. Start RabbitMQ consumer (background goroutine).
 	log.Println("[WebhookProvider] Starting RabbitMQ consumer...")
 	cons := consumer.New(cfg, db, claims, disp)
-	go cons.Start(ctx)
+	consumerDone := make(chan struct{})
+	go func() {
+		defer close(consumerDone)
+		cons.Start(ctx)
+	}()
 
 	// 5. Start gRPC server (blocks until ctx done).
 	log.Printf("[WebhookProvider] Starting gRPC server on port %s...", cfg.GRPCPort)
@@ -101,5 +105,9 @@ func main() {
 		log.Fatalf("[WebhookProvider] gRPC server error: %v", err)
 	}
 
+	// The store and the claims close (deferred) only after the message in hand is acked or
+	// handed back, at most WEBHOOK_SHUTDOWN_GRACE_SECONDS after the signal.
+	log.Printf("[WebhookProvider] Waiting up to %s for the in-flight event...", cfg.ShutdownGrace)
+	<-consumerDone
 	log.Println("[WebhookProvider] Service stopped cleanly.")
 }

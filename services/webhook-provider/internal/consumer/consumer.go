@@ -24,6 +24,10 @@ import (
 // claimPollInterval is how often a consumer re-checks a delivery another replica is dispatching.
 const claimPollInterval = time.Second
 
+// cleanupTimeout bounds the writes that record an outcome (claims, delivery log). They run on a
+// context that shutdown does not cancel, so an outcome is never lost to the shutdown itself.
+const cleanupTimeout = 2 * time.Second
+
 // Consumer listens on the RabbitMQ queue and dispatches events to matching webhooks.
 type Consumer struct {
 	cfg    *config.Config
@@ -65,7 +69,13 @@ func (c *Consumer) claim(ctx context.Context, eventID, webhookID string) (dedup.
 
 // Start runs the consumer loop until ctx is cancelled. It reconnects automatically
 // on connection loss (mirrors the aggregator's OutboxPublisher pattern).
+//
+// Cancelling ctx stops taking new messages. The message in hand keeps going for up to
+// ShutdownGrace; if that runs out, it is handed back to the queue (see handleMessage). Start
+// returns once that message is acked or nacked.
 func (c *Consumer) Start(ctx context.Context) {
+	work, stop := drainContext(ctx, c.cfg.ShutdownGrace)
+	defer stop()
 	for {
 		select {
 		case <-ctx.Done():
@@ -85,7 +95,7 @@ func (c *Consumer) Start(ctx context.Context) {
 		}
 
 		log.Printf("[Consumer] Connected to RabbitMQ, consuming from %s", c.cfg.ConsumerQueue)
-		c.consumeLoop(ctx, conn, ch)
+		c.consumeLoop(ctx, work, conn, ch)
 
 		ch.Close()
 		conn.Close()
@@ -149,8 +159,34 @@ func (c *Consumer) connect() (*amqp.Connection, *amqp.Channel, error) {
 	return conn, ch, nil
 }
 
-// consumeLoop processes messages until ctx is done or the channel closes.
-func (c *Consumer) consumeLoop(ctx context.Context, conn *amqp.Connection, ch *amqp.Channel) {
+// drainContext returns the context messages are processed under. It outlives ctx by grace, so the
+// message in hand can finish after shutdown starts, and is cancelled then. stop releases it early.
+func drainContext(ctx context.Context, grace time.Duration) (context.Context, context.CancelFunc) {
+	work, cancel := context.WithCancel(context.WithoutCancel(ctx))
+	go func() {
+		select {
+		case <-work.Done():
+			return
+		case <-ctx.Done():
+		}
+		timer := time.NewTimer(grace)
+		defer timer.Stop()
+		select {
+		case <-timer.C:
+			cancel()
+		case <-work.Done():
+		}
+	}()
+	return work, cancel
+}
+
+// cleanupContext keeps ctx's values (trace) but not its cancellation.
+func cleanupContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.WithoutCancel(ctx), cleanupTimeout)
+}
+
+// consumeLoop processes messages, under work, until ctx is done or the channel closes.
+func (c *Consumer) consumeLoop(ctx, work context.Context, conn *amqp.Connection, ch *amqp.Channel) {
 	deliveries, err := ch.Consume(c.cfg.ConsumerQueue, "", false, false, false, false, nil)
 	if err != nil {
 		log.Printf("[Consumer] Failed to start consuming: %v", err)
@@ -172,12 +208,14 @@ func (c *Consumer) consumeLoop(ctx context.Context, conn *amqp.Connection, ch *a
 			if !ok {
 				return
 			}
-			c.handleMessage(ctx, msg)
+			c.handleMessage(work, msg)
 		}
 	}
 }
 
-// handleMessage processes a single RabbitMQ delivery.
+// handleMessage processes a single RabbitMQ delivery. ctx is the work context: when shutdown
+// cancels it mid-message, the message is interrupted rather than failed: claims are released, no
+// delivery is logged for the aborted attempt, and it is requeued for another replica.
 func (c *Consumer) handleMessage(ctx context.Context, msg amqp.Delivery) {
 	ctxMsg := telemetry.ExtractAMQPHeaders(ctx, msg.Headers)
 
@@ -236,6 +274,10 @@ func (c *Consumer) handleMessage(ctx context.Context, msg amqp.Delivery) {
 	}
 
 	subs, err := c.db.ListActiveSubscriptions(ctxMsg)
+	if err != nil && ctxMsg.Err() != nil {
+		c.interrupt(ctxMsg, msg, ev.EventId, span)
+		return
+	}
 	if err != nil {
 		requeue := !msg.Redelivered
 		logf("[Consumer] Failed to list subscriptions for event %s: %v (requeue=%v)", ev.EventId, err, requeue)
@@ -251,13 +293,23 @@ func (c *Consumer) handleMessage(ctx context.Context, msg amqp.Delivery) {
 	}
 
 	allOK := true
+	interrupted := false
 	for _, sub := range subs {
 		if !dispatcher.MatchesFilter(&ev, sub.FilterSource, sub.FilterHazard, sub.FilterSeverity, sub.FilterSince, sub.FilterUntil) {
 			continue
 		}
+		if ctxMsg.Err() != nil {
+			// Out of shutdown grace: the redelivery skips the webhooks already delivered.
+			interrupted = true
+			break
+		}
 
 		// Idempotency: claim the delivery; skip it if it already succeeded.
 		claim, result, err := c.claim(ctxMsg, ev.EventId, sub.WebhookID)
+		if err != nil && ctxMsg.Err() != nil {
+			interrupted = true
+			break
+		}
 		if err != nil {
 			logf("[Consumer] Dedup claim failed for event %s / webhook %s: %v", ev.EventId, sub.WebhookID, err)
 			allOK = false
@@ -289,6 +341,12 @@ func (c *Consumer) handleMessage(ctx context.Context, msg amqp.Delivery) {
 		if dispatchResult.Err == nil && dispatchResult.StatusCode >= 200 && dispatchResult.StatusCode < 300 {
 			status = "SUCCESS"
 		}
+		if status != "SUCCESS" && ctxMsg.Err() != nil {
+			// Shutdown aborted the attempt; the receiver did not fail it. Hand it back unlogged.
+			c.release(ctxMsg, claim, logf)
+			interrupted = true
+			break
+		}
 		errMsg := ""
 		if dispatchResult.Err != nil {
 			errMsg = dispatchResult.Err.Error()
@@ -308,15 +366,22 @@ func (c *Consumer) handleMessage(ctx context.Context, msg amqp.Delivery) {
 		}
 
 		// Mark before logging: a successful send must not be repeated even if the log write fails.
+		// Both run on a cleanup context, so a send that just succeeded is recorded even if the
+		// shutdown grace runs out now.
 		if status == "SUCCESS" {
-			if err := c.claims.MarkDelivered(ctxMsg, claim); err != nil {
+			markCtx, cancel := cleanupContext(ctxMsg)
+			if err := c.claims.MarkDelivered(markCtx, claim); err != nil {
 				logf("[Consumer] Failed marking delivered for event %s / webhook %s: %v", ev.EventId, sub.WebhookID, err)
 			}
+			cancel()
 		} else {
 			c.release(ctxMsg, claim, logf)
 		}
 
-		if err := c.db.InsertDelivery(ctxMsg, d); err != nil {
+		logCtx, cancel := cleanupContext(ctxMsg)
+		err = c.db.InsertDelivery(logCtx, d)
+		cancel()
+		if err != nil {
 			logf("[Consumer] Failed inserting delivery log for event %s / webhook %s: %v", ev.EventId, sub.WebhookID, err)
 			allOK = false
 			continue
@@ -334,6 +399,10 @@ func (c *Consumer) handleMessage(ctx context.Context, msg amqp.Delivery) {
 	// If any internal side-effect failed (DB write error), we nack with requeue if not redelivered (one redelivery),
 	// so persistent failures reach the DLQ instead of looping forever.
 	// Dispatch failures alone do not block the ack — they are recorded in the delivery log.
+	if interrupted {
+		c.interrupt(ctxMsg, msg, ev.EventId, span)
+		return
+	}
 	if !allOK {
 		requeue := !msg.Redelivered
 		logf("[Consumer] Partial failure processing event %s (requeue=%v) — nacking", ev.EventId, requeue)
@@ -349,8 +418,21 @@ func (c *Consumer) handleMessage(ctx context.Context, msg amqp.Delivery) {
 	}
 }
 
-// release gives a claim up after a failed dispatch. A failure only delays a retry until the lease expires.
+// interrupt hands a message back after shutdown cut its processing short. It is requeued even
+// when redelivered: shutdown is not the message's fault and must not dead-letter it.
+func (c *Consumer) interrupt(ctx context.Context, msg amqp.Delivery, eventID string, span trace.Span) {
+	telemetry.Logf(ctx)("[Consumer] Shutting down mid-event %s — requeueing it for another replica", eventID)
+	if span != nil {
+		span.SetStatus(codes.Error, "interrupted by shutdown")
+	}
+	_ = msg.Nack(false, true)
+}
+
+// release gives a claim up after a failed or interrupted dispatch, on a cleanup context so a
+// shutdown cannot prevent it. A failure only delays a retry until the lease expires.
 func (c *Consumer) release(ctx context.Context, claim dedup.Claim, logf func(string, ...any)) {
+	ctx, cancel := cleanupContext(ctx)
+	defer cancel()
 	if err := c.claims.Release(ctx, claim); err != nil {
 		logf("[Consumer] Failed releasing claim for event %s / webhook %s: %v", claim.EventID, claim.WebhookID, err)
 	}

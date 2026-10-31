@@ -26,6 +26,7 @@ type Config struct {
 	AuthInsecureSkipVerify bool
 	MaxDeliveryRetries     int
 	HTTPTimeoutMS          time.Duration
+	ShutdownGrace          time.Duration
 }
 
 // Load reads configuration from environment variables.
@@ -83,6 +84,7 @@ func Load() (*Config, error) {
 		AuthInsecureSkipVerify: insecureSkip,
 		MaxDeliveryRetries:     optionalInt("WEBHOOK_MAX_RETRIES", 5),
 		HTTPTimeoutMS:          time.Duration(optionalInt("WEBHOOK_HTTP_TIMEOUT_MS", 10000)) * time.Millisecond,
+		ShutdownGrace:          time.Duration(optionalInt("WEBHOOK_SHUTDOWN_GRACE_SECONDS", 25)) * time.Second,
 	}
 
 	// AUTH_AUTHORITY is required unless insecure mode is explicitly enabled.

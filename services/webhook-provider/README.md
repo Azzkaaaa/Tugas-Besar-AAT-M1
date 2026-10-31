@@ -25,6 +25,13 @@ Implementasi dan bahasa belum dipilih.
   tanpa persistence: bila key hilang, event yang di-redeliver bisa terkirim lagi
   (at-least-once), sehingga penerima tetap melakukan dedup dengan `event_id`.
   Tanpa `WEBHOOK_REDIS_URL` klaim disimpan di memori proses (satu replika).
+- **Shutdown (SIGTERM):** consumer berhenti mengambil pesan baru, dan event yang sedang
+  dikirim boleh selesai selama `WEBHOOK_SHUTDOWN_GRACE_SECONDS` (default 25). Bila waktu
+  itu habis, pengiriman dihentikan, klaim Redis dilepas, percobaan itu tidak dicatat sebagai
+  `FAILED`, dan pesan dikembalikan ke queue (requeue, juga untuk redelivery) sehingga replika
+  lain langsung mengirimnya. Store dan klaim baru ditutup setelah pesan itu di-ack atau
+  dikembalikan. Nilai ini harus di bawah `terminationGracePeriodSeconds` pod (default k8s 30
+  detik); di Compose `stop_grace_period` diset 30 detik.
 - **Tanggung jawab:**
   - Evaluasi filter langganan terhadap setiap event masuk dari broker.
   - Penegakan proyeksi data: webhook milik client Media hanya menerima payload

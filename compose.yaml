@@ -193,6 +193,8 @@ services:
       WEBHOOK_MAX_RETRIES: ${WEBHOOK_MAX_RETRIES:-5}
       WEBHOOK_HTTP_TIMEOUT_MS: ${WEBHOOK_HTTP_TIMEOUT_MS:-10000}
       WEBHOOK_DEDUP_TTL_HOURS: ${WEBHOOK_DEDUP_TTL_HOURS:-168}
+      # How long the in-flight event may finish after SIGTERM; stop_grace_period must exceed it.
+      WEBHOOK_SHUTDOWN_GRACE_SECONDS: ${WEBHOOK_SHUTDOWN_GRACE_SECONDS:-25}
       AUTH_AUTHORITY: ${WEBHOOK_AUTH_AUTHORITY:-http://auth.localhost:8080}
       AUTH_AUDIENCE: ${AUTH_AUDIENCE:-}
       AUTH_INSECURE_SKIP_VERIFY: ${AUTH_INSECURE_SKIP_VERIFY:-false}
@@ -213,6 +215,8 @@ services:
         condition: service_healthy
       otel-lgtm:
         condition: service_started
+    # Docker SIGKILLs after 10 s by default; leave room for WEBHOOK_SHUTDOWN_GRACE_SECONDS.
+    stop_grace_period: 30s
     restart: unless-stopped
     networks:
       bnpb_net:
