@@ -8,24 +8,68 @@ stages:
   - ci
   - scan
 
+# Explicit operator action using the same registry credential as application builds.
+mirror-vendor-images:
+  stage: bootstrap
+  needs: []
+  image:
+    name: gcr.io/go-containerregistry/crane/debug:v0.22.1@sha256:e78770b31258a3846f878036d9c1f63fbe4c871f9f56990bf77fd95c013e3c1b
+    entrypoint: [""]
+  rules:
+    - if: '$VENDOR_MIRROR_ONLY == "true" && $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH && $CI_COMMIT_REF_PROTECTED == "true"'
+      when: on_success
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH && $CI_COMMIT_REF_PROTECTED == "true"'
+      when: manual
+      allow_failure: true
+  script:
+    - test -n "$DOCKER_AUTH_CONFIG" && test -n "$PROJECT_IMAGE_REMOTE"
+    - mkdir -p ~/.docker
+    - printf '%s' "$DOCKER_AUTH_CONFIG" > ~/.docker/config.json
+    - |
+      set -eu
+      : > vendor-mirrors.tsv
+      while read -r source name version; do
+        target="${PROJECT_IMAGE_REMOTE%/}/$name"
+        crane copy "$source" "$target:$version"
+        crane tag "$target:$version" latest
+        expected="${source##*@}"
+        test "$(crane digest "$target:$version")" = "$expected"
+        test "$(crane digest "$target:latest")" = "$expected"
+        printf '%s %s:%s@%s\n' "$source" "$target" "$version" "$expected" >> vendor-mirrors.tsv
+      done < ci/vendor-images.tsv
+  artifacts:
+    paths: [vendor-mirrors.tsv]
+    expire_in: 30 days
+
 default:
   tags:
     - gitlab--duo
 
 .unscheduled:
   rules:
+    - if: '$VENDOR_MIRROR_ONLY == "true"'
+      when: never
     - if: $CI_PIPELINE_SOURCE == "schedule"
       when: never
     - when: on_success
 
 .unscheduled-manual:
   rules:
+    - if: '$VENDOR_MIRROR_ONLY == "true"'
+      when: never
     - if: $CI_PIPELINE_SOURCE == "schedule"
       when: never
     - when: manual
       allow_failure: true
 
+.normal-pipeline:
+  rules:
+    - if: '$VENDOR_MIRROR_ONLY == "true"'
+      when: never
+    - when: on_success
+
 find-runner-tag:
+  extends: .normal-pipeline
   stage: bootstrap
   image:
     name: docker.io/alpine/git:2.54.0@sha256:4fac439ee3b9204bec99c712b8a15942999632458f716ae8149fbb97cb760cd4
@@ -40,6 +84,7 @@ find-runner-tag:
       dotenv: bootstrap.env
 
 find-runner-image:
+  extends: .normal-pipeline
   stage: bootstrap
   needs: ["find-runner-tag"]
   image:
@@ -64,6 +109,7 @@ find-runner-image:
       dotenv: bootstrap.env
 
 prepare-runner-image:
+  extends: .normal-pipeline
   stage: bootstrap
   needs:
     - find-runner-tag
@@ -96,6 +142,10 @@ prepare-runner-image:
 rebuild-runner-image:
   extends: prepare-runner-image
   when: manual
+  rules:
+    - if: '$VENDOR_MIRROR_ONLY == "true"'
+      when: never
+    - when: manual
   variables:
     RUNNER_IMAGE_REBUILD: "true"
 

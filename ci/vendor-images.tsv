@@ -1,0 +1,10 @@
+docker.io/library/redis:8@sha256:4764ce37931aac77c0d033680b339b19b4a4a81772204d268947cb851212d0ac xops-vendor-redis 8
+docker.io/library/postgres:17@sha256:31ba9c94a03ada9988f2bb493a22a75eef3a185884533e5cdbcd498ea835b08f xops-vendor-postgres 17
+docker.io/library/postgres:17.10-alpine@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193 xops-vendor-postgres-alpine 17.10-alpine
+docker.io/library/rabbitmq:4-management@sha256:af6f50d38098d8bd52fef7f3fa85015dd8b2bf6def58e995bf584ae9ba0f6407 xops-vendor-rabbitmq 4-management
+docker.io/library/python:3.13-alpine@sha256:8bcfa47b04b853a17aaf909362b847b2112fd6ec4105ea553ef9a43bafbb5916 xops-vendor-python 3.13-alpine
+ghcr.io/flux-iac/tf-runner:v0.16.6@sha256:589aa3378863433921864a8a586025233f1b5edb1cc86a4095c248119c7f77e3 xops-vendor-tf-runner v0.16.6
+ghcr.io/zitadel/zitadel:v4.16.0@sha256:15543f7a80c3e37905fe8c7db56af7ed2a9ece256704322c1449d7e8453afdab xops-vendor-zitadel v4.16.0
+ghcr.io/zitadel/zitadel-login:v4.16.0@sha256:adeba50a8090d1484a312ac81e67cae5f839ba376e3325c00ec75fc79939a842 xops-vendor-zitadel-login v4.16.0
+docker.io/alpine/k8s:1.34.0@sha256:b5f6edfeac5279f3e182d938d1ffecb62f7c980756ac4b6b66d7f0d566782f77 xops-vendor-k8s 1.34.0
+docker.io/wait4x/wait4x:3.6@sha256:bec7ac18547781d854562c3729d3195c3880116d6758c49fdf4573ad58805f14 xops-vendor-wait4x 3.6
