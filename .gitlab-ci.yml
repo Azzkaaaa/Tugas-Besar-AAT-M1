@@ -30,9 +30,12 @@ mirror-vendor-images:
       : > vendor-mirrors.tsv
       while read -r source name version; do
         target="${PROJECT_IMAGE_REMOTE%/}/$name"
-        crane copy "$source" "$target:$version"
+        # Both local kind clusters are linux/amd64. Copy only that reviewed
+        # manifest, rather than unrelated architectures/attestations.
+        expected=$(crane digest --platform linux/amd64 "$source")
+        selected="${source%@*}@$expected"
+        crane copy "$selected" "$target:$version"
         crane tag "$target:$version" latest
-        expected="${source##*@}"
         test "$(crane digest "$target:$version")" = "$expected"
         test "$(crane digest "$target:latest")" = "$expected"
         printf '%s %s:%s@%s\n' "$source" "$target" "$version" "$expected" >> vendor-mirrors.tsv
