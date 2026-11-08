@@ -28,9 +28,11 @@ const (
 type Source int32
 
 const (
-	Source_SOURCE_UNSPECIFIED Source = 0
-	Source_SOURCE_BMKG        Source = 1
-	Source_SOURCE_PVMBG       Source = 2
+	Source_SOURCE_UNSPECIFIED  Source = 0
+	Source_SOURCE_BMKG         Source = 1
+	Source_SOURCE_PVMBG        Source = 2
+	Source_SOURCE_SATELITE     Source = 3
+	Source_SOURCE_COAST_SENSOR Source = 4
 )
 
 // Enum value maps for Source.
@@ -39,11 +41,15 @@ var (
 		0: "SOURCE_UNSPECIFIED",
 		1: "SOURCE_BMKG",
 		2: "SOURCE_PVMBG",
+		3: "SOURCE_SATELITE",
+		4: "SOURCE_COAST_SENSOR",
 	}
 	Source_value = map[string]int32{
-		"SOURCE_UNSPECIFIED": 0,
-		"SOURCE_BMKG":        1,
-		"SOURCE_PVMBG":       2,
+		"SOURCE_UNSPECIFIED":  0,
+		"SOURCE_BMKG":         1,
+		"SOURCE_PVMBG":        2,
+		"SOURCE_SATELITE":     3,
+		"SOURCE_COAST_SENSOR": 4,
 	}
 )
 
@@ -80,6 +86,8 @@ const (
 	HazardType_HAZARD_TYPE_UNSPECIFIED HazardType = 0
 	HazardType_HAZARD_TYPE_SEISMIC     HazardType = 1
 	HazardType_HAZARD_TYPE_VOLCANIC    HazardType = 2
+	HazardType_HAZARD_TYPE_WILDFIRE    HazardType = 3
+	HazardType_HAZARD_TYPE_COASTAL     HazardType = 4
 )
 
 // Enum value maps for HazardType.
@@ -88,11 +96,15 @@ var (
 		0: "HAZARD_TYPE_UNSPECIFIED",
 		1: "HAZARD_TYPE_SEISMIC",
 		2: "HAZARD_TYPE_VOLCANIC",
+		3: "HAZARD_TYPE_WILDFIRE",
+		4: "HAZARD_TYPE_COASTAL",
 	}
 	HazardType_value = map[string]int32{
 		"HAZARD_TYPE_UNSPECIFIED": 0,
 		"HAZARD_TYPE_SEISMIC":     1,
 		"HAZARD_TYPE_VOLCANIC":    2,
+		"HAZARD_TYPE_WILDFIRE":    3,
+		"HAZARD_TYPE_COASTAL":     4,
 	}
 )
 
@@ -866,16 +878,20 @@ const file_bnpb_common_v1_common_proto_rawDesc = "" +
 	"\x06status\x18\x02 \x01(\x0e2\x1c.bnpb.common.v1.SourceStatusR\x06status\x12B\n" +
 	"\x0flast_success_at\x18\x03 \x01(\v2\x1a.google.protobuf.TimestampR\rlastSuccessAt\x12;\n" +
 	"\vstale_since\x18\x04 \x01(\v2\x1a.google.protobuf.TimestampR\n" +
-	"staleSince*C\n" +
+	"staleSince*q\n" +
 	"\x06Source\x12\x16\n" +
 	"\x12SOURCE_UNSPECIFIED\x10\x00\x12\x0f\n" +
 	"\vSOURCE_BMKG\x10\x01\x12\x10\n" +
-	"\fSOURCE_PVMBG\x10\x02*\\\n" +
+	"\fSOURCE_PVMBG\x10\x02\x12\x13\n" +
+	"\x0fSOURCE_SATELITE\x10\x03\x12\x17\n" +
+	"\x13SOURCE_COAST_SENSOR\x10\x04*\x8f\x01\n" +
 	"\n" +
 	"HazardType\x12\x1b\n" +
 	"\x17HAZARD_TYPE_UNSPECIFIED\x10\x00\x12\x17\n" +
 	"\x13HAZARD_TYPE_SEISMIC\x10\x01\x12\x18\n" +
-	"\x14HAZARD_TYPE_VOLCANIC\x10\x02*v\n" +
+	"\x14HAZARD_TYPE_VOLCANIC\x10\x02\x12\x18\n" +
+	"\x14HAZARD_TYPE_WILDFIRE\x10\x03\x12\x17\n" +
+	"\x13HAZARD_TYPE_COASTAL\x10\x04*v\n" +
 	"\bSeverity\x12\x18\n" +
 	"\x14SEVERITY_UNSPECIFIED\x10\x00\x12\x13\n" +
 	"\x0fSEVERITY_NORMAL\x10\x01\x12\x14\n" +
