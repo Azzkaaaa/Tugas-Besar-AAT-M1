@@ -921,10 +921,10 @@ components:
   schemas:
     Source:
       type: string
-      enum: [BMKG, PVMBG]
+      enum: [BMKG, PVMBG, SATELITE, COAST_SENSOR]
     HazardType:
       type: string
-      enum: [SEISMIC, VOLCANIC]
+      enum: [SEISMIC, VOLCANIC, WILDFIRE, COASTAL]
     Severity:
       type: string
       enum: [NORMAL, WASPADA, SIAGA, AWAS]
