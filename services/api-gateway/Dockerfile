@@ -18,7 +18,7 @@ COPY services/api-gateway services/api-gateway
 WORKDIR /app/services/api-gateway
 RUN CGO_ENABLED=0 go build -ldflags="-s -w" -o /app/api-gateway ./cmd
 
-FROM alpine:3.20
+FROM alpine:3.24
 RUN addgroup -S appgroup && adduser -S appuser -G appgroup
 USER appuser
 COPY --from=builder /app/api-gateway /api-gateway
