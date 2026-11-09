@@ -31,6 +31,9 @@ RUN dotnet publish services/danger-notification/BNPB.Notification.Server/BNPB.No
 FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS runtime
 WORKDIR /app
 
+# Removes vulnerabilites (maybe)
+RUN apt update && apt upgrade -y
+
 COPY --from=builder /app .
 # Notification store volume; a fresh named volume copies this ownership.
 RUN mkdir -p /data && chown app:app /data

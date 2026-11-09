@@ -29,6 +29,7 @@
       "cache": false
     },
     "compile": {
+      "dependsOn": ["generate-proto"],
       "executor": "nx:run-commands",
       "options": { "command": "go build ./...", "cwd": "{projectRoot}" }
     },
