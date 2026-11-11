@@ -298,6 +298,7 @@ def build_publish_jobs(jobs: list[Job], infra: InfraTarget) -> str:
     return (
         f'"collect-images":\n'
         f'  stage: "publish"\n'
+        f'  interruptible: false\n'
         f'  dependencies:\n'
         + ''.join(f'    - {q(job.name)}\n' for job in builds)
         + f'  variables:\n'
@@ -313,6 +314,7 @@ def build_publish_jobs(jobs: list[Job], infra: InfraTarget) -> str:
         f'\n'
         f'"infra-pipeline":\n'
         f'  stage: "publish"\n'
+        f'  interruptible: false\n'
         f'{_needs(["collect-images"])}'
         f'  variables:\n'
         f'    AAT_IMAGES_JOB_ID: "$AAT_IMAGES_JOB_ID"\n'
@@ -322,7 +324,6 @@ def build_publish_jobs(jobs: list[Job], infra: InfraTarget) -> str:
         f'  trigger:\n'
         f'    project: {q(infra.project)}\n'
         f'    branch: {q(infra.branch)}\n'
-        f'    strategy: "depend"\n'
     )
 
 
@@ -338,6 +339,7 @@ def build_pipeline(jobs: list[Job], runner_image: str, infra: InfraTarget | None
         f'  - "publish"\n'
         f'\n'
         f'default:\n'
+        f'  interruptible: true\n'
         f'  image: {q(runner_image)}\n'
         f'  tags:\n'
         f'    - {q(RUNNER_TAG)}\n'
