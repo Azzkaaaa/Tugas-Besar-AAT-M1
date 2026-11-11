@@ -3,6 +3,7 @@
 
 FROM envoyproxy/envoy:v1.38.6
 RUN apt-get update \
+  && apt-get upgrade -y --no-install-recommends \
   && apt-get install -y --no-install-recommends gettext-base \
   && rm -rf /var/lib/apt/lists/*
 COPY services/envoy/templates /etc/envoy/templates

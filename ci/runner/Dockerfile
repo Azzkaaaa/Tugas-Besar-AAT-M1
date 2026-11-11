@@ -20,6 +20,7 @@ SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 # ---------------------------------------------------------------------------
 RUN set -eux; \
     apt-get update; \
+    apt-get upgrade -y; \
     apt-get install -y --no-install-recommends \
         libbluetooth-dev \
         libmpdec-dev \
@@ -48,6 +49,7 @@ COPY --link --from=python /usr/local/ /usr/local/
 RUN set -eux; \
     ldconfig; \
     python3 --version; \
+    pip3 install --no-cache-dir --upgrade pip==26.3; \
     pip3 --version; \
     python3 -c 'import sys, ssl, sqlite3, ctypes, lzma, bz2, zlib, readline, uuid, _decimal, tkinter; sys.version_info >= (3, 14) and __import__("compression.zstd")'
 
@@ -64,7 +66,7 @@ RUN mkdir -p "$GOPATH/src" "$GOPATH/bin" && chmod -R 1777 "$GOPATH" \
 # ---------------------------------------------------------------------------
 # Node.js: nodejs/docker-node recipe (release-key GPG check of SHASUMS256)
 # ---------------------------------------------------------------------------
-ARG NODE_VERSION=24.22.1
+ARG NODE_VERSION=24.22.3
 RUN set -eux; \
     case "$(dpkg --print-architecture)" in \
         amd64) ARCH='x64' ;; \
@@ -96,6 +98,8 @@ RUN set -eux; \
     tar -xJf "/tmp/${tarball}" -C /usr/local --strip-components=1 --no-same-owner; \
     ln -s /usr/local/bin/node /usr/local/bin/nodejs; \
     rm -rf /tmp/*; \
+    npm install -g --no-fund --no-audit npm@11.21.2; \
+    npm cache clean --force; \
     node --version; \
     npm --version
 
@@ -134,7 +138,7 @@ RUN set -eux; \
 # ---------------------------------------------------------------------------
 # .NET SDK: dotnet/dotnet-docker recipe (official tarball + its .sha512)
 # ---------------------------------------------------------------------------
-ARG DOTNET_SDK_VERSION=10.0.403
+ARG DOTNET_SDK_VERSION=10.0.404
 ENV DOTNET_ROOT=/usr/share/dotnet \
     DOTNET_RUNNING_IN_CONTAINER=true \
     DOTNET_GENERATE_ASPNET_CERTIFICATE=false \
@@ -166,16 +170,16 @@ RUN set -eux; \
 # ---------------------------------------------------------------------------
 # Trivy: release tarball
 # ---------------------------------------------------------------------------
-ARG TRIVY_VERSION=0.76.1
+ARG TRIVY_VERSION=0.76.2
 RUN set -eux; \
     case "$(dpkg --print-architecture)" in \
         amd64) \
             ARCH='64bit'; \
-            trivySha256='c7cbe3137fb8a48a17574bede3dd6beb16742d1e9772929940fc90082c39d9c0'; \
+            trivySha256='bc0fc726e017b8927a62b2d3531d7a84ee01769daf5c99ed866dced54089fdbf'; \
             ;; \
         arm64) \
             ARCH='ARM64'; \
-            trivySha256='e174dff2a6dba5e3ae41f8d0537a6324405bd08132497340304c6b20e0f16a1f'; \
+            trivySha256='ab9d51f86e6a5fb936f605faff6b593ac51bc378fff4d3e8b9d58358b9c367c3'; \
             ;; \
         *) echo >&2 "unsupported architecture"; exit 1 ;; \
     esac; \
