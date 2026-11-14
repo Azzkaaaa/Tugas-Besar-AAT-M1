@@ -10,25 +10,31 @@
       "executor": "nx:run-commands",
       "options": { "command": "go build ./...", "cwd": "{projectRoot}" },
       "cache": true,
-      "inputs": ["{projectRoot}/**/*.go", "{projectRoot}/**/*.sql", "{projectRoot}/go.mod", "{projectRoot}/go.sum", "^default"]
+      "inputs": ["{projectRoot}/**/*.go", "{projectRoot}/**/*.sql", "{projectRoot}/**/*.cql", "{projectRoot}/go.mod", "{projectRoot}/go.sum", "^default"]
     },
     "test": {
       "dependsOn": ["^compile"],
       "executor": "nx:run-commands",
       "options": { "command": "go test ./...", "cwd": "{projectRoot}" },
       "cache": true,
-      "inputs": ["{projectRoot}/**/*.go", "{projectRoot}/**/*.sql", "{projectRoot}/go.mod", "{projectRoot}/go.sum", "^default"]
+      "inputs": ["{projectRoot}/**/*.go", "{projectRoot}/**/*.sql", "{projectRoot}/**/*.cql", "{projectRoot}/go.mod", "{projectRoot}/go.sum", "^default"]
     },
     "lint": {
       "dependsOn": ["^compile"],
       "executor": "nx:run-commands",
       "options": {
-        "commands": ["test -z \"$(gofmt -l .)\" || (gofmt -l . && exit 1)", "go vet ./..."],
+        "commands": ["test -z \"$(gofmt -l .)\" || (gofmt -l . && exit 1)", "go vet ./...", "go vet -tags integration ./..."],
         "parallel": false,
         "cwd": "{projectRoot}"
       },
       "cache": true,
       "inputs": ["{projectRoot}/**/*.go", "{projectRoot}/go.mod", "{projectRoot}/go.sum", "^default"]
+    },
+    "integration-test": {
+      "dependsOn": ["^compile"],
+      "executor": "nx:run-commands",
+      "options": { "command": "go test -tags integration -p 1 -count=1 ./...", "cwd": "{projectRoot}" },
+      "cache": false
     },
     "build": {
       "executor": "nx:run-commands",

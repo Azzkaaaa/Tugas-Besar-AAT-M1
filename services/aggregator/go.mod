@@ -5,6 +5,7 @@ go 1.26.0
 require (
 	github.com/Azzkaaaa/Tugas-Besar-AAT-M1/packages/bnpb-aggregator-go v0.0.0-20261101210803-225084bb9fc2
 	github.com/MicahParks/keyfunc/v3 v3.9.1
+	github.com/apache/cassandra-gocql-driver/v2 v2.1.2
 	github.com/exaring/otelpgx v0.13.0
 	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/google/uuid v1.6.0
@@ -51,6 +52,7 @@ require (
 	golang.org/x/time v0.16.0 // indirect
 	google.golang.org/genproto/googleapis/api v0.0.0-20261104224025-d1e00e9f33ab // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20261104224025-d1e00e9f33ab // indirect
+	gopkg.in/inf.v0 v0.9.1 // indirect
 )
 
 replace github.com/Azzkaaaa/Tugas-Besar-AAT-M1/packages/bnpb-aggregator-go => ../../packages/bnpb-aggregator-go

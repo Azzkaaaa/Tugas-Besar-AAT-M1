@@ -10,7 +10,8 @@ import (
 	"time"
 
 	"github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/aggregator/internal/config"
-	"github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/aggregator/internal/store"
+	"github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/aggregator/internal/domain"
+	"github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/aggregator/internal/storage"
 	"github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/aggregator/internal/telemetry"
 	"github.com/google/uuid"
 	"go.opentelemetry.io/otel/attribute"
@@ -19,15 +20,17 @@ import (
 )
 
 type PVMBGPoller struct {
-	cfg    *config.Config
-	db     *store.DB
-	client *http.Client
+	cfg     *config.Config
+	hazards storage.HazardStore
+	sources storage.SourceStateStore
+	client  *http.Client
 }
 
-func NewPVMBGPoller(cfg *config.Config, db *store.DB) *PVMBGPoller {
+func NewPVMBGPoller(cfg *config.Config, hazards storage.HazardStore, sources storage.SourceStateStore) *PVMBGPoller {
 	return &PVMBGPoller{
-		cfg: cfg,
-		db:  db,
+		cfg:     cfg,
+		hazards: hazards,
+		sources: sources,
 		client: &http.Client{
 			Transport: telemetry.ExternalTransport(http.DefaultTransport),
 			Timeout:   cfg.PVMBGRequestTimeout,
@@ -79,65 +82,32 @@ func (p *PVMBGPoller) poll(ctx context.Context) {
 		}
 	}
 
-	_, watermark, err := p.db.GetWatermark(ctxPoll, "pvmbg_volcanic")
-	if err != nil {
-		watermark = time.Time{}
+	var watermark time.Time
+	if state, err := p.sources.Get(ctxPoll, domain.SourceKeyPVMBGVolcanic); err == nil {
+		watermark = state.Watermark
+	}
+	fail := func(err error) {
+		recordPollMetrics(err, 0)
+		_ = p.sources.RecordFailure(ctxPoll, domain.SourceKeyPVMBGVolcanic, err.Error())
 	}
 
 	reports, err := p.fetchVolcanicReports(ctxPoll, watermark, corrID)
 	if err != nil {
-		recordPollMetrics(err, 0)
-		_ = p.db.UpdateWatermark(ctxPoll, "pvmbg_volcanic", "PVMBG", watermark, false, err.Error())
+		fail(err)
 		return
 	}
 
-	tx, err := p.db.Pool.Begin(ctxPoll)
-	if err != nil {
-		recordPollMetrics(err, 0)
-		_ = p.db.UpdateWatermark(ctxPoll, "pvmbg_volcanic", "PVMBG", watermark, false, err.Error())
-		return
-	}
-	defer tx.Rollback(ctxPoll)
-
-	newWatermark := watermark
-	newCount := 0
+	records := make([]*domain.HazardRecord, 0, len(reports))
 	for _, r := range reports {
-		h := MapPVMBGToHazard(r)
-
-		savedHazard, isNewOrUpdated, err := p.db.UpsertHazard(ctxPoll, tx, h)
-		if err != nil {
-			recordPollMetrics(err, 0)
-			_ = p.db.UpdateWatermark(ctxPoll, "pvmbg_volcanic", "PVMBG", watermark, false, err.Error())
-			return
-		}
-
-		if isNewOrUpdated {
-			newCount++
-			pubID, payload, err := BuildPublishedEnvelope(savedHazard, corrID)
-			if err != nil {
-				recordPollMetrics(err, 0)
-				_ = p.db.UpdateWatermark(ctxPoll, "pvmbg_volcanic", "PVMBG", watermark, false, err.Error())
-				return
-			}
-			if err := p.db.EnqueueOutbox(ctxPoll, tx, pubID, savedHazard.HazardID, "PVMBG", payload); err != nil {
-				recordPollMetrics(err, 0)
-				_ = p.db.UpdateWatermark(ctxPoll, "pvmbg_volcanic", "PVMBG", watermark, false, err.Error())
-				return
-			}
-		}
-
-		if r.ReportedAt.After(newWatermark) {
-			newWatermark = r.ReportedAt
-		}
+		records = append(records, MapPVMBGToHazard(r))
 	}
-
-	if err := tx.Commit(ctxPoll); err != nil {
-		recordPollMetrics(err, 0)
-		_ = p.db.UpdateWatermark(ctxPoll, "pvmbg_volcanic", "PVMBG", watermark, false, err.Error())
+	newCount, newWatermark, err := ingestRecords(ctxPoll, p.hazards, records, watermark, corrID)
+	if err != nil {
+		fail(err)
 		return
 	}
 
-	_ = p.db.UpdateWatermark(ctxPoll, "pvmbg_volcanic", "PVMBG", newWatermark, true, "")
+	_ = p.sources.RecordSuccess(ctxPoll, domain.SourceKeyPVMBGVolcanic, newWatermark)
 	recordPollMetrics(nil, newCount)
 }
 

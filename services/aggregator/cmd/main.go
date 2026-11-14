@@ -14,7 +14,7 @@ import (
 	"github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/aggregator/internal/config"
 	"github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/aggregator/internal/grpc"
 	"github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/aggregator/internal/ingest"
-	"github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/aggregator/internal/store"
+	"github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/aggregator/internal/storage/open"
 	"github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/aggregator/internal/telemetry"
 )
 
@@ -52,29 +52,36 @@ func main() {
 		cancel()
 	}()
 
-	// 1. Initialize Canonical Store (PostgreSQL)
-	log.Println("[Aggregator] Connecting to canonical PostgreSQL store...")
-	db, err := store.Connect(ctx, cfg.CanonicalStoreDSN)
+	// 1. Open the canonical store (CANONICAL_STORE_BACKEND: postgres or cassandra).
+	log.Printf("[Aggregator] Connecting to canonical %s store...", cfg.CanonicalStoreBackend)
+	store, err := open.Open(ctx, cfg)
 	if err != nil {
-		log.Fatalf("[Aggregator] FATAL: Failed connecting to database: %v", err)
+		log.Fatalf("[Aggregator] FATAL: Failed opening canonical store: %v", err)
 	}
-	defer db.Pool.Close()
-	log.Println("[Aggregator] Database connected and migrations applied successfully.")
+	defer store.Close()
+	log.Println("[Aggregator] Canonical store connected and migrations applied successfully.")
 
-	// 2. Initialize RabbitMQ Transactional Outbox Publisher
-	log.Println("[Aggregator] Starting RabbitMQ Outbox Publisher...")
-	pub := broker.NewOutboxPublisher(cfg, db)
-	pub.Start(ctx)
+	// 2. RabbitMQ transactional outbox publisher. It runs on every replica, unless the backend
+	// allows a single outbox consumer, in which case it runs with the pollers.
+	pub := broker.NewOutboxPublisher(cfg, store.Outbox)
+	if !store.OutboxSingleConsumer {
+		log.Println("[Aggregator] Starting RabbitMQ Outbox Publisher...")
+		pub.Start(ctx)
+	}
 
 	// 3. Ingestion pollers and outbox pruning run on one replica only (the ingest leader); every
-	// replica publishes the outbox and serves gRPC.
+	// replica serves gRPC.
 	log.Println("[Aggregator] Waiting for ingest leadership to start pollers (BMKG & PVMBG)...")
-	go db.RunAsIngestLeader(ctx, func(ctx context.Context) {
+	go store.RunIngest(ctx, func(ctx context.Context) {
 		var wg sync.WaitGroup
 		wg.Add(3)
-		go func() { defer wg.Done(); ingest.NewBMKGPoller(cfg, db).Start(ctx) }()
-		go func() { defer wg.Done(); ingest.NewPVMBGPoller(cfg, db).Start(ctx) }()
-		go func() { defer wg.Done(); broker.RunOutboxPruner(ctx, db, cfg.OutboxRetention) }()
+		go func() { defer wg.Done(); ingest.NewBMKGPoller(cfg, store.Hazards, store.Sources).Start(ctx) }()
+		go func() { defer wg.Done(); ingest.NewPVMBGPoller(cfg, store.Hazards, store.Sources).Start(ctx) }()
+		go func() { defer wg.Done(); broker.RunOutboxPruner(ctx, store.Outbox, cfg.OutboxRetention) }()
+		if store.OutboxSingleConsumer {
+			log.Println("[Aggregator] Starting RabbitMQ Outbox Publisher (single consumer)...")
+			pub.Start(ctx)
+		}
 		wg.Wait()
 	})
 
@@ -92,7 +99,7 @@ func main() {
 	defer verifier.Close()
 
 	// 5. Initialize & Start gRPC Server
-	srv := grpc.NewServer(cfg, db, verifier)
+	srv := grpc.NewServer(cfg, store.Hazards, store.Sources, verifier)
 	log.Printf("[Aggregator] Starting gRPC server on port %s...", cfg.GRPCPort)
 	if err := srv.Start(ctx); err != nil {
 		log.Fatalf("[Aggregator] gRPC server error: %v", err)

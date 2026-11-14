@@ -9,7 +9,7 @@ import (
 
 type SourceStatusInfo struct {
 	Source        string
-	Status        string // "FRESH", "STALE", "UNAVAILABLE"
+	Status        string // StatusFresh, StatusStale or StatusUnavailable
 	LastSuccessAt time.Time
 	LastAttemptAt time.Time
 	StaleSince    *time.Time
@@ -20,14 +20,14 @@ func (s *SourceStatusInfo) CalculateFreshness(threshold time.Duration, hasCached
 	now := time.Now().UTC()
 	if s.LastSuccessAt.IsZero() {
 		if hasCachedData {
-			s.Status = "STALE"
+			s.Status = StatusStale
 			t := s.LastAttemptAt
 			if t.IsZero() {
 				t = now
 			}
 			s.StaleSince = &t
 		} else {
-			s.Status = "UNAVAILABLE"
+			s.Status = StatusUnavailable
 			s.StaleSince = nil
 		}
 		return
@@ -36,43 +36,25 @@ func (s *SourceStatusInfo) CalculateFreshness(threshold time.Duration, hasCached
 	age := now.Sub(s.LastSuccessAt)
 	if age > threshold || s.ErrorMessage != "" {
 		if hasCachedData {
-			s.Status = "STALE"
+			s.Status = StatusStale
 			if s.StaleSince == nil {
 				st := s.LastSuccessAt.Add(threshold)
 				s.StaleSince = &st
 			}
 		} else {
-			s.Status = "UNAVAILABLE"
+			s.Status = StatusUnavailable
 			s.StaleSince = nil
 		}
 	} else {
-		s.Status = "FRESH"
+		s.Status = StatusFresh
 		s.StaleSince = nil
 	}
 }
 
 func (s *SourceStatusInfo) ToProto() *commonv1.SourceFreshness {
-	sourceEnum := commonv1.Source_SOURCE_UNSPECIFIED
-	switch s.Source {
-	case "BMKG":
-		sourceEnum = commonv1.Source_SOURCE_BMKG
-	case "PVMBG":
-		sourceEnum = commonv1.Source_SOURCE_PVMBG
-	}
-
-	statusEnum := commonv1.SourceStatus_SOURCE_STATUS_UNSPECIFIED
-	switch s.Status {
-	case "FRESH":
-		statusEnum = commonv1.SourceStatus_SOURCE_STATUS_FRESH
-	case "STALE":
-		statusEnum = commonv1.SourceStatus_SOURCE_STATUS_STALE
-	case "UNAVAILABLE":
-		statusEnum = commonv1.SourceStatus_SOURCE_STATUS_UNAVAILABLE
-	}
-
 	res := &commonv1.SourceFreshness{
-		Source: sourceEnum,
-		Status: statusEnum,
+		Source: SourceToProto(s.Source),
+		Status: StatusToProto(s.Status),
 	}
 
 	if !s.LastSuccessAt.IsZero() {

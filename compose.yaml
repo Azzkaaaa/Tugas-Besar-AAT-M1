@@ -343,7 +343,22 @@ services:
       BMKG_REQUEST_TIMEOUT_MS: ${BMKG_REQUEST_TIMEOUT_MS:-1000}
       PVMBG_REQUEST_TIMEOUT_MS: ${PVMBG_REQUEST_TIMEOUT_MS:-3500}
       SOURCE_STALE_AFTER_MS: ${SOURCE_STALE_AFTER_MS:-10000}
+      # Canonical store backend: cassandra (default) or postgres. Both stores run so either can be
+      # selected, and so cmd/storecopy can copy Postgres data into Cassandra.
+      CANONICAL_STORE_BACKEND: ${AGGREGATOR_STORE_BACKEND:-cassandra}
       CANONICAL_STORE_DSN: postgres://aggregator:${AGGREGATOR_DB_PASSWORD}@aggregator-db.local:5432/bnpb_canonical?sslmode=disable
+      CANONICAL_STORE_CASSANDRA_HOSTS: aggregator-cassandra.local:9042
+      CANONICAL_STORE_CASSANDRA_KEYSPACE: bnpb_canonical
+      # Initial period for a new keyspace; change it at runtime with ./storeadmin (services/aggregator/README.md).
+      CANONICAL_STORE_CASSANDRA_BUCKET_PERIOD: ${AGGREGATOR_CASSANDRA_BUCKET_PERIOD:-1m}
+      CANONICAL_STORE_CASSANDRA_CONSISTENCY: ${AGGREGATOR_CASSANDRA_CONSISTENCY:-LOCAL_QUORUM}
+      CANONICAL_STORE_CASSANDRA_LOCAL_DC: ${AGGREGATOR_CASSANDRA_LOCAL_DC:-}
+      # Replication of a keyspace the aggregator creates. Compose runs one Cassandra node, so the
+      # factor must stay 1 here (RF 3 needs at least 3 nodes, or LOCAL_QUORUM writes fail).
+      # An existing keyspace keeps its replication; a difference is logged with the ALTER to run.
+      CANONICAL_STORE_CASSANDRA_REPLICATION_STRATEGY: ${AGGREGATOR_CASSANDRA_REPLICATION_STRATEGY:-SimpleStrategy}
+      CANONICAL_STORE_CASSANDRA_REPLICATION_FACTOR: ${AGGREGATOR_CASSANDRA_REPLICATION_FACTOR:-1}
+      CANONICAL_STORE_CASSANDRA_DATACENTERS: ${AGGREGATOR_CASSANDRA_DATACENTERS:-}
       AGGREGATOR_AMQP_URL: ${AGGREGATOR_AMQP_URL}
       RABBITMQ_EXCHANGE: ${RABBITMQ_EXCHANGE}
       OUTBOX_MAX_RETRIES: ${OUTBOX_MAX_RETRIES:-5}
@@ -359,6 +374,8 @@ services:
       - "9091:9091"
     depends_on:
       aggregator-db:
+        condition: service_healthy
+      aggregator-cassandra:
         condition: service_healthy
       rabbitmq:
         condition: service_healthy
@@ -376,6 +393,32 @@ services:
       internet_mock_net:
         aliases:
           - aggregator.localhost
+
+  # Cassandra canonical store (CANONICAL_STORE_BACKEND=cassandra). Single node, sized for local
+  # development. Only the aggregator connects to it.
+  aggregator-cassandra:
+    image: cassandra:5.0.9
+    environment:
+      MAX_HEAP_SIZE: 512M
+      HEAP_NEWSIZE: 128M
+      CASSANDRA_CLUSTER_NAME: bnpb
+    # Local development only, like aggregator-db's 5432: lets cqlsh and the storage integration
+    # tests reach the store from the host. Remove outside local development.
+    ports:
+      - "9042:9042"
+    volumes:
+      - aggregator_cassandra_data:/var/lib/cassandra
+    restart: unless-stopped
+    networks:
+      bnpb_net:
+        aliases:
+          - aggregator-cassandra.local
+    healthcheck:
+      test: ["CMD-SHELL", "cqlsh -e 'describe keyspaces' > /dev/null"]
+      interval: 10s
+      timeout: 10s
+      retries: 12
+      start_period: 60s
 
   aggregator-db:
     image: postgres:17
@@ -528,6 +571,7 @@ volumes:
   bmkg_data:
   pvmbg_data:
   aggregator_data:
+  aggregator_cassandra_data:
   webhook_db_data:
   notification_db_data:
   rabbitmq_data:

@@ -10,7 +10,8 @@ import (
 	"time"
 
 	"github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/aggregator/internal/config"
-	"github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/aggregator/internal/store"
+	"github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/aggregator/internal/domain"
+	"github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/aggregator/internal/storage"
 	"github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/aggregator/internal/telemetry"
 	"github.com/google/uuid"
 	"go.opentelemetry.io/otel/attribute"
@@ -19,15 +20,17 @@ import (
 )
 
 type BMKGPoller struct {
-	cfg    *config.Config
-	db     *store.DB
-	client *http.Client
+	cfg     *config.Config
+	hazards storage.HazardStore
+	sources storage.SourceStateStore
+	client  *http.Client
 }
 
-func NewBMKGPoller(cfg *config.Config, db *store.DB) *BMKGPoller {
+func NewBMKGPoller(cfg *config.Config, hazards storage.HazardStore, sources storage.SourceStateStore) *BMKGPoller {
 	return &BMKGPoller{
-		cfg: cfg,
-		db:  db,
+		cfg:     cfg,
+		hazards: hazards,
+		sources: sources,
 		client: &http.Client{
 			Transport: telemetry.ExternalTransport(http.DefaultTransport),
 			Timeout:   cfg.BMKGRequestTimeout,
@@ -79,15 +82,18 @@ func (p *BMKGPoller) poll(ctx context.Context) {
 		}
 	}
 
-	_, watermark, err := p.db.GetWatermark(ctxPoll, "bmkg_seismic")
-	if err != nil {
-		watermark = time.Time{}
+	var watermark time.Time
+	if state, err := p.sources.Get(ctxPoll, domain.SourceKeyBMKGSeismic); err == nil {
+		watermark = state.Watermark
+	}
+	fail := func(err error) {
+		recordPollMetrics(err, 0)
+		_ = p.sources.RecordFailure(ctxPoll, domain.SourceKeyBMKGSeismic, err.Error())
 	}
 
 	seismicEvents, err := p.fetchSeismicEvents(ctxPoll, watermark, corrID)
 	if err != nil {
-		recordPollMetrics(err, 0)
-		_ = p.db.UpdateWatermark(ctxPoll, "bmkg_seismic", "BMKG", watermark, false, err.Error())
+		fail(err)
 		return
 	}
 
@@ -99,54 +105,17 @@ func (p *BMKGPoller) poll(ctx context.Context) {
 		warningMap[w.RelatedEventID] = append(warningMap[w.RelatedEventID], w)
 	}
 
-	tx, err := p.db.Pool.Begin(ctxPoll)
-	if err != nil {
-		recordPollMetrics(err, 0)
-		_ = p.db.UpdateWatermark(ctxPoll, "bmkg_seismic", "BMKG", watermark, false, err.Error())
-		return
-	}
-	defer tx.Rollback(ctxPoll)
-
-	newWatermark := watermark
-	newCount := 0
+	records := make([]*domain.HazardRecord, 0, len(seismicEvents))
 	for _, s := range seismicEvents {
-		relatedWarnings := warningMap[s.EventID]
-		h := MapBMKGToHazard(s, relatedWarnings)
-
-		savedHazard, isNewOrUpdated, err := p.db.UpsertHazard(ctxPoll, tx, h)
-		if err != nil {
-			recordPollMetrics(err, 0)
-			_ = p.db.UpdateWatermark(ctxPoll, "bmkg_seismic", "BMKG", watermark, false, err.Error())
-			return
-		}
-
-		if isNewOrUpdated {
-			newCount++
-			pubID, payload, err := BuildPublishedEnvelope(savedHazard, corrID)
-			if err != nil {
-				recordPollMetrics(err, 0)
-				_ = p.db.UpdateWatermark(ctxPoll, "bmkg_seismic", "BMKG", watermark, false, err.Error())
-				return
-			}
-			if err := p.db.EnqueueOutbox(ctxPoll, tx, pubID, savedHazard.HazardID, "BMKG", payload); err != nil {
-				recordPollMetrics(err, 0)
-				_ = p.db.UpdateWatermark(ctxPoll, "bmkg_seismic", "BMKG", watermark, false, err.Error())
-				return
-			}
-		}
-
-		if s.OccurredAt.After(newWatermark) {
-			newWatermark = s.OccurredAt
-		}
+		records = append(records, MapBMKGToHazard(s, warningMap[s.EventID]))
 	}
-
-	if err := tx.Commit(ctxPoll); err != nil {
-		recordPollMetrics(err, 0)
-		_ = p.db.UpdateWatermark(ctxPoll, "bmkg_seismic", "BMKG", watermark, false, err.Error())
+	newCount, newWatermark, err := ingestRecords(ctxPoll, p.hazards, records, watermark, corrID)
+	if err != nil {
+		fail(err)
 		return
 	}
 
-	_ = p.db.UpdateWatermark(ctxPoll, "bmkg_seismic", "BMKG", newWatermark, true, "")
+	_ = p.sources.RecordSuccess(ctxPoll, domain.SourceKeyBMKGSeismic, newWatermark)
 	recordPollMetrics(nil, newCount)
 }
 
