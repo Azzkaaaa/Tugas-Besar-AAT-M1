@@ -42,20 +42,28 @@ func (p *BMKGPoller) Start(ctx context.Context) {
 	ticker := time.NewTicker(p.cfg.BMKGPollInterval)
 	defer ticker.Stop()
 
-	// Initial poll immediately
-	p.poll(ctx)
+	// Initial poll immediately. After each poll (a safe point) the poller may hand its lease
+	// over: released when the upstream has been unreachable from here, or yielded to rebalance.
+	guard := newLeaseGuard("BMKG", p.cfg.Leader.UnreachableAfter)
+	if guard.after(ctx, p.poll(ctx)) {
+		return
+	}
 
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			p.poll(ctx)
+			if guard.after(ctx, p.poll(ctx)) {
+				return
+			}
 		}
 	}
 }
 
-func (p *BMKGPoller) poll(ctx context.Context) {
+// poll runs one poll and returns the error of the upstream fetch (nil when the upstream answered,
+// even if storing the result failed).
+func (p *BMKGPoller) poll(ctx context.Context) error {
 	corrID := "poll-bmkg-" + uuid.New().String()
 	pollStart := time.Now()
 
@@ -94,7 +102,7 @@ func (p *BMKGPoller) poll(ctx context.Context) {
 	seismicEvents, err := p.fetchSeismicEvents(ctxPoll, watermark, corrID)
 	if err != nil {
 		fail(err)
-		return
+		return err
 	}
 
 	tsunamiWarnings, _ := p.fetchTsunamiWarnings(ctxPoll, watermark, corrID)
@@ -112,11 +120,12 @@ func (p *BMKGPoller) poll(ctx context.Context) {
 	newCount, newWatermark, err := ingestRecords(ctxPoll, p.hazards, records, watermark, corrID)
 	if err != nil {
 		fail(err)
-		return
+		return nil
 	}
 
 	_ = p.sources.RecordSuccess(ctxPoll, domain.SourceKeyBMKGSeismic, newWatermark)
 	recordPollMetrics(nil, newCount)
+	return nil
 }
 
 func (p *BMKGPoller) fetchSeismicEvents(ctx context.Context, since time.Time, corrID string) ([]*BMKGSeismicRaw, error) {

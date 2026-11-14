@@ -30,6 +30,13 @@ func Open(cfg *config.Config, store *open.Store) (leader.Electors, error) {
 		identity = leader.Identity()
 	}
 	pool := &leader.Pool{}
+	yield := &leader.YieldConfig{
+		PerHour: lc.YieldPerHour, Growth: lc.YieldGrowth, YieldCooldown: lc.YieldCooldown,
+		ReleaseCooldown: lc.ReleaseCooldown, MaxReleaseCooldown: lc.ReleaseMaxCooldown,
+	}
+	if err := yield.Validate(); err != nil {
+		return nil, err
+	}
 	switch lc.Election {
 	case "single":
 		return leader.SingleElectors{}, nil
@@ -41,6 +48,7 @@ func Open(cfg *config.Config, store *open.Store) (leader.Electors, error) {
 		e := &leader.LeaseElectors{
 			Store: store.Leases, Prefix: lc.LeasePrefix, Holder: identity,
 			TTL: lc.TTL, RenewEvery: lc.RenewEvery, RetryEvery: lc.RetryEvery, Margin: lc.Margin, Pool: pool,
+			Yield: yield,
 		}
 		if err := e.Validate(); err != nil {
 			return nil, err
@@ -49,7 +57,7 @@ func Open(cfg *config.Config, store *open.Store) (leader.Electors, error) {
 	case "kubernetes":
 		return kubernetes.NewFromEnvironment(kubernetes.Config{
 			Namespace: lc.K8sNamespace, Identity: identity,
-			TTL: lc.TTL, RenewEvery: lc.RenewEvery, Margin: lc.Margin, Pool: pool,
+			TTL: lc.TTL, RenewEvery: lc.RenewEvery, Margin: lc.Margin, Pool: pool, Yield: yield,
 		}, lc.LeasePrefix)
 	}
 	return nil, fmt.Errorf("unknown leader election %q", lc.Election)

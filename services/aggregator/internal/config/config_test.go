@@ -81,3 +81,25 @@ func TestLeaderConfig(t *testing.T) {
 		t.Fatalf("invalid election accepted: %v", err)
 	}
 }
+
+func TestYieldConfig(t *testing.T) {
+	setBaseEnv(t)
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	l := cfg.Leader
+	if l.YieldPerHour != 1 || l.YieldGrowth != 4 || l.YieldCooldown != l.RetryEvery || l.ReleaseCooldown != 2*l.TTL ||
+		l.ReleaseMaxCooldown != 5*time.Minute || l.UnreachableAfter != 3 {
+		t.Fatalf("yield defaults = %+v", l)
+	}
+	t.Setenv("LEADER_YIELD_PER_HOUR", "0")
+	t.Setenv("LEADER_UNREACHABLE_AFTER", "5")
+	if cfg, err = Load(); err != nil || cfg.Leader.YieldPerHour != 0 || cfg.Leader.UnreachableAfter != 5 {
+		t.Fatalf("overrides = %+v, %v", cfg.Leader, err)
+	}
+	t.Setenv("LEADER_YIELD_GROWTH", "0.5")
+	if _, err := Load(); err == nil {
+		t.Fatal("growth below 1 accepted")
+	}
+}

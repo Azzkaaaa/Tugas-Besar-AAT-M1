@@ -362,6 +362,10 @@ services:
       # Leader election for the pollers/pruner (and the publisher on Cassandra): postgres,
       # cassandra, kubernetes or single. Empty follows CANONICAL_STORE_BACKEND.
       LEADER_ELECTION: ${AGGREGATOR_LEADER_ELECTION:-}
+      # Cooperative lease release: yield rate per hour (0 = off) and how many unreachable polls
+      # in a row hand a poller to another replica (0 = off).
+      LEADER_YIELD_PER_HOUR: ${AGGREGATOR_LEADER_YIELD_PER_HOUR:-1}
+      LEADER_UNREACHABLE_AFTER: ${AGGREGATOR_LEADER_UNREACHABLE_AFTER:-3}
       AGGREGATOR_AMQP_URL: ${AGGREGATOR_AMQP_URL}
       RABBITMQ_EXCHANGE: ${RABBITMQ_EXCHANGE}
       OUTBOX_MAX_RETRIES: ${OUTBOX_MAX_RETRIES:-5}

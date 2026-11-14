@@ -13,7 +13,9 @@ import (
 
 func cfg(election, backend string) *config.Config {
 	return &config.Config{CanonicalStoreBackend: backend, Leader: config.LeaderConfig{
-		Election: election, LeasePrefix: "aggregator", TTL: 15 * time.Second, RenewEvery: 5 * time.Second, RetryEvery: 5 * time.Second, Margin: 5 * time.Second,
+		Election: election, LeasePrefix: "aggregator", TTL: 15 * time.Second,
+		YieldPerHour: 1, YieldGrowth: 4, YieldCooldown: 5 * time.Second, ReleaseCooldown: 30 * time.Second,
+		ReleaseMaxCooldown: 5 * time.Minute, RenewEvery: 5 * time.Second, RetryEvery: 5 * time.Second, Margin: 5 * time.Second,
 	}}
 }
 

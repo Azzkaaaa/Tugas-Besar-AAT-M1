@@ -77,6 +77,7 @@ type LeaseElectors struct {
 	RetryEvery time.Duration
 	Margin     time.Duration
 	Pool       *Pool
+	Yield      *YieldConfig
 }
 
 // For returns the lease elector of job.
@@ -86,6 +87,7 @@ func (e *LeaseElectors) lease(job string) *Lease {
 	return &Lease{
 		Store: e.Store, Name: e.Prefix + "-" + job, Holder: e.Holder,
 		TTL: e.TTL, RenewEvery: e.RenewEvery, RetryEvery: e.RetryEvery, Margin: e.Margin, Pool: e.Pool,
+		Yield: e.Yield,
 	}
 }
 

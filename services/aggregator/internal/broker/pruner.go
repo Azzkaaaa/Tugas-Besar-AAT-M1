@@ -5,6 +5,7 @@ import (
 	"log"
 	"time"
 
+	"github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/aggregator/internal/leader"
 	"github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/aggregator/internal/storage"
 )
 
@@ -36,6 +37,10 @@ func RunOutboxPruner(ctx context.Context, outbox storage.Outbox, retention time.
 		}
 		if total > 0 {
 			log.Printf("[OutboxPruner] Deleted %d outbox records older than %s", total, retention)
+		}
+		// Safe point between passes: as a leader job it may hand its lease over.
+		if leader.MaybeYield(ctx) {
+			return
 		}
 		select {
 		case <-ctx.Done():

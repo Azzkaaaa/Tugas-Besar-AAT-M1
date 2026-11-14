@@ -169,6 +169,38 @@ cluster.
   dipegang tidak dipindahkan (tidak ada rebalancing); restart mendistribusikan
   ulang.
 
+- **Pelepasan kooperatif (tanpa replika saling tahu).** Pekerjaan sendiri yang
+  memutuskan, di titik aman: poller setelah tiap poll selesai, publisher setelah
+  tiap batch yang sudah tuntas, pruner setelah tiap putaran.
+  - *Yield (rebalancing):* `leader.MaybeYield` — replika yang memegang `h` lease
+    melepas satu dengan laju `LEADER_YIELD_PER_HOUR × (G^(h−1) − 1)/(G − 1)` per
+    jam (`G` = `LEADER_YIELD_GROWTH`, default 1 dan 4), jadi tidak pernah melepas
+    lease terakhirnya dan jauh lebih sering bila memegang banyak. Peluang per
+    panggilan dinormalisasi waktu (`1 − e^(−λ·Δt)`), jadi pekerjaan yang sering atau
+    jarang memeriksa berperilaku sama. Bersama jeda penyebaran, pekerjaan cenderung
+    berpindah ke replika yang memegang lebih sedikit. Saat seimbang tetap ada churn
+    kecil (2/2 ≈ satu perpindahan per ~15 menit dengan default; tiap perpindahan
+    menjeda pekerjaan sekitar satu interval retry). `LEADER_YIELD_PER_HOUR=0`
+    mematikannya.
+  - *Release saat upstream tak terjangkau:* poller yang gagal menjangkau
+    BMKG/PVMBG `LEADER_UNREACHABLE_AFTER` kali berturut-turut (default 3) melepas
+    lease-nya ke replika lain. Hanya kegagalan transport yang dihitung (DNS,
+    koneksi ditolak/putus, timeout, TLS); respons HTTP apa pun, termasuk 5xx, berarti
+    upstream terjangkau. Di elector `single` tidak ada yang bisa menerima, jadi
+    poller tetap berjalan.
+  - *Cooldown dan back-off:* setelah yield replika menunggu
+    `LEADER_YIELD_COOLDOWN_MS` (default = interval retry), setelah release
+    `LEADER_RELEASE_COOLDOWN_MS` (default 2×TTL) sebelum meminta lease itu lagi.
+    Bila lease masih kosong saat cooldown habis (tidak ada yang mengambil: replika
+    sendirian), laju yield pekerjaan itu dibagi dua (pulih ×2 per jam). Cooldown
+    release digandakan pada setiap release sampai `LEADER_RELEASE_MAX_COOLDOWN_MS`
+    (default 5 menit), diambil replika lain atau tidak — bila upstream mati untuk
+    semua replika, poller tetap berpindah tetapi makin jarang (30 dtk, 1, 2, 4,
+    5 menit). Cooldown kembali ke awal setelah replika memimpin pekerjaan itu
+    selama `LEADER_RELEASE_MAX_COOLDOWN_MS` tanpa release. Akibatnya, setelah
+    upstream pulih dari gangguan menyeluruh, poll bisa tertunda sampai cooldown
+    maksimum (teramati 2 mnt 37 dtk); turunkan nilai itu bila pemulihan cepat lebih
+    penting.
 - **Lease bertahan setelah putus.** Lease tidak dilepas saat koneksi leader
   putus, hanya kedaluwarsa setelah TTL. Leader menghentikan dirinya sendiri pada
   tenggat lokal (waktu kirim renew terakhir yang sukses + TTL − margin), sebelum

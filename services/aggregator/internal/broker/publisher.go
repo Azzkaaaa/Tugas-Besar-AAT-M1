@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/aggregator/internal/config"
+	"github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/aggregator/internal/leader"
 	"github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/aggregator/internal/storage"
 	"github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/aggregator/internal/telemetry"
 	amqp "github.com/rabbitmq/amqp091-go"
@@ -30,6 +31,8 @@ type OutboxPublisher struct {
 	outbox storage.Outbox
 	conn   *amqp.Connection
 	ch     *amqp.Channel
+	// yielded is set when the loop handed its lease over (leader.MaybeYield), so Run returns.
+	yielded bool
 }
 
 func NewOutboxPublisher(cfg *config.Config, outbox storage.Outbox) *OutboxPublisher {
@@ -60,6 +63,10 @@ func (p *OutboxPublisher) Run(ctx context.Context) {
 			continue
 		}
 		p.processOutboxLoop(ctx)
+		if p.yielded {
+			p.yielded = false
+			return
+		}
 	}
 }
 
@@ -174,6 +181,12 @@ func (p *OutboxPublisher) processOutboxLoop(ctx context.Context) {
 					log.Printf("[OutboxPublisher] Successfully published event %s (hazard=%s, source=%s)",
 						rec.EventID, rec.HazardID, rec.Source)
 				}
+			}
+			// Safe point: every claimed event was acked, retried or released. When the publisher
+			// runs as a leader job it may hand its lease over here.
+			if leader.MaybeYield(ctx) {
+				p.yielded = true
+				return
 			}
 		}
 	}

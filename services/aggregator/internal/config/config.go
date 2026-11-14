@@ -54,6 +54,15 @@ type LeaderConfig struct {
 	LeasePrefix string
 	// K8sNamespace is the Kubernetes Lease namespace (default: the service account's).
 	K8sNamespace string
+	// Cooperative release (see internal/leader/term.go). YieldPerHour 0 disables yielding.
+	YieldPerHour       float64
+	YieldGrowth        float64
+	YieldCooldown      time.Duration
+	ReleaseCooldown    time.Duration
+	ReleaseMaxCooldown time.Duration
+	// UnreachableAfter is how many polls in a row must fail to reach their upstream before the
+	// poller releases its lease (0 disables).
+	UnreachableAfter int
 }
 
 // CassandraConfig configures the cassandra canonical store backend. LoadCassandra reads it from
@@ -239,6 +248,40 @@ func Load() (*Config, error) {
 		K8sNamespace: os.Getenv("LEADER_K8S_NAMESPACE"),
 		LeasePrefix:  envOr("LEADER_LEASE_PREFIX", "aggregator"),
 	}
+	nonNegFloat := func(key string, def float64) float64 {
+		v := strings.TrimSpace(os.Getenv(key))
+		if v == "" {
+			return def
+		}
+		f, err := strconv.ParseFloat(v, 64)
+		if err != nil || f < 0 {
+			errs = append(errs, fmt.Sprintf("invalid non-negative number for env var %s: %q", key, v))
+			return def
+		}
+		return f
+	}
+	nonNegInt := func(key string, def int) int {
+		v := strings.TrimSpace(os.Getenv(key))
+		if v == "" {
+			return def
+		}
+		n, err := strconv.Atoi(v)
+		if err != nil || n < 0 {
+			errs = append(errs, fmt.Sprintf("invalid non-negative integer for env var %s: %q", key, v))
+			return def
+		}
+		return n
+	}
+	cfg.Leader.YieldPerHour = nonNegFloat("LEADER_YIELD_PER_HOUR", 1)
+	cfg.Leader.YieldGrowth = nonNegFloat("LEADER_YIELD_GROWTH", 4)
+	cfg.Leader.YieldCooldown = leaderMS("LEADER_YIELD_COOLDOWN_MS", cfg.Leader.RetryEvery)
+	cfg.Leader.ReleaseCooldown = leaderMS("LEADER_RELEASE_COOLDOWN_MS", 2*cfg.Leader.TTL)
+	cfg.Leader.ReleaseMaxCooldown = leaderMS("LEADER_RELEASE_MAX_COOLDOWN_MS", 5*time.Minute)
+	cfg.Leader.UnreachableAfter = nonNegInt("LEADER_UNREACHABLE_AFTER", 3)
+	if cfg.Leader.YieldGrowth < 1 {
+		errs = append(errs, "LEADER_YIELD_GROWTH must be at least 1")
+	}
+
 	switch cfg.Leader.Election {
 	case "postgres", "cassandra", "kubernetes", "single":
 	default:

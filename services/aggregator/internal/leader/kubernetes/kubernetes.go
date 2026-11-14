@@ -36,7 +36,9 @@ type Config struct {
 	Margin     time.Duration
 	// Pool is shared by the electors of the process to spread jobs (see leader.Lease.Run).
 	Pool *leader.Pool
-	Logf func(format string, args ...any)
+	// Yield, when set, lets jobs yield or release their lease (see leader.MaybeYield).
+	Yield *leader.YieldConfig
+	Logf  func(format string, args ...any)
 }
 
 // Electors gives each job its own Lease, named Prefix + "-" + job.
@@ -90,8 +92,9 @@ func (f failed) Run(ctx context.Context, _ func(ctx context.Context)) {
 
 // Elector is a leader.Elector on a Kubernetes Lease.
 type Elector struct {
-	cfg  Config
-	lock resourcelock.Interface
+	cfg     Config
+	lock    resourcelock.Interface
+	handoff *leader.Handoff
 }
 
 var _ leader.Elector = (*Elector)(nil)
@@ -111,7 +114,12 @@ func New(cfg Config) (*Elector, error) {
 		return nil, fmt.Errorf("lease TTL - margin (%s) must exceed %.1f x the renew interval (%s)",
 			renew, leaderelection.JitterFactor, cfg.RenewEvery)
 	}
-	return &Elector{cfg: cfg, lock: &resourcelock.LeaseLock{
+	if cfg.Yield != nil {
+		if err := cfg.Yield.Validate(); err != nil {
+			return nil, err
+		}
+	}
+	return &Elector{cfg: cfg, handoff: leader.NewHandoff(cfg.Yield), lock: &resourcelock.LeaseLock{
 		LeaseMeta:  metav1.ObjectMeta{Name: cfg.LeaseName, Namespace: cfg.Namespace},
 		Client:     cfg.Client.CoordinationV1(),
 		LockConfig: resourcelock.ResourceLockConfig{Identity: cfg.Identity},
@@ -158,8 +166,11 @@ func (e *Elector) Run(ctx context.Context, fn func(ctx context.Context)) {
 		if held := e.cfg.Pool.Held(); held > 0 && !sleep(ctx, e.cfg.RenewEvery*time.Duration(held)) {
 			return
 		}
-		if e.runOnce(ctx, fn) {
-			wait = 0
+		if term := e.runOnce(ctx, fn); term != nil {
+			wait = e.handoff.End(term) // cooldown after a yield or release, else 0
+			if wait > 0 {
+				e.cfg.Logf("[Leader] %s waits %s before asking for %s/%s again", e.cfg.Identity, wait, e.cfg.Namespace, e.cfg.LeaseName)
+			}
 		} else {
 			wait = e.cfg.RenewEvery + jitter(e.cfg.RenewEvery)
 		}
@@ -184,12 +195,13 @@ func jitter(d time.Duration) time.Duration {
 	return time.Duration(rand.Int64N(int64(d)))
 }
 
-// runOnce runs one round and reports whether this process led in it.
-func (e *Elector) runOnce(ctx context.Context, fn func(ctx context.Context)) bool {
+// runOnce runs one round and returns the term when this process led in it, else nil.
+func (e *Elector) runOnce(ctx context.Context, fn func(ctx context.Context)) *leader.Term {
 	runCtx, stopRun := context.WithCancel(context.Background())
 	defer stopRun()
 	var mu sync.Mutex
 	var fnDone chan struct{}
+	var term *leader.Term
 
 	le, err := leaderelection.NewLeaderElector(leaderelection.LeaderElectionConfig{
 		Lock:            e.lock,
@@ -207,12 +219,20 @@ func (e *Elector) runOnce(ctx context.Context, fn func(ctx context.Context)) boo
 				fnDone = done
 				mu.Unlock()
 				defer close(done)
-				workCtx, cancel := context.WithCancel(leadCtx)
+				e.handoff.Observed(false)
+				termCtx, t := e.handoff.Begin(leadCtx, e.cfg.Pool)
+				mu.Lock()
+				term = t
+				mu.Unlock()
+				workCtx, cancel := context.WithCancel(termCtx)
 				stop := context.AfterFunc(ctx, cancel)
 				e.cfg.Logf("[Leader] %s acquired Kubernetes lease %s/%s", e.cfg.Identity, e.cfg.Namespace, e.cfg.LeaseName)
 				fn(workCtx)
 				stop()
 				cancel()
+				if outcome := t.Outcome(); outcome != "" {
+					e.cfg.Logf("[Leader] %s %s %s/%s", e.cfg.Identity, outcome, e.cfg.Namespace, e.cfg.LeaseName)
+				}
 				// Work is over (shutdown, lost lease, or it returned): release the lease now.
 				stopRun()
 			},
@@ -221,6 +241,7 @@ func (e *Elector) runOnce(ctx context.Context, fn func(ctx context.Context)) boo
 				leading := fnDone != nil
 				mu.Unlock()
 				if identity != e.cfg.Identity && !leading {
+					e.handoff.Observed(true)
 					stopRun() // held elsewhere: back off instead of polling every retry period
 				}
 			},
@@ -231,7 +252,7 @@ func (e *Elector) runOnce(ctx context.Context, fn func(ctx context.Context)) boo
 	})
 	if err != nil {
 		e.cfg.Logf("[Leader] Invalid Kubernetes leader election config: %v", err)
-		return false
+		return nil
 	}
 
 	// Shutting down before or without leading: stop campaigning.
@@ -252,5 +273,7 @@ func (e *Elector) runOnce(ctx context.Context, fn func(ctx context.Context)) boo
 	if done != nil {
 		<-done
 	}
-	return done != nil
+	mu.Lock()
+	defer mu.Unlock()
+	return term
 }

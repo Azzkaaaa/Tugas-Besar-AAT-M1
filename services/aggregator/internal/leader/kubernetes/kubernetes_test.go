@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/aggregator/internal/leader"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/fake"
 )
@@ -144,5 +145,34 @@ func TestKubernetesJobsSpreadAndFailOver(t *testing.T) {
 	leases, err := client.CoordinationV1().Leases("bnpb").List(context.Background(), metav1.ListOptions{})
 	if err != nil || len(leases.Items) != len(jobs) {
 		t.Fatalf("leases %v, %v; want one per job", leases, err)
+	}
+}
+
+// A job that releases its Lease hands it to the other replica, which leads while the releasing
+// replica waits out its cooldown.
+func TestKubernetesReleaseHandsOver(t *testing.T) {
+	client := fake.NewClientset()
+	yield := &leader.YieldConfig{Growth: 1, ReleaseCooldown: 3 * time.Second, MaxReleaseCooldown: 3 * time.Second}
+	newE := func(id string) *Elector {
+		e, err := New(Config{Client: client, Namespace: "bnpb", LeaseName: "aggregator-job", Identity: id,
+			TTL: 2 * time.Second, RenewEvery: 200 * time.Millisecond, Margin: time.Second, Yield: yield,
+			Pool: &leader.Pool{}, Logf: func(string, ...any) {}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return e
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	var aRuns, bRuns atomic.Int32
+	go newE("a").Run(ctx, func(ctx context.Context) {
+		aRuns.Add(1)
+		leader.Release(ctx, "cannot reach upstream")
+	})
+	waitFor(t, func() bool { return aRuns.Load() == 1 }, 3*time.Second, "a never led")
+	go newE("b").Run(ctx, func(ctx context.Context) { bRuns.Add(1); <-ctx.Done() })
+	waitFor(t, func() bool { return bRuns.Load() == 1 }, 3*time.Second, "b did not take the released lease")
+	if aRuns.Load() != 1 {
+		t.Fatalf("a led %d times during its release cooldown", aRuns.Load())
 	}
 }
