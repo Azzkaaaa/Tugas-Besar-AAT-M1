@@ -1,6 +1,7 @@
 package domain
 
 import (
+	"encoding/json"
 	"time"
 
 	commonv1 "github.com/Azzkaaaa/Tugas-Besar-AAT-M1/packages/bnpb-aggregator-go/bnpb/common/v1"
@@ -20,6 +21,9 @@ type HazardRecord struct {
 	OccurredAt  time.Time      `json:"occurred_at"`
 	IngestedAt  time.Time      `json:"ingested_at"`
 	Attributes  map[string]any `json:"attributes"`
+	// Revision is the committed revision of the record: 1 when first stored, +1 per content
+	// change. Set by the store; event IDs derive from (HazardID, Revision). Not published.
+	Revision int `json:"revision"`
 }
 
 func (h *HazardRecord) ToProto() (*commonv1.HazardEvent, error) {
@@ -28,43 +32,15 @@ func (h *HazardRecord) ToProto() (*commonv1.HazardEvent, error) {
 		attrStruct = &structpb.Struct{Fields: map[string]*structpb.Value{}}
 	}
 
-	sourceEnum := commonv1.Source_SOURCE_UNSPECIFIED
-	switch h.Source {
-	case "BMKG":
-		sourceEnum = commonv1.Source_SOURCE_BMKG
-	case "PVMBG":
-		sourceEnum = commonv1.Source_SOURCE_PVMBG
-	}
-
-	hazardTypeEnum := commonv1.HazardType_HAZARD_TYPE_UNSPECIFIED
-	switch h.HazardType {
-	case "SEISMIC":
-		hazardTypeEnum = commonv1.HazardType_HAZARD_TYPE_SEISMIC
-	case "VOLCANIC":
-		hazardTypeEnum = commonv1.HazardType_HAZARD_TYPE_VOLCANIC
-	}
-
-	severityEnum := commonv1.Severity_SEVERITY_UNSPECIFIED
-	switch h.Severity {
-	case "NORMAL":
-		severityEnum = commonv1.Severity_SEVERITY_NORMAL
-	case "WASPADA":
-		severityEnum = commonv1.Severity_SEVERITY_WASPADA
-	case "SIAGA":
-		severityEnum = commonv1.Severity_SEVERITY_SIAGA
-	case "AWAS":
-		severityEnum = commonv1.Severity_SEVERITY_AWAS
-	}
-
 	lat := h.Latitude
 	lon := h.Longitude
 
 	return &commonv1.HazardEvent{
 		HazardId:    h.HazardID,
-		Source:      sourceEnum,
+		Source:      SourceToProto(h.Source),
 		SourceRefId: h.SourceRefID,
-		HazardType:  hazardTypeEnum,
-		Severity:    severityEnum,
+		HazardType:  HazardTypeToProto(h.HazardType),
+		Severity:    SeverityToProto(h.Severity),
 		AreaName:    h.AreaName,
 		Latitude:    &lat,
 		Longitude:   &lon,
@@ -75,39 +51,11 @@ func (h *HazardRecord) ToProto() (*commonv1.HazardEvent, error) {
 }
 
 func (h *HazardRecord) ToSummaryProto() *commonv1.HazardSummary {
-	sourceEnum := commonv1.Source_SOURCE_UNSPECIFIED
-	switch h.Source {
-	case "BMKG":
-		sourceEnum = commonv1.Source_SOURCE_BMKG
-	case "PVMBG":
-		sourceEnum = commonv1.Source_SOURCE_PVMBG
-	}
-
-	hazardTypeEnum := commonv1.HazardType_HAZARD_TYPE_UNSPECIFIED
-	switch h.HazardType {
-	case "SEISMIC":
-		hazardTypeEnum = commonv1.HazardType_HAZARD_TYPE_SEISMIC
-	case "VOLCANIC":
-		hazardTypeEnum = commonv1.HazardType_HAZARD_TYPE_VOLCANIC
-	}
-
-	severityEnum := commonv1.Severity_SEVERITY_UNSPECIFIED
-	switch h.Severity {
-	case "NORMAL":
-		severityEnum = commonv1.Severity_SEVERITY_NORMAL
-	case "WASPADA":
-		severityEnum = commonv1.Severity_SEVERITY_WASPADA
-	case "SIAGA":
-		severityEnum = commonv1.Severity_SEVERITY_SIAGA
-	case "AWAS":
-		severityEnum = commonv1.Severity_SEVERITY_AWAS
-	}
-
 	return &commonv1.HazardSummary{
 		HazardId:   h.HazardID,
-		Source:     sourceEnum,
-		HazardType: hazardTypeEnum,
-		Severity:   severityEnum,
+		Source:     SourceToProto(h.Source),
+		HazardType: HazardTypeToProto(h.HazardType),
+		Severity:   SeverityToProto(h.Severity),
 		AreaName:   h.AreaName,
 		OccurredAt: timestamppb.New(h.OccurredAt),
 		IngestedAt: timestamppb.New(h.IngestedAt),
@@ -133,4 +81,19 @@ func (h *HazardRecord) ToProjection(view commonv1.View) (*commonv1.HazardProject
 			Summary: h.ToSummaryProto(),
 		},
 	}, nil
+}
+
+// NormalizeAttributes returns attrs as they read back from storage: a JSON round trip, so typed
+// values ([]map[string]any, int, structs) become the generic forms (map[string]any, []any,
+// float64) that structpb and change detection expect. Unencodable attributes become empty.
+func NormalizeAttributes(attrs map[string]any) map[string]any {
+	out := map[string]any{}
+	b, err := json.Marshal(attrs)
+	if err != nil {
+		return out
+	}
+	if err := json.Unmarshal(b, &out); err != nil || out == nil {
+		return map[string]any{}
+	}
+	return out
 }

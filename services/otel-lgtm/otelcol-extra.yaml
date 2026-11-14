@@ -69,6 +69,7 @@ receivers:
           params: { module: [tcp_connect] }
           static_configs:
             - { targets: ["aggregator-db:5432"], labels: { service: aggregator-db } }
+            - { targets: ["aggregator-cassandra:9042"], labels: { service: aggregator-cassandra } }
             - { targets: ["auth-db:5432"], labels: { service: auth-db } }
             - { targets: ["rabbitmq:5672"], labels: { service: rabbitmq } }
           relabel_configs: *probe_relabel

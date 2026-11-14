@@ -37,7 +37,7 @@ langkah generasi kode .NET berjalan di host, lihat langkah 2):
 | k6 | 1.x | Hanya untuk uji beban ([instalasi](https://grafana.com/docs/k6/latest/set-up/install-k6/)) |
 
 Port host yang dipakai: `8080` (Envoy), `8081`/`8082` (mock), `9091`, `9093`–`9095`
-(gRPC), `5432` (PostgreSQL aggregator), `5672`/`15672` (RabbitMQ), `3000`,
+(gRPC), `5432` (PostgreSQL aggregator), `9042` (Cassandra aggregator), `5672`/`15672` (RabbitMQ), `3000`,
 `4317`, `4318`, `9090` (otel-lgtm). Pastikan port tersebut kosong.
 
 **Untuk mengembangkan/membangun service di luar Docker** (opsional):
@@ -251,6 +251,14 @@ Variabel shell mengalahkan nilai dari `--env-file`. Variabel `VITE_*`/`FIREBASE_
 | --- | --- | --- |
 | `BMKG_STORE_DSN` / `PVMBG_STORE_DSN` | `sqlite:///data/bmkg.sqlite3` / `…pvmbg.sqlite3` | File SQLite tiap mock (harus berbeda) |
 | `AGGREGATOR_DB_PASSWORD` | kosong → **isi manual** | Password PostgreSQL store kanonik aggregator |
+| `AGGREGATOR_STORE_BACKEND` | `cassandra` | Backend store kanonik aggregator: `cassandra` atau `postgres` |
+| `AGGREGATOR_CASSANDRA_BUCKET_PERIOD` | `1m` | Rentang waktu awal satu partisi hazard di Cassandra (keyspace baru); ubah saat berjalan dengan `storeadmin`, lihat README aggregator |
+| `AGGREGATOR_CASSANDRA_CONSISTENCY` | `LOCAL_QUORUM` | Consistency baca/tulis Cassandra |
+| `AGGREGATOR_CASSANDRA_REPLICATION_STRATEGY` | `SimpleStrategy` | `SimpleStrategy` atau `NetworkTopologyStrategy`; hanya saat keyspace dibuat |
+| `AGGREGATOR_CASSANDRA_REPLICATION_FACTOR` | `1` | Replika untuk `SimpleStrategy`; compose (1 node) harus 1 |
+| `AGGREGATOR_CASSANDRA_DATACENTERS` | kosong | Replika per datacenter untuk `NetworkTopologyStrategy`, mis. `dc1:3,dc2:3` |
+| `AGGREGATOR_CASSANDRA_LOCAL_DC` | kosong | Datacenter lokal untuk consistency `LOCAL_*` |
+| `AGGREGATOR_LEADER_ELECTION` | kosong (ikut backend store) | Pemilihan leader aggregator: `postgres`, `cassandra`, `kubernetes`, atau `single` |
 | `WEBHOOK_DB_PASSWORD` | kosong → **isi manual** | Password PostgreSQL `webhook-db`; Compose menyusun `WEBHOOK_STORE_DSN` |
 | `WEBHOOK_DEDUP_TTL_HOURS` | `168` | Lama penanda "sudah terkirim" di Redis untuk dedup webhook |
 | `WEBHOOK_SHUTDOWN_GRACE_SECONDS` | `25` | Waktu event webhook yang sedang dikirim boleh selesai setelah SIGTERM; harus di bawah `terminationGracePeriodSeconds` pod |
@@ -365,6 +373,7 @@ python tests/test_menu.py
 2. Anda bisa menjalankan `docker compose --env-file .env --env-file .env.auth stop notification-service` untuk menghentikan salah satu servis (misal notification-service).
 3. Anda bisa menjalankan `docker compose --env-file .env --env-file .env.auth up --build --no-deps notification-service` untuk mem-build ulang notification-service. Selama notification-service, sistem dan dashboard masih tetap bekerja dan melayani permintaan.
 4. Untuk kriteria penyelesaian 2, Anda bisa memverifikasi bahwa JSONB digunaka dengan masuk ke Canonical Store menggunakan `docker exec -it tugas-besar-aat-m1-aggregator-db-1 psql -U aggregator -d bnpb_canonical`, kemudian memasukkan `\d hazard_events`.
+   Bila aggregator memakai Cassandra (default compose, `AGGREGATOR_STORE_BACKEND=cassandra`), `attributes` disimpan sebagai teks JSON tanpa skema tetap: jalankan `docker exec -it tugas-besar-aat-m1-aggregator-cassandra-1 cqlsh -e "DESCRIBE TABLE bnpb_canonical.hazards_by_id; SELECT source, attributes FROM bnpb_canonical.hazards_by_id LIMIT 5;"`.
 5. Gunakan menu ke-10 dari CLI test_menu untuk menguji keberdampingan skema v1 dan v2, serta pengujian akses Canonical Store.
 
 ##### P5

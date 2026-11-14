@@ -52,7 +52,7 @@ func TestBMKGPoller_FetchSeismicEvents(t *testing.T) {
 		BMKGRequestTimeout: 2 * time.Second,
 	}
 
-	poller := NewBMKGPoller(cfg, nil)
+	poller := NewBMKGPoller(cfg, nil, nil)
 	events, err := poller.fetchSeismicEvents(context.Background(), time.Time{}, expectedCorrID)
 	if err != nil {
 		t.Fatalf("fetchSeismicEvents failed: %v", err)
@@ -106,7 +106,7 @@ func TestPVMBGPoller_FetchVolcanicReports(t *testing.T) {
 		PVMBGRequestTimeout: 2 * time.Second,
 	}
 
-	poller := NewPVMBGPoller(cfg, nil)
+	poller := NewPVMBGPoller(cfg, nil, nil)
 	reports, err := poller.fetchVolcanicReports(context.Background(), time.Time{}, expectedCorrID)
 	if err != nil {
 		t.Fatalf("fetchVolcanicReports failed: %v", err)
@@ -135,7 +135,7 @@ func TestBMKGPoller_AuthRejection(t *testing.T) {
 		BMKGRequestTimeout: 1 * time.Second,
 	}
 
-	poller := NewBMKGPoller(cfg, nil)
+	poller := NewBMKGPoller(cfg, nil, nil)
 	_, err := poller.fetchSeismicEvents(context.Background(), time.Time{}, "test")
 	if err == nil {
 		t.Errorf("expected error on 401 unauthorized, got nil")

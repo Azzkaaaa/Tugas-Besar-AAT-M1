@@ -1,4 +1,4 @@
-package store
+package postgres
 
 import (
 	"context"
@@ -6,38 +6,23 @@ import (
 	"sort"
 	"time"
 
-	"github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/aggregator/internal/telemetry"
+	"github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/aggregator/internal/storage"
 	"github.com/jackc/pgx/v5"
 )
 
-type OutboxRecord struct {
-	EventID    string
-	HazardID   string
-	Source     string
-	Payload    []byte
-	CreatedAt  time.Time
-	RetryCount int
-	// TraceContext is the W3C carrier of the span that enqueued the event; the publisher
-	// continues that trace, so consumers join the ingest poll that found the hazard.
-	TraceContext map[string]string
-}
+type outbox struct{ db *DB }
 
-// EnqueueOutbox stores the event together with ctx's trace context.
-func (db *DB) EnqueueOutbox(ctx context.Context, tx pgx.Tx, eventID, hazardID, source string, payload []byte) error {
-	query := `
-		INSERT INTO outbox_events (event_id, hazard_id, source, payload, trace_context, created_at)
-		VALUES ($1, $2, $3, $4, $5, NOW())
-		ON CONFLICT (event_id) DO NOTHING
-	`
-	traceContext, err := encodeTraceContext(telemetry.TraceCarrier(ctx))
+// enqueueOutbox stores ev inside tx (see hazards.ApplyRevision).
+func enqueueOutbox(ctx context.Context, tx pgx.Tx, ev storage.OutboxEvent) error {
+	traceContext, err := encodeTraceContext(ev.TraceContext)
 	if err != nil {
 		return err
 	}
-	if tx != nil {
-		_, err = tx.Exec(ctx, query, eventID, hazardID, source, payload, traceContext)
-	} else {
-		_, err = db.Pool.Exec(ctx, query, eventID, hazardID, source, payload, traceContext)
-	}
+	_, err = tx.Exec(ctx, `
+		INSERT INTO outbox_events (event_id, hazard_id, source, payload, trace_context, created_at)
+		VALUES ($1, $2, $3, $4, $5, NOW())
+		ON CONFLICT (event_id) DO NOTHING
+	`, ev.EventID, ev.HazardID, ev.Source, ev.Payload, traceContext)
 	return err
 }
 
@@ -61,10 +46,10 @@ func decodeTraceContext(raw []byte) map[string]string {
 	return carrier
 }
 
-// ClaimDueOutbox leases up to limit due records for lease. SKIP LOCKED makes concurrent publishers
+// ClaimDue leases up to limit due records for lease. SKIP LOCKED makes concurrent publishers
 // (replicas, or both pods of a rolling update) take disjoint rows; a publisher that dies keeps its
 // rows only until the lease runs out. Records come back oldest first.
-func (db *DB) ClaimDueOutbox(ctx context.Context, limit int, lease time.Duration) ([]*OutboxRecord, error) {
+func (o outbox) ClaimDue(ctx context.Context, limit int, lease time.Duration) ([]*storage.ClaimedEvent, error) {
 	if limit <= 0 {
 		limit = 50
 	}
@@ -80,20 +65,21 @@ func (db *DB) ClaimDueOutbox(ctx context.Context, limit int, lease time.Duration
 		)
 		RETURNING event_id, hazard_id, source, payload, created_at, retry_count, trace_context
 	`
-	rows, err := db.Pool.Query(ctx, query, limit, lease.Milliseconds())
+	rows, err := o.db.Pool.Query(ctx, query, limit, lease.Milliseconds())
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 
-	var records []*OutboxRecord
+	var records []*storage.ClaimedEvent
 	for rows.Next() {
-		var rec OutboxRecord
+		var rec storage.ClaimedEvent
 		var traceContext []byte
 		if err := rows.Scan(&rec.EventID, &rec.HazardID, &rec.Source, &rec.Payload, &rec.CreatedAt, &rec.RetryCount, &traceContext); err != nil {
 			return nil, err
 		}
 		rec.TraceContext = decodeTraceContext(traceContext)
+		rec.CreatedAt = rec.CreatedAt.UTC()
 		records = append(records, &rec)
 	}
 	if err := rows.Err(); err != nil {
@@ -104,31 +90,31 @@ func (db *DB) ClaimDueOutbox(ctx context.Context, limit int, lease time.Duration
 	return records, nil
 }
 
-func (db *DB) MarkOutboxPublished(ctx context.Context, eventID string) error {
+func (o outbox) Ack(ctx context.Context, eventID string) error {
 	query := `
 		UPDATE outbox_events
 		SET published_at = NOW()
 		WHERE event_id = $1
 	`
-	_, err := db.Pool.Exec(ctx, query, eventID)
+	_, err := o.db.Pool.Exec(ctx, query, eventID)
 	return err
 }
 
-// RetryOutboxLater records a failed attempt; the record is due again after backoff, so it does not
+// RetryLater records a failed attempt; the record is due again after backoff, so it does not
 // hold up the records behind it.
-func (db *DB) RetryOutboxLater(ctx context.Context, eventID, lastErr string, backoff time.Duration) error {
+func (o outbox) RetryLater(ctx context.Context, eventID, lastErr string, backoff time.Duration) error {
 	query := `
 		UPDATE outbox_events
 		SET retry_count = retry_count + 1, last_error = $2, next_attempt_at = NOW() + $3 * INTERVAL '1 millisecond'
 		WHERE event_id = $1
 	`
-	_, err := db.Pool.Exec(ctx, query, eventID, lastErr, backoff.Milliseconds())
+	_, err := o.db.Pool.Exec(ctx, query, eventID, lastErr, backoff.Milliseconds())
 	return err
 }
 
-// ReleaseOutbox makes claimed but unattempted records due at once (e.g. after the broker
+// Release makes claimed but unattempted records due at once (e.g. after the broker
 // connection dropped mid-batch) instead of waiting out their lease.
-func (db *DB) ReleaseOutbox(ctx context.Context, eventIDs []string) error {
+func (o outbox) Release(ctx context.Context, eventIDs []string) error {
 	if len(eventIDs) == 0 {
 		return nil
 	}
@@ -137,13 +123,13 @@ func (db *DB) ReleaseOutbox(ctx context.Context, eventIDs []string) error {
 		SET next_attempt_at = NOW()
 		WHERE event_id = ANY($1) AND published_at IS NULL AND failed_at IS NULL
 	`
-	_, err := db.Pool.Exec(ctx, query, eventIDs)
+	_, err := o.db.Pool.Exec(ctx, query, eventIDs)
 	return err
 }
 
-// PruneOutbox deletes up to limit records published or dead-lettered before retention ago
+// Prune deletes up to limit records published or dead-lettered before retention ago
 // (dead letters stay in outbox_dead_letters). It returns how many it deleted.
-func (db *DB) PruneOutbox(ctx context.Context, retention time.Duration, limit int) (int64, error) {
+func (o outbox) Prune(ctx context.Context, retention time.Duration, limit int) (int64, error) {
 	query := `
 		DELETE FROM outbox_events
 		WHERE event_id IN (
@@ -153,15 +139,15 @@ func (db *DB) PruneOutbox(ctx context.Context, retention time.Duration, limit in
 			LIMIT $2
 		)
 	`
-	tag, err := db.Pool.Exec(ctx, query, retention.Milliseconds(), limit)
+	tag, err := o.db.Pool.Exec(ctx, query, retention.Milliseconds(), limit)
 	if err != nil {
 		return 0, err
 	}
 	return tag.RowsAffected(), nil
 }
 
-func (db *DB) FailOutboxRecord(ctx context.Context, rec *OutboxRecord, reason string) error {
-	tx, err := db.Pool.Begin(ctx)
+func (o outbox) DeadLetter(ctx context.Context, rec *storage.ClaimedEvent, reason string) error {
+	tx, err := o.db.Pool.Begin(ctx)
 	if err != nil {
 		return err
 	}

@@ -5,10 +5,8 @@ import (
 	"fmt"
 	"time"
 
-	commonv1 "github.com/Azzkaaaa/Tugas-Besar-AAT-M1/packages/bnpb-aggregator-go/bnpb/common/v1"
 	eventv1 "github.com/Azzkaaaa/Tugas-Besar-AAT-M1/packages/bnpb-aggregator-go/bnpb/event/v1"
 	"github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/aggregator/internal/domain"
-	"github.com/google/uuid"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
@@ -129,11 +127,11 @@ func MapBMKGToHazard(seismic *BMKGSeismicRaw, warnings []*BMKGTsunamiWarningRaw)
 	// If TsunamiWarning with threat_level == Awas -> AWAS
 	// Otherwise follows threat_level of related warning
 	// If no warning: magnitude < 5.0 -> NORMAL, 5.0 <= m < 6.5 -> WASPADA, m >= 6.5 -> SIAGA
-	severity := "NORMAL"
+	severity := domain.SeverityNormal
 	if seismic.Magnitude >= 6.5 {
-		severity = "SIAGA"
+		severity = domain.SeveritySiaga
 	} else if seismic.Magnitude >= 5.0 {
-		severity = "WASPADA"
+		severity = domain.SeverityWaspada
 	}
 
 	if len(warnings) > 0 {
@@ -154,14 +152,14 @@ func MapBMKGToHazard(seismic *BMKGSeismicRaw, warnings []*BMKGTsunamiWarningRaw)
 
 			switch w.ThreatLevel {
 			case "Awas":
-				highestWarningThreat = "AWAS"
+				highestWarningThreat = domain.SeverityAwas
 			case "Siaga":
-				if highestWarningThreat != "AWAS" {
-					highestWarningThreat = "SIAGA"
+				if highestWarningThreat != domain.SeverityAwas {
+					highestWarningThreat = domain.SeveritySiaga
 				}
 			case "Waspada":
-				if highestWarningThreat != "AWAS" && highestWarningThreat != "SIAGA" {
-					highestWarningThreat = "WASPADA"
+				if highestWarningThreat != domain.SeverityAwas && highestWarningThreat != domain.SeveritySiaga {
+					highestWarningThreat = domain.SeverityWaspada
 				}
 			}
 		}
@@ -173,9 +171,9 @@ func MapBMKGToHazard(seismic *BMKGSeismicRaw, warnings []*BMKGTsunamiWarningRaw)
 	}
 
 	return &domain.HazardRecord{
-		Source:      "BMKG",
+		Source:      domain.SourceBMKG,
 		SourceRefID: seismic.EventID,
-		HazardType:  "SEISMIC",
+		HazardType:  domain.HazardTypeSeismic,
 		Severity:    severity,
 		AreaName:    seismic.RegionName,
 		Latitude:    seismic.EpicenterLat,
@@ -205,22 +203,22 @@ func MapPVMBGToHazard(volcanic *PVMBGVolcanicRaw) *domain.HazardRecord {
 		lon = ref.Longitude
 	}
 
-	severity := "NORMAL"
+	severity := domain.SeverityNormal
 	switch volcanic.AlertLevel {
 	case "Normal":
-		severity = "NORMAL"
+		severity = domain.SeverityNormal
 	case "Waspada":
-		severity = "WASPADA"
+		severity = domain.SeverityWaspada
 	case "Siaga":
-		severity = "SIAGA"
+		severity = domain.SeveritySiaga
 	case "Awas":
-		severity = "AWAS"
+		severity = domain.SeverityAwas
 	}
 
 	return &domain.HazardRecord{
-		Source:      "PVMBG",
+		Source:      domain.SourcePVMBG,
 		SourceRefID: volcanic.ReportID,
-		HazardType:  "VOLCANIC",
+		HazardType:  domain.HazardTypeVolcanic,
 		Severity:    severity,
 		AreaName:    areaName,
 		Latitude:    lat,
@@ -230,26 +228,22 @@ func MapPVMBGToHazard(volcanic *PVMBGVolcanicRaw) *domain.HazardRecord {
 	}
 }
 
-// BuildPublishedEnvelope serializes a canonical hazard record into the binary protobuf envelope
+// BuildPublishedEnvelope serializes a canonical hazard record into the binary protobuf envelope.
+// h must carry the HazardID and Revision assigned by the store.
 func BuildPublishedEnvelope(h *domain.HazardRecord, correlationID string) (string, []byte, error) {
+	if h.HazardID == "" || h.Revision < 1 {
+		return "", nil, fmt.Errorf("hazard %q has no committed revision (%d)", h.HazardID, h.Revision)
+	}
 	protoEvent, err := h.ToProto()
 	if err != nil {
 		return "", nil, fmt.Errorf("failed converting hazard to proto: %w", err)
 	}
 
-	eventID := "pub-" + uuid.New().String()
-	sourceEnum := commonv1.Source_SOURCE_UNSPECIFIED
-	switch h.Source {
-	case "BMKG":
-		sourceEnum = commonv1.Source_SOURCE_BMKG
-	case "PVMBG":
-		sourceEnum = commonv1.Source_SOURCE_PVMBG
-	}
-
+	eventID := domain.EventID(h.HazardID, h.Revision)
 	envelope := &eventv1.HazardEventPublished{
 		EventId:       eventID,
 		SchemaVersion: 1,
-		Source:        sourceEnum,
+		Source:        domain.SourceToProto(h.Source),
 		Publisher:     "aggregator",
 		CorrelationId: correlationID,
 		OccurredAt:    timestamppb.Now(),

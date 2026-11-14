@@ -7,7 +7,8 @@ import (
 	"time"
 
 	"github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/aggregator/internal/config"
-	"github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/aggregator/internal/store"
+	"github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/aggregator/internal/leader"
+	"github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/aggregator/internal/storage"
 	"github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/aggregator/internal/telemetry"
 	amqp "github.com/rabbitmq/amqp091-go"
 	"go.opentelemetry.io/otel/attribute"
@@ -26,37 +27,47 @@ const (
 )
 
 type OutboxPublisher struct {
-	cfg  *config.Config
-	db   *store.DB
-	conn *amqp.Connection
-	ch   *amqp.Channel
+	cfg    *config.Config
+	outbox storage.Outbox
+	conn   *amqp.Connection
+	ch     *amqp.Channel
+	// yielded is set when the loop handed its lease over (leader.MaybeYield), so Run returns.
+	yielded bool
 }
 
-func NewOutboxPublisher(cfg *config.Config, db *store.DB) *OutboxPublisher {
+func NewOutboxPublisher(cfg *config.Config, outbox storage.Outbox) *OutboxPublisher {
 	return &OutboxPublisher{
-		cfg: cfg,
-		db:  db,
+		cfg:    cfg,
+		outbox: outbox,
 	}
 }
 
+// Start runs the publisher in the background until ctx is done.
 func (p *OutboxPublisher) Start(ctx context.Context) {
-	go func() {
-		for {
+	go p.Run(ctx)
+}
+
+// Run publishes the outbox until ctx is done, reconnecting to RabbitMQ as needed, and returns
+// after closing its connection. Under a leader it runs inside the leader's work, so it has stopped
+// before leadership is handed over.
+func (p *OutboxPublisher) Run(ctx context.Context) {
+	defer p.close()
+	for ctx.Err() == nil {
+		p.close() // the previous connection, if it dropped
+		if err := p.connect(); err != nil {
+			log.Printf("[OutboxPublisher] Connection error: %v, retrying in 2s...", err)
 			select {
 			case <-ctx.Done():
-				p.close()
-				return
-			default:
-				if err := p.connect(); err != nil {
-					log.Printf("[OutboxPublisher] Connection error: %v, retrying in 2s...", err)
-					time.Sleep(2 * time.Second)
-					continue
-				}
-
-				p.processOutboxLoop(ctx)
+			case <-time.After(2 * time.Second):
 			}
+			continue
 		}
-	}()
+		p.processOutboxLoop(ctx)
+		if p.yielded {
+			p.yielded = false
+			return
+		}
+	}
 }
 
 func (p *OutboxPublisher) connect() error {
@@ -103,9 +114,11 @@ func (p *OutboxPublisher) connect() error {
 func (p *OutboxPublisher) close() {
 	if p.ch != nil {
 		_ = p.ch.Close()
+		p.ch = nil
 	}
 	if p.conn != nil {
 		_ = p.conn.Close()
+		p.conn = nil
 	}
 }
 
@@ -130,7 +143,7 @@ func (p *OutboxPublisher) processOutboxLoop(ctx context.Context) {
 			}
 			return
 		case <-ticker.C:
-			records, err := p.db.ClaimDueOutbox(ctx, outboxBatchSize, outboxLease)
+			records, err := p.outbox.ClaimDue(ctx, outboxBatchSize, outboxLease)
 			if err != nil {
 				log.Printf("[OutboxPublisher] Failed claiming outbox events: %v", err)
 				continue
@@ -149,9 +162,9 @@ func (p *OutboxPublisher) processOutboxLoop(ctx context.Context) {
 
 					if rec.RetryCount+1 >= maxRetries {
 						log.Printf("[OutboxPublisher] Outbox event %s reached max retries (%d), marking as failed", rec.EventID, maxRetries)
-						_ = p.db.FailOutboxRecord(ctx, rec, pubErr.Error())
+						_ = p.outbox.DeadLetter(ctx, rec, pubErr.Error())
 					} else {
-						_ = p.db.RetryOutboxLater(ctx, rec.EventID, pubErr.Error(), outboxBackoff(rec.RetryCount+1))
+						_ = p.outbox.RetryLater(ctx, rec.EventID, pubErr.Error(), outboxBackoff(rec.RetryCount+1))
 					}
 					if p.ch.IsClosed() {
 						// Reconnect; the records not yet attempted are due again at once.
@@ -162,19 +175,25 @@ func (p *OutboxPublisher) processOutboxLoop(ctx context.Context) {
 					continue
 				}
 
-				if err := p.db.MarkOutboxPublished(ctx, rec.EventID); err != nil {
+				if err := p.outbox.Ack(ctx, rec.EventID); err != nil {
 					log.Printf("[OutboxPublisher] Error marking event %s published: %v", rec.EventID, err)
 				} else {
 					log.Printf("[OutboxPublisher] Successfully published event %s (hazard=%s, source=%s)",
 						rec.EventID, rec.HazardID, rec.Source)
 				}
 			}
+			// Safe point: every claimed event was acked, retried or released. When the publisher
+			// runs as a leader job it may hand its lease over here.
+			if leader.MaybeYield(ctx) {
+				p.yielded = true
+				return
+			}
 		}
 	}
 }
 
 // release makes claimed records due again without counting an attempt.
-func (p *OutboxPublisher) release(records []*store.OutboxRecord) {
+func (p *OutboxPublisher) release(records []*storage.ClaimedEvent) {
 	if len(records) == 0 {
 		return
 	}
@@ -184,7 +203,7 @@ func (p *OutboxPublisher) release(records []*store.OutboxRecord) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
-	if err := p.db.ReleaseOutbox(ctx, ids); err != nil {
+	if err := p.outbox.Release(ctx, ids); err != nil {
 		log.Printf("[OutboxPublisher] Failed releasing %d claimed events (they are due again when the lease ends): %v", len(ids), err)
 	}
 }
@@ -200,7 +219,7 @@ func outboxBackoff(attempt int) time.Duration {
 	return min(outboxBaseBackoff<<(attempt-1), outboxMaxBackoff)
 }
 
-func (p *OutboxPublisher) publishOne(ctx context.Context, rec *store.OutboxRecord) error {
+func (p *OutboxPublisher) publishOne(ctx context.Context, rec *storage.ClaimedEvent) error {
 	pubStart := time.Now()
 
 	var ctxPub context.Context

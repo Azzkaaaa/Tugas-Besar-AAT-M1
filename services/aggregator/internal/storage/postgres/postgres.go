@@ -1,4 +1,4 @@
-package store
+package postgres
 
 import (
 	"context"
@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/aggregator/internal/domain"
+	"github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/aggregator/internal/storage"
 	"github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/aggregator/internal/telemetry"
 	"github.com/exaring/otelpgx"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -18,6 +19,18 @@ import (
 
 type DB struct {
 	Pool *pgxpool.Pool
+}
+
+// Backend returns the storage ports served by db. Every replica may claim from its outbox
+// (FOR UPDATE SKIP LOCKED gives concurrent claimers disjoint rows).
+func (db *DB) Backend() *storage.Backend {
+	return &storage.Backend{
+		Name:    "postgres",
+		Hazards: hazards{db},
+		Sources: sources{db},
+		Outbox:  outbox{db},
+		Close:   db.Pool.Close,
+	}
 }
 
 func Connect(ctx context.Context, dsn string) (*DB, error) {
@@ -51,10 +64,6 @@ func Connect(ctx context.Context, dsn string) (*DB, error) {
 	return db, nil
 }
 
-// ingestLeaderKey is the session advisory lock of the ingest leader (see RunAsIngestLeader).
-// Arbitrary, but fixed: every replica must use the same value.
-const ingestLeaderKey int64 = 0x6167675f6c656164 // "agg_lead"
-
 //go:embed migrations/postgres/*.sql
 var postgresMigrations embed.FS
 
@@ -73,7 +82,8 @@ func (db *DB) Migrate(ctx context.Context) error {
 	sqlDB := stdlib.OpenDBFromPool(db.Pool)
 	defer sqlDB.Close()
 
-	provider, err := goose.NewProvider(goose.DialectPostgres, sqlDB, migrations, goose.WithSessionLocker(locker))
+	provider, err := goose.NewProvider(goose.DialectPostgres, sqlDB, migrations,
+		goose.WithSessionLocker(locker), goose.WithGoMigrations(rekeyMigration))
 	if err != nil {
 		return err
 	}
@@ -95,3 +105,9 @@ func (db *DB) Migrate(ctx context.Context) error {
 
 	return nil
 }
+
+var (
+	_ storage.HazardStore      = hazards{}
+	_ storage.SourceStateStore = sources{}
+	_ storage.Outbox           = outbox{}
+)
