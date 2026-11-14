@@ -30,12 +30,29 @@ type Config struct {
 	CanonicalStoreBackend string
 	CanonicalStoreDSN     string
 	Cassandra             CassandraConfig
+	Leader                LeaderConfig
 	AMQPURL               string
 	RabbitMQExchange      string
 	// OutboxMaxRetries is the max publish attempts before a record is dead-lettered.
 	OutboxMaxRetries int
 	// OutboxRetention is how long published and dead-lettered records stay in outbox_events.
 	OutboxRetention time.Duration
+}
+
+// LeaderConfig configures leader election (see internal/leader).
+type LeaderConfig struct {
+	// Election is postgres, cassandra, kubernetes or single (LEADER_ELECTION; default: the
+	// canonical store backend). The postgres and cassandra electors need that store backend.
+	Election   string
+	TTL        time.Duration
+	RenewEvery time.Duration
+	RetryEvery time.Duration
+	Margin     time.Duration
+	// Identity names this replica (LEADER_IDENTITY, else POD_NAME, else hostname-pid-random).
+	Identity string
+	// Kubernetes Lease: namespace (default: the service account's) and lease name.
+	K8sNamespace string
+	K8sLeaseName string
 }
 
 // CassandraConfig configures the cassandra canonical store backend. LoadCassandra reads it from
@@ -206,6 +223,25 @@ func Load() (*Config, error) {
 		cfg.Cassandra = c
 	default:
 		errs = append(errs, fmt.Sprintf("invalid CANONICAL_STORE_BACKEND %q (want postgres or cassandra)", cfg.CanonicalStoreBackend))
+	}
+
+	leaderMS := func(key string, def time.Duration) time.Duration {
+		return time.Duration(optionalInt(key, int(def/time.Millisecond))) * time.Millisecond
+	}
+	cfg.Leader = LeaderConfig{
+		Election:     strings.ToLower(envOr("LEADER_ELECTION", cfg.CanonicalStoreBackend)),
+		TTL:          leaderMS("LEADER_LEASE_TTL_MS", 15*time.Second),
+		RenewEvery:   leaderMS("LEADER_RENEW_INTERVAL_MS", 5*time.Second),
+		RetryEvery:   leaderMS("LEADER_RETRY_INTERVAL_MS", 5*time.Second),
+		Margin:       leaderMS("LEADER_FENCE_MARGIN_MS", 5*time.Second),
+		Identity:     os.Getenv("LEADER_IDENTITY"),
+		K8sNamespace: os.Getenv("LEADER_K8S_NAMESPACE"),
+		K8sLeaseName: envOr("LEADER_K8S_LEASE_NAME", "aggregator-ingest"),
+	}
+	switch cfg.Leader.Election {
+	case "postgres", "cassandra", "kubernetes", "single":
+	default:
+		errs = append(errs, fmt.Sprintf("invalid LEADER_ELECTION %q (want postgres, cassandra, kubernetes or single)", cfg.Leader.Election))
 	}
 
 	// AUTH_AUTHORITY is required unless insecure mode is explicitly enabled.

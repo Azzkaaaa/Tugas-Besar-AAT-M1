@@ -105,6 +105,11 @@ func (o *outbox) ClaimDue(ctx context.Context, limit int, lease time.Duration) (
 		o.scanFrom = oldest
 	}
 
+	claimed, err := o.dropFinished(ctx, claimed)
+	if err != nil {
+		return nil, err
+	}
+
 	leaseUntil := msUTC(now.Add(lease))
 	for _, ev := range claimed {
 		if err := o.db.session.Query(`UPDATE outbox_pending SET next_attempt_at = ?
@@ -114,6 +119,31 @@ func (o *outbox) ClaimDue(ctx context.Context, limit int, lease time.Duration) (
 		}
 	}
 	return claimed, nil
+}
+
+// dropFinished removes pending rows whose event is already published or dead-lettered and returns
+// the rest. Such a row is the second copy of an event enqueued twice (the same revision written by
+// two writers, which gives the same event ID); publishing it again would only make consumers
+// deduplicate it.
+func (o *outbox) dropFinished(ctx context.Context, evs []*storage.ClaimedEvent) ([]*storage.ClaimedEvent, error) {
+	out := evs[:0]
+	for _, ev := range evs {
+		var publishedAt, failedAt time.Time
+		err := o.db.session.Query(`SELECT published_at, failed_at FROM outbox_events WHERE event_id = ?`, ev.EventID).
+			WithContext(ctx).Scan(&publishedAt, &failedAt)
+		if err != nil && !errors.Is(err, gocql.ErrNotFound) {
+			return nil, err
+		}
+		if utcOrZero(publishedAt).IsZero() && utcOrZero(failedAt).IsZero() {
+			out = append(out, ev)
+			continue
+		}
+		if err := o.db.session.Query(`DELETE FROM outbox_pending WHERE shard = ? AND created_at = ? AND event_id = ?`,
+			pendingShard, ev.CreatedAt, ev.EventID).WithContext(ctx).Exec(); err != nil {
+			return nil, err
+		}
+	}
+	return out, nil
 }
 
 // lookup returns the outbox_events row of eventID.

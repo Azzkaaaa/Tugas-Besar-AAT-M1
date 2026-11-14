@@ -49,7 +49,9 @@ type DB struct {
 	session   *gocql.Session
 	keyspace  string
 	retention time.Duration
-	sched     scheduleHolder
+	// initialPeriod is the configured bucket period for a keyspace without a schedule.
+	initialPeriod time.Duration
+	sched         scheduleHolder
 	// stop ends the schedule refresh.
 	stop context.CancelFunc
 }
@@ -117,7 +119,7 @@ func Open(ctx context.Context, cfg Config) (*DB, error) {
 	if err != nil {
 		return nil, fmt.Errorf("unable to open keyspace %s: %w", cfg.Keyspace, err)
 	}
-	db := &DB{session: session, keyspace: cfg.Keyspace, retention: cfg.OutboxRetention}
+	db := &DB{session: session, keyspace: cfg.Keyspace, retention: cfg.OutboxRetention, initialPeriod: cfg.BucketPeriod}
 	if cfg.ExistingOnly {
 		err = db.openExisting(ctx)
 	} else {
@@ -246,6 +248,10 @@ func (db *DB) migrate(ctx context.Context) error {
 	if err := db.acquireMigrationLock(ctx, holder); err != nil {
 		return err
 	}
+	// Keep the lock while migrations run: a data migration can outlast its TTL.
+	renewCtx, stopRenew := context.WithCancel(ctx)
+	defer stopRenew()
+	go db.renewMigrationLock(renewCtx, holder)
 	defer func() {
 		_, _ = db.session.Query(`DELETE FROM schema_lock WHERE name = 'migrate' IF holder = ?`, holder).
 			WithContext(context.Background()).MapScanCAS(map[string]any{})
@@ -275,6 +281,11 @@ func (db *DB) migrate(ctx context.Context) error {
 			}
 			if err := db.session.AwaitSchemaAgreement(ctx); err != nil {
 				return err
+			}
+		}
+		if m.run != nil {
+			if err := m.run(db, ctx); err != nil {
+				return fmt.Errorf("migration %s: %w", m.name, err)
 			}
 		}
 		if err := db.session.Query(`INSERT INTO schema_migrations (version, name, applied_at) VALUES (?, ?, ?)`,
@@ -308,13 +319,40 @@ func (db *DB) acquireMigrationLock(ctx context.Context, holder string) error {
 	}
 }
 
+// renewMigrationLock extends the migration lock until ctx is done.
+func (db *DB) renewMigrationLock(ctx context.Context, holder string) {
+	ticker := time.NewTicker(migrationLockTTL * time.Second / 3)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			_, err := db.session.Query(`UPDATE schema_lock USING TTL `+strconv.Itoa(migrationLockTTL)+
+				` SET holder = ? WHERE name = 'migrate' IF holder = ?`, holder, holder).
+				WithContext(ctx).MapScanCAS(map[string]any{})
+			if err != nil && ctx.Err() == nil {
+				log.Printf("[Cassandra] Renewing the migration lock failed: %v", err)
+			}
+		}
+	}
+}
+
+// migration is a CQL file and/or a Go step (data migrations CQL cannot express). Both must be
+// idempotent: a migration interrupted before it is recorded runs again.
 type migration struct {
 	version    int
 	name       string
 	statements []string
+	run        func(db *DB, ctx context.Context) error
 }
 
-// loadMigrations reads NNNN_name.cql files in version order.
+// goMigrations are the Go steps, by version.
+var goMigrations = []migration{
+	{version: 5, name: "0005_rekey_hazard_ids (go)", run: (*DB).rekeyHazardIDs},
+}
+
+// loadMigrations returns the NNNN_name.cql files and the Go steps, in version order.
 func loadMigrations() ([]migration, error) {
 	entries, err := fs.ReadDir(migrationFiles, "migrations")
 	if err != nil {
@@ -337,7 +375,13 @@ func loadMigrations() ([]migration, error) {
 		}
 		out = append(out, migration{version: version, name: name, statements: splitStatements(string(body))})
 	}
+	out = append(out, goMigrations...)
 	sort.Slice(out, func(i, j int) bool { return out[i].version < out[j].version })
+	for i := 1; i < len(out); i++ {
+		if out[i].version == out[i-1].version {
+			return nil, fmt.Errorf("migrations %s and %s share version %d", out[i-1].name, out[i].name, out[i].version)
+		}
+	}
 	return out, nil
 }
 

@@ -35,6 +35,9 @@ func Run(t *testing.T, newBackend func(t *testing.T) *storage.Backend) {
 		{"List/InvalidToken", testListInvalidToken},
 		{"HasData", testHasData},
 		{"Sources", testSources},
+		{"Revision/Counts", testRevisionCounts},
+		{"Revision/ConcurrentChange", testRevisionConcurrentChange},
+		{"Revision/ConcurrentNew", testRevisionConcurrentNew},
 		{"Outbox/ClaimAck", testOutboxClaimAck},
 		{"Outbox/Lease", testOutboxLease},
 		{"Outbox/RetryAndRelease", testOutboxRetryRelease},
@@ -79,9 +82,10 @@ type eventRecorder struct {
 	events []storage.OutboxEvent
 }
 
+// newEvent derives the event ID from (hazard_id, revision), like ingest.EventID.
 func (r *eventRecorder) newEvent(saved *domain.HazardRecord) (storage.OutboxEvent, error) {
 	ev := storage.OutboxEvent{
-		EventID:      "pub-" + uuid.New().String(),
+		EventID:      fmt.Sprintf("pub-%s-r%d", saved.HazardID, saved.Revision),
 		HazardID:     saved.HazardID,
 		Source:       saved.Source,
 		Payload:      []byte("payload:" + saved.HazardID + ":" + saved.Severity),
@@ -108,8 +112,8 @@ func testApplyNew(t *testing.T, b *storage.Backend) {
 	if !changed {
 		t.Fatal("new record: changed = false")
 	}
-	if saved.HazardID == "" || saved.IngestedAt.IsZero() {
-		t.Fatalf("new record lacks id or ingested_at: %+v", saved)
+	if saved.HazardID != domain.HazardID(domain.SourceBMKG, "e1") || saved.IngestedAt.IsZero() {
+		t.Fatalf("new record has hazard ID %q (want the derived one) or no ingested_at: %+v", saved.HazardID, saved)
 	}
 	if len(rec.events) != 1 || rec.events[0].HazardID != saved.HazardID {
 		t.Fatalf("want one event for %s, got %+v", saved.HazardID, rec.events)
@@ -585,3 +589,108 @@ func testOutboxConcurrent(t *testing.T, b *storage.Backend) {
 }
 
 func isInvalidToken(err error) bool { return errors.Is(err, storage.ErrInvalidPageToken) }
+
+func testRevisionCounts(t *testing.T, b *storage.Backend) {
+	rec := &eventRecorder{}
+	a := hazard(domain.SourceBMKG, "rev", base)
+	saved, _ := apply(t, b, rec, a)
+	if saved.Revision != 1 {
+		t.Fatalf("new record revision %d, want 1", saved.Revision)
+	}
+	if again, _ := apply(t, b, rec, hazard(domain.SourceBMKG, "rev", base)); again.Revision != 1 {
+		t.Fatalf("unchanged record revision %d, want 1", again.Revision)
+	}
+	changed := hazard(domain.SourceBMKG, "rev", base)
+	changed.Severity = domain.SeveritySiaga
+	if s2, _ := apply(t, b, rec, changed); s2.Revision != 2 {
+		t.Fatalf("changed record revision %d, want 2", s2.Revision)
+	}
+	// A -> B -> A: back to the first content is a new revision with a new event ID.
+	if s3, changed := apply(t, b, rec, hazard(domain.SourceBMKG, "rev", base)); !changed || s3.Revision != 3 {
+		t.Fatalf("reverted record: changed=%v revision=%d, want true/3", changed, s3.Revision)
+	}
+	got, _ := b.Hazards.Get(ctx(t), saved.HazardID)
+	if got.Revision != 3 {
+		t.Fatalf("stored revision %d, want 3", got.Revision)
+	}
+	ids := map[string]bool{}
+	for _, ev := range rec.events {
+		ids[ev.EventID] = true
+	}
+	if len(rec.events) != 3 || len(ids) != 3 {
+		t.Fatalf("want 3 events with distinct IDs, got %d events, %d IDs", len(rec.events), len(ids))
+	}
+}
+
+// concurrently applies rev from n goroutines, as two leaders would during an overlap.
+func concurrently(t *testing.T, b *storage.Backend, rec *eventRecorder, n int, rev func() *domain.HazardRecord) {
+	t.Helper()
+	var wg sync.WaitGroup
+	errs := make(chan error, n)
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if _, _, err := b.Hazards.ApplyRevision(context.Background(), rev(), rec.newEvent); err != nil {
+				errs <- err
+			}
+		}()
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		t.Fatalf("concurrent ApplyRevision: %v", err)
+	}
+}
+
+// claimedIDs claims every pending event and returns the distinct event IDs.
+func claimedIDs(t *testing.T, b *storage.Backend) map[string]int {
+	t.Helper()
+	out := map[string]int{}
+	for _, ev := range claim(t, b, 100, time.Minute) {
+		out[ev.EventID]++
+	}
+	return out
+}
+
+// Writers racing on one change commit one revision and publish one event ID for it.
+func testRevisionConcurrentChange(t *testing.T, b *storage.Backend) {
+	rec := &eventRecorder{}
+	first, _ := apply(t, b, rec, hazard(domain.SourceBMKG, "race", base))
+	concurrently(t, b, rec, 4, func() *domain.HazardRecord {
+		h := hazard(domain.SourceBMKG, "race", base)
+		h.Severity = domain.SeverityAwas
+		return h
+	})
+	got, _ := b.Hazards.Get(ctx(t), first.HazardID)
+	if got.Revision != 2 || got.Severity != domain.SeverityAwas {
+		t.Fatalf("after racing writers: revision %d severity %s, want 2 AWAS", got.Revision, got.Severity)
+	}
+	ids := claimedIDs(t, b)
+	want := map[string]bool{
+		fmt.Sprintf("pub-%s-r1", first.HazardID): true,
+		fmt.Sprintf("pub-%s-r2", first.HazardID): true,
+	}
+	if len(ids) != 2 {
+		t.Fatalf("pending event IDs %v, want exactly revisions 1 and 2", ids)
+	}
+	for id := range ids {
+		if !want[id] {
+			t.Fatalf("unexpected event ID %s (pending %v)", id, ids)
+		}
+	}
+}
+
+// Writers racing on a new record create one hazard and one event ID.
+func testRevisionConcurrentNew(t *testing.T, b *storage.Backend) {
+	rec := &eventRecorder{}
+	concurrently(t, b, rec, 4, func() *domain.HazardRecord { return hazard(domain.SourceBMKG, "new-race", base) })
+	page, err := b.Hazards.List(ctx(t), storage.HazardQuery{}, storage.PageRequest{Size: 10})
+	if err != nil || len(page.Items) != 1 || page.Items[0].Revision != 1 {
+		t.Fatalf("racing inserts stored %+v, %v; want one hazard at revision 1", page.Items, err)
+	}
+	ids := claimedIDs(t, b)
+	if len(ids) != 1 {
+		t.Fatalf("racing inserts enqueued event IDs %v, want one", ids)
+	}
+}

@@ -7,7 +7,6 @@ import (
 
 	eventv1 "github.com/Azzkaaaa/Tugas-Besar-AAT-M1/packages/bnpb-aggregator-go/bnpb/event/v1"
 	"github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/aggregator/internal/domain"
-	"github.com/google/uuid"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
@@ -229,14 +228,18 @@ func MapPVMBGToHazard(volcanic *PVMBGVolcanicRaw) *domain.HazardRecord {
 	}
 }
 
-// BuildPublishedEnvelope serializes a canonical hazard record into the binary protobuf envelope
+// BuildPublishedEnvelope serializes a canonical hazard record into the binary protobuf envelope.
+// h must carry the HazardID and Revision assigned by the store.
 func BuildPublishedEnvelope(h *domain.HazardRecord, correlationID string) (string, []byte, error) {
+	if h.HazardID == "" || h.Revision < 1 {
+		return "", nil, fmt.Errorf("hazard %q has no committed revision (%d)", h.HazardID, h.Revision)
+	}
 	protoEvent, err := h.ToProto()
 	if err != nil {
 		return "", nil, fmt.Errorf("failed converting hazard to proto: %w", err)
 	}
 
-	eventID := "pub-" + uuid.New().String()
+	eventID := domain.EventID(h.HazardID, h.Revision)
 	envelope := &eventv1.HazardEventPublished{
 		EventId:       eventID,
 		SchemaVersion: 1,

@@ -34,6 +34,19 @@ interface. Backend ada di `internal/storage/postgres` dan
   Atomisitas per hazard, bukan per poll: bila poll gagal di tengah, hazard yang
   sudah tertulis tetap ada, watermark tidak maju, dan poll berikutnya mengulang
   sisanya tanpa duplikat (hazard yang isinya sama tidak menghasilkan event).
+- **ID deterministik:** `hazard_id` = `hz-` + UUIDv5(`source:source_ref_id`)
+  (`domain.HazardID`), `event_id` = `pub-` + UUIDv5(`hazard_id:revisi`)
+  (`domain.EventID`). Semua penulis menghitung ID yang sama, jadi tidak perlu tabel
+  pemetaan. UUIDv5 hanya pemetaan nama→UUID standar (SHA-1, bukan pengaman):
+  siapa pun yang tahu ID sumber bisa menghitung `hazard_id`. Namespace dan format
+  nama tidak boleh diubah (dipatok di `domain/ids_test.go`).
+- **Migrasi ke ID turunan (sekali, satu arah):** Postgres migrasi 3 (Go) dan
+  Cassandra 0005 (Go) mengganti `hazard_id` acak lama dengan ID turunan, termasuk
+  revisi, baris List, serta `hazard_id` dan payload event outbox yang belum terbit
+  dan dead letter. ID lama tidak lagi bisa dibuka (`GET /api/v1/hazards/{id lama}`
+  → 404); consumer melihat ID baru mulai revisi berikutnya. Cassandra 0006
+  menghapus `hazard_by_source_ref`, sehingga build lama tidak bisa lagi berjalan di
+  keyspace itu.
 - **Pagination:** urutan tetap `occurred_at` DESC lalu `hazard_id` ASC; page token
   opaque milik backend. Token tidak valid menghasilkan `INVALID_ARGUMENT`.
 - **Presisi waktu:** semua backend menyimpan waktu dalam UTC, milidetik.
@@ -50,9 +63,6 @@ interface. Backend ada di `internal/storage/postgres` dan
   Publisher mengklaim baris dengan `FOR UPDATE SKIP LOCKED` dan lease
   (`next_attempt_at`), sehingga replika mengambil baris yang berbeda; baris milik
   publisher yang mati diambil lagi setelah lease 30 detik.
-- **Leader ingest:** polling BMKG/PVMBG dan pembersihan outbox hanya berjalan di
-  pemegang advisory lock sesi Postgres. Bila leader mati, replika lain mengambil
-  alih dalam ±5 detik. (Mekanisme leader akan dirombak terpisah.)
 - **Migrasi:** goose, file SQL di `internal/storage/postgres/migrations/postgres`
   yang di-embed dan dijalankan saat startup dengan session lock Postgres.
   `00001_baseline.sql` adalah skema lama yang ditulis idempoten. Migrasi
@@ -82,8 +92,8 @@ Konfigurasi (dibaca sama oleh aggregator, `storecopy`, dan `storeadmin`):
   harus 1. Dengan RF 3 dan `LOCAL_QUORUM`, tiap baca/tulis butuh 2 dari 3 replika;
   cluster minimal 3 node dan tahan satu node mati.
 
-- **Tabel:** `hazards_by_id` (Get), `hazard_by_source_ref` (identitas, diklaim
-  dengan `INSERT … IF NOT EXISTS`), `hazards_by_bucket` (List; partisi = waktu
+- **Tabel:** `hazards_by_id` (Get; titik commit revisi, hanya ditulis dengan
+  lightweight transaction), `hazards_by_bucket` (List; partisi = waktu
   `occurred_at` dibulatkan ke bucket period), `hazard_buckets` (indeks bucket
   yang berisi data per sumber dan `*`; dipakai List dan `HasData`),
   `source_state`, `outbox_events`, `outbox_pending`, `outbox_dead_letters`,
@@ -118,16 +128,60 @@ Konfigurasi (dibaca sama oleh aggregator, `storecopy`, dan `storeadmin`):
   panjang membaca banyak bucket; ini batas skala yang diterima untuk volume
   dua feed nasional.
 - **Outbox satu consumer:** event menunggu di satu partisi `outbox_pending`;
-  klaim adalah write biasa (tanpa LWT), jadi hanya satu publisher boleh berjalan.
+  klaim adalah write biasa (tanpa LWT), jadi publisher hanya berjalan di leader.
+  Baris pending yang event-nya sudah terbit (salinan kedua dari revisi yang sama)
+  dibuang saat klaim.
   Event selesai ditulis ulang di `outbox_events` dengan TTL retensi (pruner
   tidak perlu menghapus). `gc_grace_seconds` partisi pending 1 jam agar tombstone
   cepat dibuang.
-- **Tanpa leader (sementara):** backend ini belum punya pemilihan leader;
-  poller, pruner, dan publisher berjalan di proses itu sendiri. **Jalankan satu
-  replika aggregator saja** sampai mekanisme leader dirombak.
 - **Migrasi:** file CQL di `internal/storage/cassandra/migrations` (`NNNN_nama.cql`,
   pernyataan diakhiri `;` di akhir baris), dicatat di `schema_migrations` dan
   dijalankan di bawah lease `schema_lock`. Keyspace dibuat bila belum ada.
+
+## Leader election
+
+Polling BMKG/PVMBG, pruner outbox, dan (di Cassandra) publisher outbox hanya
+berjalan di satu replika: leader. gRPC dilayani semua replika. Abstraksinya ada di
+`internal/leader` (`Elector`), dipilih dengan `LEADER_ELECTION`:
+
+| Nilai | Mekanisme |
+| --- | --- |
+| `postgres` | Baris lease di tabel `leader_leases` (expiry jam server Postgres); butuh store Postgres |
+| `cassandra` | Baris lease dengan TTL, ditulis dengan lightweight transaction; butuh store Cassandra |
+| `kubernetes` | `coordination.k8s.io/v1` Lease lewat client-go; butuh RBAC get/create/update `leases` |
+| `single` | Selalu leader; hanya untuk deployment satu replika |
+
+Default mengikuti `CANONICAL_STORE_BACKEND`. Waktu lease: `LEADER_LEASE_TTL_MS`
+(15000), `LEADER_RENEW_INTERVAL_MS` (5000), `LEADER_RETRY_INTERVAL_MS` (5000),
+`LEADER_FENCE_MARGIN_MS` (5000). Identitas replika: `LEADER_IDENTITY`, lalu
+`POD_NAME`, lalu hostname-pid-acak. Kubernetes: `LEADER_K8S_NAMESPACE` (default
+namespace service account), `LEADER_K8S_LEASE_NAME` (default `aggregator-ingest`),
+`KUBECONFIG` di luar cluster.
+
+- **Lease bertahan setelah putus.** Lease tidak dilepas saat koneksi leader
+  putus, hanya kedaluwarsa setelah TTL. Leader menghentikan dirinya sendiri pada
+  tenggat lokal (waktu kirim renew terakhir yang sukses + TTL − margin), sebelum
+  lease bisa diambil replika lain. Saat shutdown normal lease dilepas setelah
+  pekerjaan leader berhenti.
+- **Overlap ditangani dengan idempotensi, bukan fencing.** Jeda proses lebih lama
+  dari margin masih bisa membuat dua leader berjalan sebentar. Karena itu
+  `event_id` deterministik: `pub-` + UUIDv5(`hazard_id`, revisi). Revisi = 1 saat
+  hazard pertama disimpan, +1 per perubahan konten. Revisi yang sama selalu
+  menghasilkan `event_id` yang sama; consumer sudah men-dedup `event_id`.
+  - Postgres: `ApplyRevision` mengunci baris hazard (`FOR UPDATE`), jadi penulis
+    kedua melihat konten baru dan tidak menulis apa pun.
+  - Cassandra: baris `hazards_by_id` (dialamatkan langsung dengan ID turunan)
+    menyimpan konten, revisi, dan hash konten, dan hanya ditulis dengan
+    lightweight transaction (`IF revision = n`); baris List, indeks bucket, dan
+    outbox adalah proyeksinya. Revisi yang sudah di-commit tetapi belum tertulis
+    ke proyeksi (crash di antara keduanya) ditulis oleh poll berikutnya dengan
+    `event_id` yang sama; revisi baris List menjadi penanda.
+- **Yang masih bisa terjadi saat overlap:** status sumber sempat berkedip
+  (STALE/FRESH), watermark mundur sesaat (poll berikutnya mengulang, tanpa
+  duplikat), atau konten mundur bila upstream berubah tepat di antara dua poll.
+- **Rolling upgrade dari build advisory lock:** pod lama dan baru memakai lock
+  berbeda sehingga sempat sama-sama memimpin; pod lama masih memakai `event_id`
+  acak, jadi satu revisi bisa terbit dua kali selama rollout.
 
 ### Menyalin Postgres → Cassandra (sekali jalan)
 

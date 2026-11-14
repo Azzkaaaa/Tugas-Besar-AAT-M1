@@ -12,7 +12,6 @@ import (
 
 	"github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/aggregator/internal/domain"
 	"github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/aggregator/internal/storage"
-	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -44,14 +43,14 @@ func decodeCursor(s string) (*PageCursor, error) {
 }
 
 const hazardColumns = `hazard_id, source, source_ref_id, hazard_type, severity,
-	area_name, latitude, longitude, occurred_at, ingested_at, attributes`
+	area_name, latitude, longitude, occurred_at, ingested_at, attributes, revision`
 
 func scanHazard(row pgx.Row) (*domain.HazardRecord, error) {
 	var h domain.HazardRecord
 	var attrJSON []byte
 	if err := row.Scan(
 		&h.HazardID, &h.Source, &h.SourceRefID, &h.HazardType, &h.Severity,
-		&h.AreaName, &h.Latitude, &h.Longitude, &h.OccurredAt, &h.IngestedAt, &attrJSON,
+		&h.AreaName, &h.Latitude, &h.Longitude, &h.OccurredAt, &h.IngestedAt, &attrJSON, &h.Revision,
 	); err != nil {
 		return nil, err
 	}
@@ -95,6 +94,8 @@ func (s hazards) ApplyRevision(ctx context.Context, rev *domain.HazardRecord,
 	return saved, true, nil
 }
 
+// applyRevision locks the record's row, so concurrent writers of one record (two leaders during
+// an overlap) run one after the other: the second sees the first's content and writes nothing.
 func applyRevision(ctx context.Context, tx pgx.Tx, rev *domain.HazardRecord) (*domain.HazardRecord, bool, error) {
 	h := *rev
 	h.Attributes = domain.NormalizeAttributes(rev.Attributes)
@@ -103,42 +104,50 @@ func applyRevision(ctx context.Context, tx pgx.Tx, rev *domain.HazardRecord) (*d
 	if err != nil {
 		return nil, false, err
 	}
+	h.HazardID = domain.HazardID(h.Source, h.SourceRefID)
+	lockExisting := func() (*domain.HazardRecord, error) {
+		return scanHazard(tx.QueryRow(ctx, `SELECT `+hazardColumns+`
+			FROM hazard_events WHERE hazard_id = $1 FOR UPDATE`, h.HazardID))
+	}
 
-	existing, err := scanHazard(tx.QueryRow(ctx, `SELECT `+hazardColumns+`
-		FROM hazard_events WHERE source = $1 AND source_ref_id = $2`, h.Source, h.SourceRefID))
+	existing, err := lockExisting()
 	if errors.Is(err, pgx.ErrNoRows) {
-		if h.HazardID == "" {
-			h.HazardID = "hz-" + uuid.New().String()
-		}
 		if h.IngestedAt.IsZero() {
 			h.IngestedAt = time.Now()
 		}
 		h.IngestedAt = msUTC(h.IngestedAt)
-		_, err = tx.Exec(ctx, `INSERT INTO hazard_events (`+hazardColumns+`)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+		h.Revision = 1
+		tag, insertErr := tx.Exec(ctx, `INSERT INTO hazard_events (`+hazardColumns+`)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+			ON CONFLICT DO NOTHING`, // hazard_id and uq_source_ref conflict together (one is derived from the other)
 			h.HazardID, h.Source, h.SourceRefID, h.HazardType, h.Severity,
-			h.AreaName, h.Latitude, h.Longitude, h.OccurredAt, h.IngestedAt, attrJSON,
+			h.AreaName, h.Latitude, h.Longitude, h.OccurredAt, h.IngestedAt, attrJSON, h.Revision,
 		)
-		if err != nil {
-			return nil, false, fmt.Errorf("insert hazard failed: %w", err)
+		if insertErr != nil {
+			return nil, false, fmt.Errorf("insert hazard failed: %w", insertErr)
 		}
-		return &h, true, nil
+		if tag.RowsAffected() == 1 {
+			return &h, true, nil
+		}
+		// A concurrent writer inserted it first: continue as an update of its row.
+		existing, err = lockExisting()
 	}
 	if err != nil {
 		return nil, false, fmt.Errorf("check existing hazard failed: %w", err)
 	}
 
-	// Existing record: keep hazard_id and ingested_at.
-	h.HazardID = existing.HazardID
+	// Existing record: keep ingested_at.
 	h.IngestedAt = existing.IngestedAt
+	h.Revision = existing.Revision
 	if sameContent(existing, &h) {
 		return &h, false, nil
 	}
+	h.Revision++
 	_, err = tx.Exec(ctx, `UPDATE hazard_events SET
 			hazard_type = $1, severity = $2, area_name = $3, latitude = $4, longitude = $5,
-			occurred_at = $6, attributes = $7
-		WHERE hazard_id = $8`,
-		h.HazardType, h.Severity, h.AreaName, h.Latitude, h.Longitude, h.OccurredAt, attrJSON, h.HazardID,
+			occurred_at = $6, attributes = $7, revision = $8
+		WHERE hazard_id = $9`,
+		h.HazardType, h.Severity, h.AreaName, h.Latitude, h.Longitude, h.OccurredAt, attrJSON, h.Revision, h.HazardID,
 	)
 	if err != nil {
 		return nil, false, fmt.Errorf("update hazard failed: %w", err)

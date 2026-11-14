@@ -64,10 +64,6 @@ func Connect(ctx context.Context, dsn string) (*DB, error) {
 	return db, nil
 }
 
-// ingestLeaderKey is the session advisory lock of the ingest leader (see RunAsIngestLeader).
-// Arbitrary, but fixed: every replica must use the same value.
-const ingestLeaderKey int64 = 0x6167675f6c656164 // "agg_lead"
-
 //go:embed migrations/postgres/*.sql
 var postgresMigrations embed.FS
 
@@ -86,7 +82,8 @@ func (db *DB) Migrate(ctx context.Context) error {
 	sqlDB := stdlib.OpenDBFromPool(db.Pool)
 	defer sqlDB.Close()
 
-	provider, err := goose.NewProvider(goose.DialectPostgres, sqlDB, migrations, goose.WithSessionLocker(locker))
+	provider, err := goose.NewProvider(goose.DialectPostgres, sqlDB, migrations,
+		goose.WithSessionLocker(locker), goose.WithGoMigrations(rekeyMigration))
 	if err != nil {
 		return err
 	}

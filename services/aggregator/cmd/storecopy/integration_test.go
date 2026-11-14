@@ -49,7 +49,7 @@ func TestCopy(t *testing.T) {
 	t.Cleanup(cs.Close)
 	t.Cleanup(func() { _ = dst.DropForTest() })
 	// Start empty even if an earlier run left data behind.
-	for _, table := range []string{"hazards_by_id", "hazard_by_source_ref", "hazards_by_bucket", "hazard_buckets",
+	for _, table := range []string{"hazards_by_id", "hazards_by_bucket", "hazard_buckets",
 		"source_state", "outbox_events", "outbox_pending", "outbox_dead_letters"} {
 		if err := dst.TruncateForTest(table); err != nil {
 			t.Fatal(err)
@@ -72,7 +72,20 @@ func TestCopy(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	// 10 published, 1 dead letter, 19 pending.
+	// Revise one hazard twice so it is at revision 3 (events pub-31, pub-32).
+	for _, sev := range []string{domain.SeveritySiaga, domain.SeverityAwas} {
+		h := &domain.HazardRecord{
+			Source: domain.SourceBMKG, SourceRefID: "ev-0", HazardType: domain.HazardTypeSeismic,
+			Severity: sev, AreaName: "Area", OccurredAt: base, Attributes: map[string]any{"magnitude": 4.0},
+		}
+		if _, _, err := pg.Hazards.ApplyRevision(ctx, h, func(s *domain.HazardRecord) (storage.OutboxEvent, error) {
+			n++
+			return storage.OutboxEvent{EventID: fmt.Sprintf("pub-%d", n), HazardID: s.HazardID, Source: s.Source, Payload: []byte("p")}, nil
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// 10 published, 1 dead letter, 21 pending.
 	claimed, err := pg.Outbox.ClaimDue(ctx, 11, time.Minute)
 	if err != nil || len(claimed) != 11 {
 		t.Fatalf("claim: %d, %v", len(claimed), err)
@@ -105,6 +118,17 @@ func TestCopy(t *testing.T) {
 			t.Fatalf("hazard %d differs:\n got %+v\nwant %+v", i, g, w)
 		}
 	}
+	// Revisions are carried over (a reset would reuse event IDs consumers have seen).
+	maxRev := 0
+	for i := range want.Items {
+		maxRev = max(maxRev, want.Items[i].Revision)
+		if got.Items[i].Revision != want.Items[i].Revision {
+			t.Fatalf("hazard %d revision %d, want %d", i, got.Items[i].Revision, want.Items[i].Revision)
+		}
+	}
+	if maxRev != 3 {
+		t.Fatalf("seeded revisions top out at %d, want 3", maxRev)
+	}
 	// A copied hazard is recognized by identity: re-applying it is not a change.
 	_, changed, err := cs.Hazards.ApplyRevision(ctx, want.Items[0], func(*domain.HazardRecord) (storage.OutboxEvent, error) {
 		t.Fatal("unchanged copied hazard emitted an event")
@@ -124,10 +148,10 @@ func TestCopy(t *testing.T) {
 	}
 
 	pending, err := cs.Outbox.ClaimDue(ctx, 100, time.Minute)
-	if err != nil || len(pending) != 19 {
+	if err != nil || len(pending) != 21 {
 		t.Fatalf("pending events in cassandra: %d, %v", len(pending), err)
 	}
-	if pending[0].EventID != "pub-12" || pending[18].EventID != "pub-30" {
-		t.Fatalf("pending order: first %s last %s", pending[0].EventID, pending[18].EventID)
+	if pending[0].EventID != "pub-12" || pending[20].EventID != "pub-32" {
+		t.Fatalf("pending order: first %s last %s", pending[0].EventID, pending[20].EventID)
 	}
 }

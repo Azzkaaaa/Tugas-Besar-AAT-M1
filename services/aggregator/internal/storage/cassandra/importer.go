@@ -2,7 +2,6 @@ package cassandra
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"time"
 
@@ -14,41 +13,54 @@ import (
 // The Import functions write records as they are, for cmd/storecopy. Unlike ApplyRevision they
 // emit no outbox event, so they are not part of the storage ports. Each is idempotent.
 
-// ErrIdentityConflict is returned by ImportHazard when (source, source_ref_id) already belongs to
-// another hazard_id in Cassandra.
-var ErrIdentityConflict = fmt.Errorf("source reference already mapped to another hazard")
-
-// ImportHazard stores h with its own hazard_id and ingested_at.
+// ImportHazard stores rec at its own revision and ingested_at, under its derived hazard ID (the
+// source's hazard_id is ignored; storecopy reads from an already re-keyed Postgres). The revision
+// must be carried over: resetting it would reuse event IDs consumers have seen.
 func (db *DB) ImportHazard(ctx context.Context, rec *domain.HazardRecord) error {
 	h := *rec
+	h.HazardID = domain.HazardID(rec.Source, rec.SourceRefID)
 	h.Attributes = domain.NormalizeAttributes(rec.Attributes)
 	h.OccurredAt = msUTC(rec.OccurredAt)
 	h.IngestedAt = msUTC(rec.IngestedAt)
-
-	existing := map[string]any{}
-	applied, err := db.session.Query(`INSERT INTO hazard_by_source_ref (source, source_ref_id, hazard_id, ingested_at)
-		VALUES (?, ?, ?, ?) IF NOT EXISTS`, h.Source, h.SourceRefID, h.HazardID, h.IngestedAt).WithContext(ctx).MapScanCAS(existing)
+	if h.Revision < 1 {
+		h.Revision = 1
+	}
+	hash, err := contentHash(&h)
 	if err != nil {
 		return err
 	}
-	if !applied {
-		if id, _ := existing["hazard_id"].(string); id != h.HazardID {
-			return fmt.Errorf("%w: %s/%s is %s, not %s", ErrIdentityConflict, h.Source, h.SourceRefID, id, h.HazardID)
-		}
-	}
-
 	s := hazards{db}
-	current, oldBucket, err := s.getStored(ctx, h.HazardID)
+	bucket := db.bucketOf(h.OccurredAt)
+
+	st, err := s.readStored(ctx, h.HazardID, true)
 	if err != nil {
 		return err
 	}
-	attrJSON, err := json.Marshal(h.Attributes)
-	if err != nil {
+	if st == nil {
+		applied, err := db.session.Query(`INSERT INTO hazards_by_id (`+storedColumns+`)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) IF NOT EXISTS`,
+			storedValues(&h, bucket, hash, time.Time{}, time.Time{})...).WithContext(ctx).MapScanCAS(map[string]any{})
+		if err != nil {
+			return err
+		}
+		if !applied {
+			return fmt.Errorf("hazard %s was created while importing it", h.HazardID)
+		}
+		_, _, err = s.writeOut(ctx, &h, bucket, time.Time{}, time.Time{}, nil)
 		return err
 	}
-	b := db.session.Batch(gocql.LoggedBatch).WithContext(ctx)
-	s.addHazardRows(b, &h, current, oldBucket, string(attrJSON))
-	return b.Exec()
+	// Re-run of the copy: bring the row to the copied revision, moving its List row if needed.
+	if _, err := db.session.Query(`UPDATE hazards_by_id SET
+			hazard_type = ?, severity = ?, area_name = ?, latitude = ?, longitude = ?, occurred_at = ?,
+			ingested_at = ?, attributes = ?, revision = ?, bucket = ?, content_hash = ?, prev_bucket = ?, prev_occurred_at = ?
+		WHERE hazard_id = ? IF revision = ?`,
+		h.HazardType, h.Severity, h.AreaName, h.Latitude, h.Longitude, h.OccurredAt,
+		h.IngestedAt, mustJSON(h.Attributes), h.Revision, bucket, hash, st.bucket, st.rec.OccurredAt,
+		h.HazardID, st.rec.Revision).WithContext(ctx).MapScanCAS(map[string]any{}); err != nil {
+		return err
+	}
+	_, _, err = s.writeOut(ctx, &h, bucket, st.bucket, st.rec.OccurredAt, nil)
+	return err
 }
 
 func (db *DB) ImportSourceState(ctx context.Context, key domain.SourceKey, st storage.SourceState) error {

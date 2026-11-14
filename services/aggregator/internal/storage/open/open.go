@@ -4,25 +4,20 @@ package open
 import (
 	"context"
 	"fmt"
-	"log"
 	"time"
 
 	"github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/aggregator/internal/config"
+	"github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/aggregator/internal/leader"
 	"github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/aggregator/internal/storage"
 	"github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/aggregator/internal/storage/cassandra"
 	"github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/aggregator/internal/storage/postgres"
 )
 
-// Store is an opened backend plus how to run the single-replica ingest work on it.
+// Store is an opened backend plus its lease store for leader election.
 type Store struct {
 	*storage.Backend
-	// RunIngest runs fn on one replica at a time where the backend can elect one, and directly
-	// otherwise. It returns once ctx is done.
-	//
-	// TODO(leader rework): leader election is being reworked separately. Until then Postgres
-	// keeps its advisory-lock leader and Cassandra has none, so a Cassandra deployment must run
-	// a single aggregator replica.
-	RunIngest func(ctx context.Context, fn func(ctx context.Context))
+	// Leases is the backend's leader.LeaseStore (used by the postgres and cassandra electors).
+	Leases leader.LeaseStore
 }
 
 // CassandraConfig maps the configuration to the backend's. The tools in cmd/ use it too.
@@ -51,16 +46,13 @@ func Open(ctx context.Context, cfg *config.Config) (*Store, error) {
 		if err != nil {
 			return nil, err
 		}
-		return &Store{Backend: db.Backend(), RunIngest: db.RunAsIngestLeader}, nil
+		return &Store{Backend: db.Backend(), Leases: db.Leases()}, nil
 	case "cassandra":
 		db, err := cassandra.Open(ctx, CassandraConfig(cfg.Cassandra, cfg.OutboxRetention))
 		if err != nil {
 			return nil, err
 		}
-		return &Store{Backend: db.Backend(), RunIngest: func(ctx context.Context, fn func(ctx context.Context)) {
-			log.Println("[Aggregator] Cassandra store has no ingest leader: run a single aggregator replica")
-			fn(ctx)
-		}}, nil
+		return &Store{Backend: db.Backend(), Leases: db.Leases()}, nil
 	}
 	return nil, fmt.Errorf("unknown canonical store backend %q", cfg.CanonicalStoreBackend)
 }

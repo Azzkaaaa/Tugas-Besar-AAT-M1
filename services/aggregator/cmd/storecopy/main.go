@@ -11,7 +11,6 @@ package main
 
 import (
 	"context"
-	"errors"
 	"flag"
 	"fmt"
 	"log"
@@ -92,7 +91,7 @@ func main() {
 
 func run(ctx context.Context, src *postgres.DB, dst *cassandra.DB) error {
 	// Hazards, through the public List.
-	var copied, conflicts int
+	var copied int
 	token := ""
 	for {
 		page, err := src.Backend().Hazards.List(ctx, storage.HazardQuery{}, storage.PageRequest{Size: 100, Token: token})
@@ -104,13 +103,7 @@ func run(ctx context.Context, src *postgres.DB, dst *cassandra.DB) error {
 				copied++
 				continue
 			}
-			err := dst.ImportHazard(ctx, h)
-			if errors.Is(err, cassandra.ErrIdentityConflict) {
-				log.Printf("skip: %v", err)
-				conflicts++
-				continue
-			}
-			if err != nil {
+			if err := dst.ImportHazard(ctx, h); err != nil {
 				return fmt.Errorf("write hazard %s: %w", h.HazardID, err)
 			}
 			copied++
@@ -120,7 +113,7 @@ func run(ctx context.Context, src *postgres.DB, dst *cassandra.DB) error {
 		}
 		token = page.NextToken
 	}
-	log.Printf("hazards: %d copied, %d skipped (identity conflict)", copied, conflicts)
+	log.Printf("hazards: %d copied", copied)
 
 	states, err := src.ExportSourceStates(ctx)
 	if err != nil {

@@ -39,24 +39,28 @@ func NewOutboxPublisher(cfg *config.Config, outbox storage.Outbox) *OutboxPublis
 	}
 }
 
+// Start runs the publisher in the background until ctx is done.
 func (p *OutboxPublisher) Start(ctx context.Context) {
-	go func() {
-		for {
+	go p.Run(ctx)
+}
+
+// Run publishes the outbox until ctx is done, reconnecting to RabbitMQ as needed, and returns
+// after closing its connection. Under a leader it runs inside the leader's work, so it has stopped
+// before leadership is handed over.
+func (p *OutboxPublisher) Run(ctx context.Context) {
+	defer p.close()
+	for ctx.Err() == nil {
+		p.close() // the previous connection, if it dropped
+		if err := p.connect(); err != nil {
+			log.Printf("[OutboxPublisher] Connection error: %v, retrying in 2s...", err)
 			select {
 			case <-ctx.Done():
-				p.close()
-				return
-			default:
-				if err := p.connect(); err != nil {
-					log.Printf("[OutboxPublisher] Connection error: %v, retrying in 2s...", err)
-					time.Sleep(2 * time.Second)
-					continue
-				}
-
-				p.processOutboxLoop(ctx)
+			case <-time.After(2 * time.Second):
 			}
+			continue
 		}
-	}()
+		p.processOutboxLoop(ctx)
+	}
 }
 
 func (p *OutboxPublisher) connect() error {
@@ -103,9 +107,11 @@ func (p *OutboxPublisher) connect() error {
 func (p *OutboxPublisher) close() {
 	if p.ch != nil {
 		_ = p.ch.Close()
+		p.ch = nil
 	}
 	if p.conn != nil {
 		_ = p.conn.Close()
+		p.conn = nil
 	}
 }
 

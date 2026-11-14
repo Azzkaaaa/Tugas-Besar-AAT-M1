@@ -21,6 +21,9 @@ type HazardRecord struct {
 	OccurredAt  time.Time      `json:"occurred_at"`
 	IngestedAt  time.Time      `json:"ingested_at"`
 	Attributes  map[string]any `json:"attributes"`
+	// Revision is the committed revision of the record: 1 when first stored, +1 per content
+	// change. Set by the store; event IDs derive from (HazardID, Revision). Not published.
+	Revision int `json:"revision"`
 }
 
 func (h *HazardRecord) ToProto() (*commonv1.HazardEvent, error) {

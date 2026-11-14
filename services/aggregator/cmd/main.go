@@ -14,6 +14,7 @@ import (
 	"github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/aggregator/internal/config"
 	"github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/aggregator/internal/grpc"
 	"github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/aggregator/internal/ingest"
+	"github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/aggregator/internal/leader/elect"
 	"github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/aggregator/internal/storage/open"
 	"github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/aggregator/internal/telemetry"
 )
@@ -61,26 +62,32 @@ func main() {
 	defer store.Close()
 	log.Println("[Aggregator] Canonical store connected and migrations applied successfully.")
 
-	// 2. RabbitMQ transactional outbox publisher. It runs on every replica, unless the backend
-	// allows a single outbox consumer, in which case it runs with the pollers.
+	// 2. Leader election (LEADER_ELECTION; default: the store backend). The leader runs the
+	// pollers and the outbox pruner, and the publisher too when the store allows a single outbox
+	// consumer; every replica serves gRPC.
+	elector, err := elect.Open(cfg, store)
+	if err != nil {
+		log.Fatalf("[Aggregator] FATAL: Invalid leader election configuration: %v", err)
+	}
+	log.Printf("[Aggregator] Leader election: %s", cfg.Leader.Election)
+
+	// 3. RabbitMQ transactional outbox publisher.
 	pub := broker.NewOutboxPublisher(cfg, store.Outbox)
 	if !store.OutboxSingleConsumer {
 		log.Println("[Aggregator] Starting RabbitMQ Outbox Publisher...")
 		pub.Start(ctx)
 	}
 
-	// 3. Ingestion pollers and outbox pruning run on one replica only (the ingest leader); every
-	// replica serves gRPC.
-	log.Println("[Aggregator] Waiting for ingest leadership to start pollers (BMKG & PVMBG)...")
-	go store.RunIngest(ctx, func(ctx context.Context) {
+	log.Println("[Aggregator] Waiting for leadership to start pollers (BMKG & PVMBG)...")
+	go elector.Run(ctx, func(ctx context.Context) {
 		var wg sync.WaitGroup
 		wg.Add(3)
 		go func() { defer wg.Done(); ingest.NewBMKGPoller(cfg, store.Hazards, store.Sources).Start(ctx) }()
 		go func() { defer wg.Done(); ingest.NewPVMBGPoller(cfg, store.Hazards, store.Sources).Start(ctx) }()
 		go func() { defer wg.Done(); broker.RunOutboxPruner(ctx, store.Outbox, cfg.OutboxRetention) }()
 		if store.OutboxSingleConsumer {
-			log.Println("[Aggregator] Starting RabbitMQ Outbox Publisher (single consumer)...")
-			pub.Start(ctx)
+			wg.Add(1)
+			go func() { defer wg.Done(); pub.Run(ctx) }()
 		}
 		wg.Wait()
 	})

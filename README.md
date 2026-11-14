@@ -258,6 +258,7 @@ Variabel shell mengalahkan nilai dari `--env-file`. Variabel `VITE_*`/`FIREBASE_
 | `AGGREGATOR_CASSANDRA_REPLICATION_FACTOR` | `1` | Replika untuk `SimpleStrategy`; compose (1 node) harus 1 |
 | `AGGREGATOR_CASSANDRA_DATACENTERS` | kosong | Replika per datacenter untuk `NetworkTopologyStrategy`, mis. `dc1:3,dc2:3` |
 | `AGGREGATOR_CASSANDRA_LOCAL_DC` | kosong | Datacenter lokal untuk consistency `LOCAL_*` |
+| `AGGREGATOR_LEADER_ELECTION` | kosong (ikut backend store) | Pemilihan leader aggregator: `postgres`, `cassandra`, `kubernetes`, atau `single` |
 | `WEBHOOK_DB_PASSWORD` | kosong → **isi manual** | Password PostgreSQL `webhook-db`; Compose menyusun `WEBHOOK_STORE_DSN` |
 | `WEBHOOK_DEDUP_TTL_HOURS` | `168` | Lama penanda "sudah terkirim" di Redis untuk dedup webhook |
 | `WEBHOOK_SHUTDOWN_GRACE_SECONDS` | `25` | Waktu event webhook yang sedang dikirim boleh selesai setelah SIGTERM; harus di bawah `terminationGracePeriodSeconds` pod |

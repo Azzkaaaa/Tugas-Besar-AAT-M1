@@ -7,20 +7,28 @@ package cassandra
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"strings"
 	"testing"
 	"time"
 
+	commonv1 "github.com/Azzkaaaa/Tugas-Besar-AAT-M1/packages/bnpb-aggregator-go/bnpb/common/v1"
+	eventv1 "github.com/Azzkaaaa/Tugas-Besar-AAT-M1/packages/bnpb-aggregator-go/bnpb/event/v1"
 	"github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/aggregator/internal/domain"
+	"github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/aggregator/internal/leader/leasetest"
 	"github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/aggregator/internal/storage"
+	"github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/aggregator/internal/storage/rekey"
 	"github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/aggregator/internal/storage/storetest"
+	gocql "github.com/apache/cassandra-gocql-driver/v2"
+	"github.com/google/uuid"
+	"google.golang.org/protobuf/proto"
 )
 
 // Tables emptied between contract cases (store_meta and schema tables are kept).
 var dataTables = []string{
-	"hazards_by_id", "hazard_by_source_ref", "hazards_by_bucket", "hazard_buckets", "source_state",
-	"outbox_events", "outbox_pending", "outbox_dead_letters",
+	"hazards_by_id", "hazards_by_bucket", "hazard_buckets", "source_state",
+	"outbox_events", "outbox_pending", "outbox_dead_letters", "leader_leases",
 }
 
 func testHosts(t *testing.T) []string {
@@ -280,4 +288,203 @@ func TestReplicationOnCreate(t *testing.T) {
 	if replicationMismatch(actual, simple3) == "" {
 		t.Fatal("mismatch against SimpleStrategy 3 not detected")
 	}
+}
+
+func TestLeases(t *testing.T) {
+	db, err := openTest(t, "agg_test_leases", time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { dropKeyspace(db) })
+	leasetest.Run(t, db.Leases(), "test-lease", 2*time.Second)
+}
+
+func revEvent(s *domain.HazardRecord) (storage.OutboxEvent, error) {
+	return storage.OutboxEvent{EventID: fmt.Sprintf("pub-%s-r%d", s.HazardID, s.Revision), HazardID: s.HazardID, Source: s.Source}, nil
+}
+
+func testHazard(ref string, severity string) *domain.HazardRecord {
+	return &domain.HazardRecord{Source: domain.SourceBMKG, SourceRefID: ref, HazardType: domain.HazardTypeSeismic,
+		Severity: severity, AreaName: "A", OccurredAt: time.Date(2026, 3, 1, 12, 0, 0, 0, time.UTC),
+		Attributes: map[string]any{"magnitude": 5.0}}
+}
+
+// A revision committed on hazards_by_id whose batch never ran (a crash between the two) is
+// written out by the next ApplyRevision of that content, with that revision's event ID.
+func TestRepairCommittedRevision(t *testing.T) {
+	db, err := openTest(t, "agg_test_repair", time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { dropKeyspace(db) })
+	ctx := context.Background()
+	b := db.Backend()
+
+	first, _, err := b.Hazards.ApplyRevision(ctx, testHazard("r", domain.SeverityNormal), revEvent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	next := testHazard("r", domain.SeveritySiaga)
+	next.Attributes = domain.NormalizeAttributes(next.Attributes)
+	hash, _ := contentHash(next)
+	bucket := db.bucketOf(next.OccurredAt)
+	if applied, err := db.session.Query(`UPDATE hazards_by_id SET severity = ?, revision = 2, content_hash = ?,
+			bucket = ?, prev_bucket = ?, prev_occurred_at = ?
+		WHERE hazard_id = ? IF revision = 1`, domain.SeveritySiaga, hash, bucket, bucket, next.OccurredAt, first.HazardID).
+		MapScanCAS(map[string]any{}); err != nil || !applied {
+		t.Fatalf("simulated commit: %v, %v", applied, err)
+	}
+
+	saved, changed, err := b.Hazards.ApplyRevision(ctx, testHazard("r", domain.SeveritySiaga), revEvent)
+	if err != nil || !changed || saved.Revision != 2 {
+		t.Fatalf("repair: changed=%v revision=%d err=%v; want true/2", changed, saved.Revision, err)
+	}
+	page, _ := b.Hazards.List(ctx, storage.HazardQuery{}, storage.PageRequest{Size: 10})
+	if len(page.Items) != 1 || page.Items[0].Revision != 2 || page.Items[0].Severity != domain.SeveritySiaga {
+		t.Fatalf("after repair listed %+v", page.Items)
+	}
+	if _, changed, _ := b.Hazards.ApplyRevision(ctx, testHazard("r", domain.SeveritySiaga), revEvent); changed {
+		t.Fatal("repaired revision written again")
+	}
+	evs, _ := b.Outbox.ClaimDue(ctx, 10, time.Minute)
+	if len(evs) != 2 || evs[1].EventID != fmt.Sprintf("pub-%s-r2", first.HazardID) {
+		t.Fatalf("events after repair: %+v", evs)
+	}
+}
+
+func publishedPayload(t *testing.T, eventID, hazardID, ref string) []byte {
+	t.Helper()
+	b, err := proto.Marshal(&eventv1.HazardEventPublished{EventId: eventID, SchemaVersion: 1, Source: commonv1.Source_SOURCE_BMKG,
+		Payload: &commonv1.HazardEvent{HazardId: hazardID, Source: commonv1.Source_SOURCE_BMKG, SourceRefId: ref}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return b
+}
+
+// Hazards stored under random IDs (before derived IDs) are re-keyed by migration 0005 with their
+// revisions, List rows and pending outbox events; a second run changes nothing.
+func TestRekeyMigration(t *testing.T) {
+	db, err := openTest(t, "agg_test_rekey", time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { dropKeyspace(db) })
+	ctx := context.Background()
+	s := hazards{db}
+
+	// Seed a hazard the way older builds stored it: random ID, no content hash, revision 3.
+	oldID := "hz-" + uuid.New().String()
+	h := testHazard("legacy", domain.SeverityWaspada)
+	h.HazardID, h.Revision, h.IngestedAt = oldID, 3, time.Date(2026, 3, 1, 12, 5, 0, 0, time.UTC)
+	bucket := db.bucketOf(h.OccurredAt)
+	if err := db.session.Query(`INSERT INTO hazards_by_id (`+hazardColumns+`, bucket) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		oldID, h.Source, h.SourceRefID, h.HazardType, h.Severity, h.AreaName, h.Latitude, h.Longitude,
+		h.OccurredAt, h.IngestedAt, mustJSON(h.Attributes), 3, bucket).Exec(); err != nil {
+		t.Fatal(err)
+	}
+	pb := db.session.Batch(gocql.LoggedBatch)
+	s.addProjection(pb, h, bucket, time.Time{}, time.Time{})
+	addOutboxEnqueue(pb, storage.OutboxEvent{EventID: "pub-old", HazardID: oldID, Source: h.Source,
+		Payload: publishedPayload(t, "pub-old", oldID, "legacy")}, time.Now())
+	if err := pb.Exec(); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.session.Query(`INSERT INTO outbox_dead_letters (event_id, hazard_id, source, payload, created_at, failed_at, last_error)
+		VALUES ('pub-dead', ?, 'BMKG', ?, ?, ?, 'x')`, oldID, publishedPayload(t, "pub-dead", oldID, "legacy"), time.Now(), time.Now()).Exec(); err != nil {
+		t.Fatal(err)
+	}
+
+	for run := 0; run < 2; run++ {
+		if err := db.rekeyHazardIDs(ctx); err != nil {
+			t.Fatalf("run %d: %v", run, err)
+		}
+	}
+
+	newID := domain.HazardID(domain.SourceBMKG, "legacy")
+	b := db.Backend()
+	if old, _ := b.Hazards.Get(ctx, oldID); old != nil {
+		t.Fatal("old hazard ID still resolves")
+	}
+	got, err := b.Hazards.Get(ctx, newID)
+	if err != nil || got == nil || got.Revision != 3 || !got.IngestedAt.Equal(h.IngestedAt) || got.Severity != domain.SeverityWaspada {
+		t.Fatalf("re-keyed hazard = %+v, %v", got, err)
+	}
+	page, _ := b.Hazards.List(ctx, storage.HazardQuery{}, storage.PageRequest{Size: 10})
+	if len(page.Items) != 1 || page.Items[0].HazardID != newID {
+		t.Fatalf("listed %+v", page.Items)
+	}
+	evs, _ := b.Outbox.ClaimDue(ctx, 10, time.Minute)
+	if len(evs) != 1 || evs[0].EventID != "pub-old" || evs[0].HazardID != newID {
+		t.Fatalf("pending events %+v", evs)
+	}
+	if _, _, payloadID, _ := rekey.Identity(evs[0].Payload); payloadID != newID {
+		t.Fatalf("pending payload names %s, want %s", payloadID, newID)
+	}
+	var deadID string
+	var deadPayload []byte
+	if err := db.session.Query(`SELECT hazard_id, payload FROM outbox_dead_letters WHERE event_id = 'pub-dead'`).Scan(&deadID, &deadPayload); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, payloadID, _ := rekey.Identity(deadPayload); deadID != newID || payloadID != newID {
+		t.Fatalf("dead letter hazard %s / payload %s, want %s", deadID, payloadID, newID)
+	}
+	// The same content again is not a revision; a change continues the revision count.
+	if _, changed, err := b.Hazards.ApplyRevision(ctx, testHazard("legacy", domain.SeverityWaspada), revEvent); err != nil || changed {
+		t.Fatalf("unchanged re-keyed hazard: changed=%v err=%v", changed, err)
+	}
+	if s4, _, err := b.Hazards.ApplyRevision(ctx, testHazard("legacy", domain.SeverityAwas), revEvent); err != nil || s4.Revision != 4 {
+		t.Fatalf("revision after re-key = %+v, %v", s4, err)
+	}
+	if _, err := keyspaceTable(db, "hazard_by_source_ref"); err == nil {
+		t.Fatal("hazard_by_source_ref still exists")
+	}
+}
+
+// The re-key runs during Open, before the bucket schedule is loaded, on rows that may predate the
+// bucket column: reproduce that order on a keyspace whose migration 0005 is not recorded yet.
+func TestRekeyDuringOpen(t *testing.T) {
+	db, err := openTest(t, "agg_test_rekey_open", time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { dropKeyspace(db) })
+	oldID := "hz-" + uuid.New().String()
+	h := testHazard("pre-bucket", domain.SeverityNormal)
+	h.HazardID, h.IngestedAt = oldID, h.OccurredAt
+	// A row from before the bucket and revision columns were written.
+	if err := db.session.Query(`INSERT INTO hazards_by_id (`+strings.TrimSuffix(hazardColumns, ", revision")+`)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		oldID, h.Source, h.SourceRefID, h.HazardType, h.Severity, h.AreaName, h.Latitude, h.Longitude,
+		h.OccurredAt, h.IngestedAt, mustJSON(h.Attributes)).Exec(); err != nil {
+		t.Fatal(err)
+	}
+	pb := db.session.Batch(gocql.LoggedBatch)
+	h.Revision = 1
+	hazards{db}.addProjection(pb, h, db.bucketOf(h.OccurredAt), time.Time{}, time.Time{})
+	if err := pb.Exec(); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.session.Query(`DELETE FROM schema_migrations WHERE version IN (5, 6)`).Exec(); err != nil {
+		t.Fatal(err)
+	}
+
+	again, err := openTest(t, "agg_test_rekey_open", time.Minute)
+	if err != nil {
+		t.Fatalf("Open with pending re-key: %v", err)
+	}
+	defer again.Close()
+	newID := domain.HazardID(domain.SourceBMKG, "pre-bucket")
+	page, err := again.Backend().Hazards.List(context.Background(), storage.HazardQuery{}, storage.PageRequest{Size: 10})
+	if err != nil || len(page.Items) != 1 || page.Items[0].HazardID != newID || page.Items[0].Revision != 1 {
+		t.Fatalf("after re-key on Open listed %+v, %v", page.Items, err)
+	}
+}
+
+// keyspaceTable reports an error when the table does not exist in db's keyspace.
+func keyspaceTable(db *DB, table string) (string, error) {
+	var name string
+	err := db.session.Query(`SELECT table_name FROM system_schema.tables WHERE keyspace_name = ? AND table_name = ?`,
+		db.keyspace, table).Scan(&name)
+	return name, err
 }

@@ -47,3 +47,37 @@ func TestParseDatacenters(t *testing.T) {
 		t.Fatalf("ParseDatacenters = %v, %v", got, err)
 	}
 }
+
+func setBaseEnv(t *testing.T) {
+	for k, v := range map[string]string{
+		"APP_ENV": "test", "LOG_LEVEL": "info", "AGGREGATOR_GRPC_PORT": "9091", "BMKG_BASE_URL": "x",
+		"PVMBG_BASE_URL": "x", "BMKG_API_KEY": "k", "PVMBG_BEARER_TOKEN": "t", "AGGREGATOR_SERVICE_TOKEN": "s",
+		"AUTH_INSECURE_SKIP_VERIFY": "true", "BMKG_POLL_INTERVAL_MS": "1000", "PVMBG_POLL_INTERVAL_MS": "1000",
+		"BMKG_REQUEST_TIMEOUT_MS": "1000", "PVMBG_REQUEST_TIMEOUT_MS": "1000", "SOURCE_STALE_AFTER_MS": "1000",
+		"AGGREGATOR_AMQP_URL": "amqp://x", "RABBITMQ_EXCHANGE": "e", "OUTBOX_MAX_RETRIES": "5",
+		"CANONICAL_STORE_BACKEND": "cassandra", "CANONICAL_STORE_CASSANDRA_HOSTS": "h",
+	} {
+		t.Setenv(k, v)
+	}
+}
+
+func TestLeaderConfig(t *testing.T) {
+	setBaseEnv(t)
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Leader.Election != "cassandra" || cfg.Leader.TTL != 15*time.Second || cfg.Leader.Margin != 5*time.Second ||
+		cfg.Leader.K8sLeaseName != "aggregator-ingest" {
+		t.Fatalf("leader defaults = %+v", cfg.Leader)
+	}
+	t.Setenv("LEADER_ELECTION", "Kubernetes")
+	t.Setenv("LEADER_LEASE_TTL_MS", "30000")
+	if cfg, err = Load(); err != nil || cfg.Leader.Election != "kubernetes" || cfg.Leader.TTL != 30*time.Second {
+		t.Fatalf("leader overrides = %+v, %v", cfg.Leader, err)
+	}
+	t.Setenv("LEADER_ELECTION", "zookeeper")
+	if _, err := Load(); err == nil || !strings.Contains(err.Error(), "LEADER_ELECTION") {
+		t.Fatalf("invalid election accepted: %v", err)
+	}
+}

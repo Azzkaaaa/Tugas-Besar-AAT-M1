@@ -20,8 +20,10 @@ var ErrInvalidPageToken = errors.New("invalid page token")
 
 // HazardStore holds canonical hazard records.
 type HazardStore interface {
-	// ApplyRevision upserts rev by (Source, SourceRefID). An existing record keeps its HazardID
-	// and IngestedAt; a new one gets a generated HazardID (unless rev has one) and IngestedAt now.
+	// ApplyRevision upserts rev by (Source, SourceRefID). The record's HazardID is always
+	// domain.HazardID(Source, SourceRefID) (rev.HazardID is ignored). An existing record keeps
+	// its IngestedAt; a new one gets IngestedAt now (unless rev has one). Revision is 1 for a new
+	// record and +1 per content change; the event ID derives from (HazardID, Revision).
 	// Attributes are normalized (domain.NormalizeAttributes) before storing and comparing.
 	//
 	// When the record is new or its content changed, newEvent is called with the record as it
