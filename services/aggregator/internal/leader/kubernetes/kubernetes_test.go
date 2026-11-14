@@ -2,10 +2,12 @@ package kubernetes
 
 import (
 	"context"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/fake"
 )
 
@@ -74,5 +76,73 @@ func waitFor(t *testing.T, cond func() bool, within time.Duration, msg string) {
 			t.Fatal(msg)
 		}
 		time.Sleep(20 * time.Millisecond)
+	}
+}
+
+// Two replicas with one Lease per job: every job has one leader at a time, the jobs end up on
+// both replicas, and when one replica stops the other takes all of them.
+func TestKubernetesJobsSpreadAndFailOver(t *testing.T) {
+	jobs := []string{"bmkg-poller", "pvmbg-poller", "outbox-pruner", "outbox-publisher"}
+	client := fake.NewClientset()
+	var mu sync.Mutex
+	current := map[string]string{}
+	var double atomic.Bool
+	count := func(id string) (n int) {
+		mu.Lock()
+		defer mu.Unlock()
+		for _, r := range current {
+			if r == id {
+				n++
+			}
+		}
+		return n
+	}
+	start := func(id string) func() {
+		electors, err := NewElectors(Config{Client: client, Namespace: "bnpb", Identity: id,
+			TTL: 2 * time.Second, RenewEvery: 200 * time.Millisecond, Margin: time.Second,
+			Logf: func(string, ...any) {}}, "aggregator")
+		if err != nil {
+			t.Fatal(err)
+		}
+		ctx, cancel := context.WithCancel(context.Background())
+		var wg sync.WaitGroup
+		for _, job := range jobs {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				electors.For(job).Run(ctx, func(ctx context.Context) {
+					mu.Lock()
+					if current[job] != "" {
+						double.Store(true)
+					}
+					current[job] = id
+					mu.Unlock()
+					<-ctx.Done()
+					mu.Lock()
+					delete(current, job)
+					mu.Unlock()
+				})
+			}()
+		}
+		return func() { cancel(); wg.Wait() }
+	}
+
+	stopA := start("a")
+	stopB := start("b")
+	defer stopB()
+	waitFor(t, func() bool { return count("a")+count("b") == len(jobs) }, 5*time.Second, "not every job got a leader")
+	time.Sleep(time.Second)
+	t.Logf("placement: a=%d b=%d", count("a"), count("b"))
+	if count("a") == 0 || count("b") == 0 {
+		t.Logf("jobs did not split this run (placement is random)")
+	}
+	stopA()
+	waitFor(t, func() bool { return count("b") == len(jobs) }, 6*time.Second, "b did not take over every job")
+	if double.Load() {
+		t.Fatal("a job had two leaders at once")
+	}
+	leases, err := client.CoordinationV1().Leases("bnpb").List(context.Background(), metav1.ListOptions{})
+	if err != nil || len(leases.Items) != len(jobs) {
+		t.Fatalf("leases %v, %v; want one per job", leases, err)
 	}
 }

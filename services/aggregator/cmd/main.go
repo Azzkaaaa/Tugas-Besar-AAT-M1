@@ -62,35 +62,45 @@ func main() {
 	defer store.Close()
 	log.Println("[Aggregator] Canonical store connected and migrations applied successfully.")
 
-	// 2. Leader election (LEADER_ELECTION; default: the store backend). The leader runs the
-	// pollers and the outbox pruner, and the publisher too when the store allows a single outbox
-	// consumer; every replica serves gRPC.
-	elector, err := elect.Open(cfg, store)
+	// 2. Leader election (LEADER_ELECTION; default: the store backend). Each leader-only job has
+	// its own lease, so jobs fail over independently and spread across replicas; every replica
+	// serves gRPC.
+	electors, err := elect.Open(cfg, store)
 	if err != nil {
 		log.Fatalf("[Aggregator] FATAL: Invalid leader election configuration: %v", err)
 	}
-	log.Printf("[Aggregator] Leader election: %s", cfg.Leader.Election)
+	log.Printf("[Aggregator] Leader election: %s (one lease per job, prefix %q)", cfg.Leader.Election, cfg.Leader.LeasePrefix)
 
-	// 3. RabbitMQ transactional outbox publisher.
+	// 3. RabbitMQ transactional outbox publisher: on every replica, or as a leader job when the
+	// store allows a single outbox consumer.
 	pub := broker.NewOutboxPublisher(cfg, store.Outbox)
-	if !store.OutboxSingleConsumer {
+	jobs := map[string]func(ctx context.Context){
+		elect.JobBMKGPoller:   func(ctx context.Context) { ingest.NewBMKGPoller(cfg, store.Hazards, store.Sources).Start(ctx) },
+		elect.JobPVMBGPoller:  func(ctx context.Context) { ingest.NewPVMBGPoller(cfg, store.Hazards, store.Sources).Start(ctx) },
+		elect.JobOutboxPruner: func(ctx context.Context) { broker.RunOutboxPruner(ctx, store.Outbox, cfg.OutboxRetention) },
+	}
+	if store.OutboxSingleConsumer {
+		jobs[elect.JobOutboxPublisher] = pub.Run
+	} else {
 		log.Println("[Aggregator] Starting RabbitMQ Outbox Publisher...")
 		pub.Start(ctx)
 	}
-
-	log.Println("[Aggregator] Waiting for leadership to start pollers (BMKG & PVMBG)...")
-	go elector.Run(ctx, func(ctx context.Context) {
-		var wg sync.WaitGroup
-		wg.Add(3)
-		go func() { defer wg.Done(); ingest.NewBMKGPoller(cfg, store.Hazards, store.Sources).Start(ctx) }()
-		go func() { defer wg.Done(); ingest.NewPVMBGPoller(cfg, store.Hazards, store.Sources).Start(ctx) }()
-		go func() { defer wg.Done(); broker.RunOutboxPruner(ctx, store.Outbox, cfg.OutboxRetention) }()
-		if store.OutboxSingleConsumer {
-			wg.Add(1)
-			go func() { defer wg.Done(); pub.Run(ctx) }()
+	var leaders sync.WaitGroup
+	for job, run := range jobs {
+		leaders.Add(1)
+		go func() { defer leaders.Done(); electors.For(job).Run(ctx, run) }()
+	}
+	// On shutdown, give the electors a moment to stop their jobs and release their leases.
+	defer func() {
+		done := make(chan struct{})
+		go func() { leaders.Wait(); close(done) }()
+		select {
+		case <-done:
+		case <-time.After(5 * time.Second):
+			log.Println("[Aggregator] Leader jobs did not stop within 5s; their leases expire on their own")
 		}
-		wg.Wait()
-	})
+	}()
+	log.Printf("[Aggregator] Campaigning for %d leader jobs...", len(jobs))
 
 	// 4. Initialize Auth JWT Verifier. Discovery and JWKS load in the background (retried until the
 	// issuer behind Envoy answers), so ingestion never waits on auth; only bad config is fatal.

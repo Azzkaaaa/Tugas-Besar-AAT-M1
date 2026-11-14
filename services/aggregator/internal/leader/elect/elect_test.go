@@ -13,20 +13,30 @@ import (
 
 func cfg(election, backend string) *config.Config {
 	return &config.Config{CanonicalStoreBackend: backend, Leader: config.LeaderConfig{
-		Election: election, TTL: 15 * time.Second, RenewEvery: 5 * time.Second, RetryEvery: 5 * time.Second, Margin: 5 * time.Second,
+		Election: election, LeasePrefix: "aggregator", TTL: 15 * time.Second, RenewEvery: 5 * time.Second, RetryEvery: 5 * time.Second, Margin: 5 * time.Second,
 	}}
 }
 
 func TestOpen(t *testing.T) {
 	if e, err := Open(cfg("single", "cassandra"), store()); err != nil {
 		t.Fatal(err)
-	} else if _, ok := e.(leader.Single); !ok {
-		t.Fatalf("single gave %T", e)
+	} else if _, ok := e.For(JobBMKGPoller).(leader.Single); !ok {
+		t.Fatalf("single gave %T", e.For(JobBMKGPoller))
 	}
-	if e, err := Open(cfg("cassandra", "cassandra"), store()); err != nil {
+	e, err := Open(cfg("cassandra", "cassandra"), store())
+	if err != nil {
 		t.Fatal(err)
-	} else if l, ok := e.(*leader.Lease); !ok || l.Name != LeaseName || l.Holder == "" {
-		t.Fatalf("cassandra gave %#v", e)
+	}
+	names := map[string]bool{}
+	for _, job := range []string{JobBMKGPoller, JobPVMBGPoller, JobOutboxPruner, JobOutboxPublisher} {
+		l, ok := e.For(job).(*leader.Lease)
+		if !ok || l.Holder == "" || l.Pool == nil || l.Name != "aggregator-"+job {
+			t.Fatalf("cassandra elector for %s = %#v", job, e.For(job))
+		}
+		names[l.Name] = true
+	}
+	if len(names) != 4 {
+		t.Fatalf("lease names not distinct: %v", names)
 	}
 	if _, err := Open(cfg("postgres", "cassandra"), store()); err == nil || !strings.Contains(err.Error(), "CANONICAL_STORE_BACKEND") {
 		t.Fatalf("postgres elector on cassandra store: %v", err)

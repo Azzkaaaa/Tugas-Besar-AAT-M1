@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"math/rand/v2"
 	"os"
 	"strings"
 	"sync"
@@ -33,7 +34,58 @@ type Config struct {
 	TTL        time.Duration
 	RenewEvery time.Duration
 	Margin     time.Duration
-	Logf       func(format string, args ...any)
+	// Pool is shared by the electors of the process to spread jobs (see leader.Lease.Run).
+	Pool *leader.Pool
+	Logf func(format string, args ...any)
+}
+
+// Electors gives each job its own Lease, named Prefix + "-" + job.
+type Electors struct {
+	Base   Config // LeaseName unused; Pool shared by every job
+	Prefix string
+}
+
+var _ leader.Electors = (*Electors)(nil)
+
+// For returns the elector of job. Config errors were reported by NewElectors.
+func (e *Electors) For(job string) leader.Elector {
+	cfg := e.Base
+	cfg.LeaseName = e.Prefix + "-" + job
+	el, err := New(cfg)
+	if err != nil {
+		return failed{err: err, logf: cfg.Logf}
+	}
+	return el
+}
+
+// NewElectors validates base (with a sample lease name) and returns per-job electors.
+func NewElectors(base Config, prefix string) (*Electors, error) {
+	if prefix == "" {
+		return nil, errors.New("kubernetes electors need a lease name prefix")
+	}
+	if base.Pool == nil {
+		base.Pool = &leader.Pool{}
+	}
+	if base.Logf == nil {
+		base.Logf = log.Printf
+	}
+	probe := base
+	probe.LeaseName = prefix + "-probe"
+	if _, err := New(probe); err != nil {
+		return nil, err
+	}
+	return &Electors{Base: base, Prefix: prefix}, nil
+}
+
+// failed is an elector that never leads, for a config error found late.
+type failed struct {
+	err  error
+	logf func(format string, args ...any)
+}
+
+func (f failed) Run(ctx context.Context, _ func(ctx context.Context)) {
+	f.logf("[Leader] Kubernetes elector unusable: %v", f.err)
+	<-ctx.Done()
 }
 
 // Elector is a leader.Elector on a Kubernetes Lease.
@@ -67,8 +119,9 @@ func New(cfg Config) (*Elector, error) {
 }
 
 // NewFromEnvironment builds the client from the in-cluster service account, or from KUBECONFIG
-// outside a cluster, and defaults the namespace to the service account's.
-func NewFromEnvironment(cfg Config) (*Elector, error) {
+// outside a cluster, defaults the namespace to the service account's, and returns per-job
+// electors with lease names prefix + "-" + job.
+func NewFromEnvironment(cfg Config, prefix string) (*Electors, error) {
 	restCfg, err := rest.InClusterConfig()
 	if err != nil {
 		path := os.Getenv("KUBECONFIG")
@@ -89,22 +142,50 @@ func NewFromEnvironment(cfg Config) (*Elector, error) {
 		}
 		cfg.Namespace = strings.TrimSpace(string(b))
 	}
-	return New(cfg)
+	return NewElectors(cfg, prefix)
 }
 
 // Run leads while client-go holds the Lease. The lease is only released after fn has returned,
-// so the next leader never starts while this one's work is still running.
+// so the next leader never starts while this one's work is still running. Rounds are spaced like
+// leader.Lease attempts (jitter, plus RenewEvery per lease the process already holds), and a round
+// that sees another holder stops at once, so less-loaded replicas take free leases first.
 func (e *Elector) Run(ctx context.Context, fn func(ctx context.Context)) {
+	wait := jitter(e.cfg.RenewEvery)
 	for ctx.Err() == nil {
-		e.runOnce(ctx, fn)
-		select {
-		case <-ctx.Done():
-		case <-time.After(e.cfg.RenewEvery):
+		if !sleep(ctx, wait) {
+			return
+		}
+		if held := e.cfg.Pool.Held(); held > 0 && !sleep(ctx, e.cfg.RenewEvery*time.Duration(held)) {
+			return
+		}
+		if e.runOnce(ctx, fn) {
+			wait = 0
+		} else {
+			wait = e.cfg.RenewEvery + jitter(e.cfg.RenewEvery)
 		}
 	}
 }
 
-func (e *Elector) runOnce(ctx context.Context, fn func(ctx context.Context)) {
+func sleep(ctx context.Context, d time.Duration) bool {
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-ctx.Done():
+		return false
+	case <-t.C:
+		return true
+	}
+}
+
+func jitter(d time.Duration) time.Duration {
+	if d <= 0 {
+		return 0
+	}
+	return time.Duration(rand.Int64N(int64(d)))
+}
+
+// runOnce runs one round and reports whether this process led in it.
+func (e *Elector) runOnce(ctx context.Context, fn func(ctx context.Context)) bool {
 	runCtx, stopRun := context.WithCancel(context.Background())
 	defer stopRun()
 	var mu sync.Mutex
@@ -119,6 +200,8 @@ func (e *Elector) runOnce(ctx context.Context, fn func(ctx context.Context)) {
 		ReleaseOnCancel: true,
 		Callbacks: leaderelection.LeaderCallbacks{
 			OnStartedLeading: func(leadCtx context.Context) {
+				e.cfg.Pool.Add(1)
+				defer e.cfg.Pool.Add(-1)
 				done := make(chan struct{})
 				mu.Lock()
 				fnDone = done
@@ -133,6 +216,14 @@ func (e *Elector) runOnce(ctx context.Context, fn func(ctx context.Context)) {
 				// Work is over (shutdown, lost lease, or it returned): release the lease now.
 				stopRun()
 			},
+			OnNewLeader: func(identity string) {
+				mu.Lock()
+				leading := fnDone != nil
+				mu.Unlock()
+				if identity != e.cfg.Identity && !leading {
+					stopRun() // held elsewhere: back off instead of polling every retry period
+				}
+			},
 			OnStoppedLeading: func() {
 				e.cfg.Logf("[Leader] %s stopped leading Kubernetes lease %s/%s", e.cfg.Identity, e.cfg.Namespace, e.cfg.LeaseName)
 			},
@@ -140,7 +231,7 @@ func (e *Elector) runOnce(ctx context.Context, fn func(ctx context.Context)) {
 	})
 	if err != nil {
 		e.cfg.Logf("[Leader] Invalid Kubernetes leader election config: %v", err)
-		return
+		return false
 	}
 
 	// Shutting down before or without leading: stop campaigning.
@@ -161,4 +252,5 @@ func (e *Elector) runOnce(ctx context.Context, fn func(ctx context.Context)) {
 	if done != nil {
 		<-done
 	}
+	return done != nil
 }

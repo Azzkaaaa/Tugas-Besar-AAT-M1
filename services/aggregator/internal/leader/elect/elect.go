@@ -1,4 +1,5 @@
-// Package elect builds the leader elector selected by configuration (LEADER_ELECTION).
+// Package elect builds the leader electors selected by configuration (LEADER_ELECTION): one
+// lease per leader-only job.
 package elect
 
 import (
@@ -10,38 +11,46 @@ import (
 	"github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/aggregator/internal/storage/open"
 )
 
-// LeaseName names the ingest leader's lease in the store-backed electors.
-const LeaseName = "aggregator-ingest"
+// Leader-only jobs. Each has its own lease ("<LEADER_LEASE_PREFIX>-<job>"), so it fails over on
+// its own and may lead on a different replica than the others.
+const (
+	JobBMKGPoller      = "bmkg-poller"
+	JobPVMBGPoller     = "pvmbg-poller"
+	JobOutboxPruner    = "outbox-pruner"
+	JobOutboxPublisher = "outbox-publisher"
+)
 
-// Open returns the configured elector. The postgres and cassandra electors use the canonical
-// store's lease table, so they need that store backend.
-func Open(cfg *config.Config, store *open.Store) (leader.Elector, error) {
+// Open returns the configured electors. The postgres and cassandra electors use the canonical
+// store's lease table, so they need that store backend. All electors of the process share one
+// leader.Pool, which spreads jobs across replicas.
+func Open(cfg *config.Config, store *open.Store) (leader.Electors, error) {
 	lc := cfg.Leader
 	identity := lc.Identity
 	if identity == "" {
 		identity = leader.Identity()
 	}
+	pool := &leader.Pool{}
 	switch lc.Election {
 	case "single":
-		return leader.Single{}, nil
+		return leader.SingleElectors{}, nil
 	case "postgres", "cassandra":
 		if lc.Election != cfg.CanonicalStoreBackend {
 			return nil, fmt.Errorf("LEADER_ELECTION=%s needs CANONICAL_STORE_BACKEND=%s (it uses the store's lease table), got %s",
 				lc.Election, lc.Election, cfg.CanonicalStoreBackend)
 		}
-		l := &leader.Lease{
-			Store: store.Leases, Name: LeaseName, Holder: identity,
-			TTL: lc.TTL, RenewEvery: lc.RenewEvery, RetryEvery: lc.RetryEvery, Margin: lc.Margin,
+		e := &leader.LeaseElectors{
+			Store: store.Leases, Prefix: lc.LeasePrefix, Holder: identity,
+			TTL: lc.TTL, RenewEvery: lc.RenewEvery, RetryEvery: lc.RetryEvery, Margin: lc.Margin, Pool: pool,
 		}
-		if err := l.Validate(); err != nil {
+		if err := e.Validate(); err != nil {
 			return nil, err
 		}
-		return l, nil
+		return e, nil
 	case "kubernetes":
 		return kubernetes.NewFromEnvironment(kubernetes.Config{
-			Namespace: lc.K8sNamespace, LeaseName: lc.K8sLeaseName, Identity: identity,
-			TTL: lc.TTL, RenewEvery: lc.RenewEvery, Margin: lc.Margin,
-		})
+			Namespace: lc.K8sNamespace, Identity: identity,
+			TTL: lc.TTL, RenewEvery: lc.RenewEvery, Margin: lc.Margin, Pool: pool,
+		}, lc.LeasePrefix)
 	}
 	return nil, fmt.Errorf("unknown leader election %q", lc.Election)
 }

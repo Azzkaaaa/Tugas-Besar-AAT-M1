@@ -140,9 +140,12 @@ Konfigurasi (dibaca sama oleh aggregator, `storecopy`, dan `storeadmin`):
 
 ## Leader election
 
-Polling BMKG/PVMBG, pruner outbox, dan (di Cassandra) publisher outbox hanya
-berjalan di satu replika: leader. gRPC dilayani semua replika. Abstraksinya ada di
-`internal/leader` (`Elector`), dipilih dengan `LEADER_ELECTION`:
+Pekerjaan berikut masing-masing hanya berjalan di satu replika, dengan lease
+sendiri: `bmkg-poller`, `pvmbg-poller`, `outbox-pruner`, dan (di Cassandra)
+`outbox-publisher`. Nama lease `<LEADER_LEASE_PREFIX>-<job>` (default prefix
+`aggregator`). Tiap pekerjaan failover sendiri dan bisa dipimpin replika berbeda.
+gRPC dilayani semua replika. Abstraksinya ada di `internal/leader` (`Electors` →
+`Elector` per pekerjaan), dipilih dengan `LEADER_ELECTION`:
 
 | Nilai | Mekanisme |
 | --- | --- |
@@ -155,8 +158,16 @@ Default mengikuti `CANONICAL_STORE_BACKEND`. Waktu lease: `LEADER_LEASE_TTL_MS`
 (15000), `LEADER_RENEW_INTERVAL_MS` (5000), `LEADER_RETRY_INTERVAL_MS` (5000),
 `LEADER_FENCE_MARGIN_MS` (5000). Identitas replika: `LEADER_IDENTITY`, lalu
 `POD_NAME`, lalu hostname-pid-acak. Kubernetes: `LEADER_K8S_NAMESPACE` (default
-namespace service account), `LEADER_K8S_LEASE_NAME` (default `aggregator-ingest`),
-`KUBECONFIG` di luar cluster.
+namespace service account), satu objek Lease per pekerjaan, `KUBECONFIG` di luar
+cluster.
+
+- **Penyebaran sederhana.** Sebelum tiap percobaan mengambil lease, replika
+  menunggu jitter acak (< `LEADER_RETRY_INTERVAL_MS`) ditambah satu interval retry
+  per lease yang sudah ia pegang, sehingga lease kosong cenderung jatuh ke replika
+  yang lebih sedikit bebannya. Tanpa koordinator. Replika tunggal tetap mengambil
+  semua lease (sekitar interval retry × jumlah lease saat start). Lease yang sudah
+  dipegang tidak dipindahkan (tidak ada rebalancing); restart mendistribusikan
+  ulang.
 
 - **Lease bertahan setelah putus.** Lease tidak dilepas saat koneksi leader
   putus, hanya kedaluwarsa setelah TTL. Leader menghentikan dirinya sendiri pada

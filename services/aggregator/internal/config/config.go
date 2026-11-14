@@ -50,9 +50,10 @@ type LeaderConfig struct {
 	Margin     time.Duration
 	// Identity names this replica (LEADER_IDENTITY, else POD_NAME, else hostname-pid-random).
 	Identity string
-	// Kubernetes Lease: namespace (default: the service account's) and lease name.
+	// LeasePrefix names the leases: one per leader job, "<prefix>-<job>" (LEADER_LEASE_PREFIX).
+	LeasePrefix string
+	// K8sNamespace is the Kubernetes Lease namespace (default: the service account's).
 	K8sNamespace string
-	K8sLeaseName string
 }
 
 // CassandraConfig configures the cassandra canonical store backend. LoadCassandra reads it from
@@ -236,7 +237,7 @@ func Load() (*Config, error) {
 		Margin:       leaderMS("LEADER_FENCE_MARGIN_MS", 5*time.Second),
 		Identity:     os.Getenv("LEADER_IDENTITY"),
 		K8sNamespace: os.Getenv("LEADER_K8S_NAMESPACE"),
-		K8sLeaseName: envOr("LEADER_K8S_LEASE_NAME", "aggregator-ingest"),
+		LeasePrefix:  envOr("LEADER_LEASE_PREFIX", "aggregator"),
 	}
 	switch cfg.Leader.Election {
 	case "postgres", "cassandra", "kubernetes", "single":

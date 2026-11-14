@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"math/rand/v2"
 	"time"
 )
 
@@ -24,6 +25,9 @@ type Lease struct {
 	RenewEvery time.Duration
 	RetryEvery time.Duration
 	Margin     time.Duration
+	// Pool, when set, is shared by all electors of the process: it counts the leases held, and a
+	// process holding more waits longer before asking for another (see Run).
+	Pool *Pool
 	// Logf logs leadership changes (log.Printf when nil).
 	Logf func(format string, args ...any)
 }
@@ -60,8 +64,20 @@ func (l *Lease) logf(format string, args ...any) {
 	log.Printf(format, args...)
 }
 
+// Run campaigns for the lease until ctx is done. Attempts are spread out so that jobs under
+// separate leases tend to land on different replicas: each attempt waits a random jitter below
+// RetryEvery (plus RetryEvery after a refusal), and then RetryEvery more for every lease this
+// process already holds, checked just before asking, so a less-loaded replica asks first. A lone
+// replica still gets every lease, within about RetryEvery x the number of leases.
 func (l *Lease) Run(ctx context.Context, fn func(ctx context.Context)) {
+	wait := jitter(l.RetryEvery)
 	for ctx.Err() == nil {
+		if !sleep(ctx, wait) {
+			return
+		}
+		if held := l.Pool.Held(); held > 0 && !sleep(ctx, l.RetryEvery*time.Duration(held)) {
+			return
+		}
 		sent := time.Now()
 		ok, err := l.Store.Acquire(ctx, l.Name, l.Holder, l.TTL)
 		if err != nil && ctx.Err() == nil {
@@ -69,18 +85,38 @@ func (l *Lease) Run(ctx context.Context, fn func(ctx context.Context)) {
 		}
 		if ok && err == nil {
 			l.lead(ctx, sent, fn)
-			continue // retry at once after losing leadership
+			wait = 0 // retry at once after losing leadership
+			continue
 		}
-		select {
-		case <-ctx.Done():
-		case <-time.After(l.RetryEvery):
-		}
+		wait = l.RetryEvery + jitter(l.RetryEvery)
 	}
+}
+
+// sleep waits d or until ctx is done; it reports whether ctx is still live.
+func sleep(ctx context.Context, d time.Duration) bool {
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-ctx.Done():
+		return false
+	case <-t.C:
+		return true
+	}
+}
+
+// jitter is a random duration in [0, d).
+func jitter(d time.Duration) time.Duration {
+	if d <= 0 {
+		return 0
+	}
+	return time.Duration(rand.Int64N(int64(d)))
 }
 
 // lead runs fn until the lease is lost, the deadline passes, fn returns or ctx is done, then
 // releases the lease.
 func (l *Lease) lead(ctx context.Context, granted time.Time, fn func(ctx context.Context)) {
+	l.Pool.Add(1)
+	defer l.Pool.Add(-1)
 	l.logf("[Leader] %s acquired lease %s", l.Holder, l.Name)
 	leaderCtx, cancel := context.WithCancel(ctx)
 	done := make(chan struct{})

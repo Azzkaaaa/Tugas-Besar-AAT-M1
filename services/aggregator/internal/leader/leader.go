@@ -13,8 +13,10 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"os"
+	"sync/atomic"
 	"time"
 )
 
@@ -33,6 +35,66 @@ type LeaseStore interface {
 	Renew(ctx context.Context, name, holder string, ttl time.Duration) (bool, error)
 	// Release gives the lease up when holder holds it.
 	Release(ctx context.Context, name, holder string) error
+}
+
+// Electors gives each leader-only job its own elector, so jobs fail over independently and can
+// lead on different replicas.
+type Electors interface {
+	For(job string) Elector
+}
+
+// Pool counts the leases held by this process; electors of one process share it to spread jobs
+// across replicas. A nil Pool counts nothing.
+type Pool struct{ held atomic.Int32 }
+
+// Held returns how many leases the process holds.
+func (p *Pool) Held() int {
+	if p == nil {
+		return 0
+	}
+	return int(p.held.Load())
+}
+
+// Add records n more (or, negative, fewer) leases held. Electors call it.
+func (p *Pool) Add(n int32) {
+	if p != nil {
+		p.held.Add(n)
+	}
+}
+
+// SingleElectors elects this process for every job.
+type SingleElectors struct{}
+
+func (SingleElectors) For(string) Elector { return Single{} }
+
+// LeaseElectors gives each job a Lease named Prefix + "-" + job, all on one store and Pool.
+type LeaseElectors struct {
+	Store      LeaseStore
+	Prefix     string
+	Holder     string
+	TTL        time.Duration
+	RenewEvery time.Duration
+	RetryEvery time.Duration
+	Margin     time.Duration
+	Pool       *Pool
+}
+
+// For returns the lease elector of job.
+func (e *LeaseElectors) For(job string) Elector { return e.lease(job) }
+
+func (e *LeaseElectors) lease(job string) *Lease {
+	return &Lease{
+		Store: e.Store, Name: e.Prefix + "-" + job, Holder: e.Holder,
+		TTL: e.TTL, RenewEvery: e.RenewEvery, RetryEvery: e.RetryEvery, Margin: e.Margin, Pool: e.Pool,
+	}
+}
+
+// Validate checks the shared settings.
+func (e *LeaseElectors) Validate() error {
+	if e.Prefix == "" {
+		return errors.New("lease electors need a lease name prefix")
+	}
+	return e.lease("validate").Validate()
 }
 
 // Single is the elector of a deliberately single-replica deployment: always leader.

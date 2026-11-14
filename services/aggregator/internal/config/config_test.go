@@ -68,7 +68,7 @@ func TestLeaderConfig(t *testing.T) {
 		t.Fatal(err)
 	}
 	if cfg.Leader.Election != "cassandra" || cfg.Leader.TTL != 15*time.Second || cfg.Leader.Margin != 5*time.Second ||
-		cfg.Leader.K8sLeaseName != "aggregator-ingest" {
+		cfg.Leader.LeasePrefix != "aggregator" {
 		t.Fatalf("leader defaults = %+v", cfg.Leader)
 	}
 	t.Setenv("LEADER_ELECTION", "Kubernetes")
