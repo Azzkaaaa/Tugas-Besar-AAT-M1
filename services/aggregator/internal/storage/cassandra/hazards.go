@@ -56,9 +56,10 @@ func msUTC(t time.Time) time.Time {
 // Writing revision r again gives the same rows and the same event ID. The List row's revision
 // marks a revision as written out; one that is not is written by the next ApplyRevision.
 type stored struct {
-	rec    *domain.HazardRecord
-	bucket time.Time // bucket of the current List row
-	hash   string
+	rec      *domain.HazardRecord
+	bucket   time.Time // bucket of the current List row
+	hash     string
+	sequence *int64
 	// prevBucket/prevOccurredAt locate the List row of the previous revision, which writing this
 	// one out deletes when the record moved. Zero for revision 1.
 	prevBucket, prevOccurredAt time.Time
@@ -69,6 +70,18 @@ const maxClaimAttempts = 5
 
 // ApplyRevision implements storage.HazardStore.
 func (s hazards) ApplyRevision(ctx context.Context, rev *domain.HazardRecord,
+	newEvent func(saved *domain.HazardRecord) (storage.OutboxEvent, error),
+) (*domain.HazardRecord, bool, error) {
+	return s.applyRevision(ctx, rev, 0, newEvent)
+}
+
+func (s hazards) ApplyIngestRevision(ctx context.Context, rev *domain.HazardRecord, sequence int64,
+	newEvent func(saved *domain.HazardRecord) (storage.OutboxEvent, error),
+) (*domain.HazardRecord, bool, error) {
+	return s.applyRevision(ctx, rev, sequence, newEvent)
+}
+
+func (s hazards) applyRevision(ctx context.Context, rev *domain.HazardRecord, sequence int64,
 	newEvent func(saved *domain.HazardRecord) (storage.OutboxEvent, error),
 ) (*domain.HazardRecord, bool, error) {
 	h := *rev
@@ -97,9 +110,9 @@ func (s hazards) ApplyRevision(ctx context.Context, rev *domain.HazardRecord,
 				return nil, false, err
 			}
 			bucket := s.db.bucketOf(h.OccurredAt)
-			applied, err := s.db.session.Query(`INSERT INTO hazards_by_id (`+storedColumns+`)
-				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) IF NOT EXISTS`,
-				storedValues(&h, bucket, hash, time.Time{}, time.Time{})...).WithContext(ctx).MapScanCAS(map[string]any{})
+			applied, err := s.db.session.Query(`INSERT INTO hazards_by_id (`+storedColumns+`, ingest_sequence)
+				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) IF NOT EXISTS`,
+				append(storedValues(&h, bucket, hash, time.Time{}, time.Time{}), sequence)...).WithContext(ctx).MapScanCAS(map[string]any{})
 			if err != nil {
 				return nil, false, fmt.Errorf("claim hazard failed: %w", err)
 			}
@@ -109,23 +122,19 @@ func (s hazards) ApplyRevision(ctx context.Context, rev *domain.HazardRecord,
 			return s.writeOut(ctx, &h, bucket, time.Time{}, time.Time{}, &ev)
 		}
 
+		priorSequence := int64(0)
+		if st.sequence != nil {
+			priorSequence = *st.sequence
+		}
+		if sequence > 0 && priorSequence > sequence {
+			return st.rec, false, nil
+		}
 		h.IngestedAt = st.rec.IngestedAt
 		written, err := s.writtenOut(ctx, st)
 		if err != nil {
 			return nil, false, err
 		}
-		if st.hash == hash {
-			h.Revision = st.rec.Revision
-			if written {
-				return &h, false, nil // up to date
-			}
-			// Committed but not written out (yet): write it, with that revision's event ID.
-			ev, err := buildEvent(st.rec, newEvent)
-			if err != nil {
-				return nil, false, err
-			}
-			return s.writeOut(ctx, st.rec, st.bucket, st.prevBucket, st.prevOccurredAt, &ev)
-		}
+		repaired := !written
 		if !written {
 			// Write the committed revision out before replacing it, so its List row exists for the
 			// next revision to move.
@@ -137,6 +146,20 @@ func (s hazards) ApplyRevision(ctx context.Context, rev *domain.HazardRecord,
 				return nil, false, err
 			}
 		}
+		if st.hash == hash || (sequence > 0 && priorSequence == sequence) {
+			if sequence > priorSequence {
+				applied, err := s.db.session.Query(`UPDATE hazards_by_id SET ingest_sequence = ?
+					WHERE hazard_id = ? IF revision = ? AND ingest_sequence = ?`, sequence,
+					h.HazardID, st.rec.Revision, st.sequence).WithContext(ctx).MapScanCAS(map[string]any{})
+				if err != nil {
+					return nil, false, err
+				}
+				if !applied {
+					continue
+				}
+			}
+			return st.rec, repaired, nil
+		}
 
 		h.Revision = st.rec.Revision + 1
 		ev, err := buildEvent(&h, newEvent)
@@ -146,11 +169,11 @@ func (s hazards) ApplyRevision(ctx context.Context, rev *domain.HazardRecord,
 		bucket := s.db.bucketOf(h.OccurredAt)
 		applied, err := s.db.session.Query(`UPDATE hazards_by_id SET
 				hazard_type = ?, severity = ?, area_name = ?, latitude = ?, longitude = ?, occurred_at = ?,
-				attributes = ?, revision = ?, bucket = ?, content_hash = ?, prev_bucket = ?, prev_occurred_at = ?
-			WHERE hazard_id = ? IF revision = ?`,
+				attributes = ?, revision = ?, bucket = ?, content_hash = ?, prev_bucket = ?, prev_occurred_at = ?, ingest_sequence = ?
+			WHERE hazard_id = ? IF revision = ? AND ingest_sequence = ?`,
 			h.HazardType, h.Severity, h.AreaName, h.Latitude, h.Longitude, h.OccurredAt,
-			mustJSON(h.Attributes), h.Revision, bucket, hash, st.bucket, st.rec.OccurredAt,
-			h.HazardID, st.rec.Revision).WithContext(ctx).MapScanCAS(map[string]any{})
+			mustJSON(h.Attributes), h.Revision, bucket, hash, st.bucket, st.rec.OccurredAt, max(sequence, priorSequence),
+			h.HazardID, st.rec.Revision, st.sequence).WithContext(ctx).MapScanCAS(map[string]any{})
 		if err != nil {
 			return nil, false, fmt.Errorf("claim hazard revision failed: %w", err)
 		}
@@ -194,12 +217,12 @@ func mustJSON(attrs map[string]any) string {
 func (s hazards) readStored(ctx context.Context, hazardID string, serial bool) (*stored, error) {
 	var st stored
 	var hash *string
-	q := s.db.session.Query(`SELECT `+storedColumns+` FROM hazards_by_id WHERE hazard_id = ?`, hazardID).WithContext(ctx)
+	q := s.db.session.Query(`SELECT `+storedColumns+`, ingest_sequence FROM hazards_by_id WHERE hazard_id = ?`, hazardID).WithContext(ctx)
 	if serial {
 		q = q.Consistency(gocql.LocalSerial)
 	}
 	rec, err := scanHazard(func(dest ...any) error {
-		return q.Scan(append(dest, &st.bucket, &hash, &st.prevBucket, &st.prevOccurredAt)...)
+		return q.Scan(append(dest, &st.bucket, &hash, &st.prevBucket, &st.prevOccurredAt, &st.sequence)...)
 	})
 	if errors.Is(err, gocql.ErrNotFound) {
 		return nil, nil

@@ -78,7 +78,10 @@ func run(cfg config.Config) error {
 	}
 	var clients handlers.Clients
 	for address, assign := range map[string]func(*grpc.ClientConn){
-		cfg.AggregatorAddress:   func(c *grpc.ClientConn) { clients.Aggregator = aggregatorv1.NewAggregatorServiceClient(c) },
+		cfg.AggregatorAddress: func(c *grpc.ClientConn) {
+			clients.Aggregator = aggregatorv1.NewAggregatorServiceClient(c)
+			clients.FieldReports = aggregatorv1.NewFieldReportServiceClient(c)
+		},
 		cfg.NotificationAddress: func(c *grpc.ClientConn) { clients.Notification = notificationv1.NewDangerNotificationServiceClient(c) },
 		cfg.WebhookAddress:      func(c *grpc.ClientConn) { clients.Webhook = webhookv1.NewWebhookServiceClient(c) },
 		cfg.FeedAddress:         func(c *grpc.ClientConn) { clients.Feed = feedv1.NewEventFeedServiceClient(c) },

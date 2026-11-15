@@ -62,6 +62,7 @@ func New(opts Options) http.Handler {
 	router := chi.NewRouter()
 	router.Use(spanRoute, g.recoverer, g.correlation)
 	router.Get("/healthz", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) })
+	router.Post("/field-reports", g.submitFieldReport(opts.Clients.FieldReports, opts.RequestTimeout))
 	router.NotFound(func(w http.ResponseWriter, r *http.Request) {
 		g.write(w, r, nil, problem.New(http.StatusNotFound, "No API operation matches this path."))
 	})

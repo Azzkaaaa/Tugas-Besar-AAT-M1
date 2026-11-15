@@ -24,6 +24,7 @@ var _ gw.StrictServerInterface = (*Handlers)(nil)
 // Clients are the backend gRPC clients.
 type Clients struct {
 	Aggregator   aggregatorv1.AggregatorServiceClient
+	FieldReports aggregatorv1.FieldReportServiceClient
 	Notification notificationv1.DangerNotificationServiceClient
 	Webhook      webhookv1.WebhookServiceClient
 	Feed         feedv1.EventFeedServiceClient

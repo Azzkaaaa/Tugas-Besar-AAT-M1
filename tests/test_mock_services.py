@@ -238,7 +238,7 @@ class MockContractTests(unittest.TestCase):
                     self.assert_problem(service.request(path + "?" + query), 400)
 
     def test_admin_strict_types_and_malformed_json(self):
-        for body in ({"version": True}, {"version": "2"}, {"version": 2.0}, {"version": 3},
+        for body in ({"version": True}, {"version": "2"}, {"version": 2.0}, {"version": 6},
                      {"version": 2, "extra": 1}, {}, []):
             self.assert_problem(self.pvmbg.request("/admin/schema-version", method="POST", body=body), 400)
         for body in ({"enabled": 1}, {"enabled": "false"}, {"enabled": False, "extra": 1}, {}):
@@ -246,6 +246,23 @@ class MockContractTests(unittest.TestCase):
         for raw in (b'{', b'{"version":1,"version":2}', b'{"version":NaN}'):
             self.assert_problem(self.pvmbg.request("/admin/schema-version", method="POST", raw=raw,
                                                  headers={"Content-Type": "application/json"}), 400)
+
+    def test_incompatible_schema_modes_are_selectable_at_runtime(self):
+        for version in (3, 4, 5):
+            with self.subTest(version=version):
+                self.assertEqual(self.pvmbg.admin("schema-version", {"version": version}), {"version": version})
+                status, headers, body = self.pvmbg.request("/volcanic-reports")
+                self.assertEqual(status, 200)
+                self.assertEqual(headers["X-PVMBG-Schema-Version"], str(version))
+                first = body["items"][0]
+                if version == 3:
+                    self.assertIn("volcano_alert", first)
+                    self.assertNotIn("alert_level", first)
+                elif version == 4:
+                    self.assertIsInstance(first["eruption_count_24h"], str)
+                else:
+                    self.assertEqual(first["alert_level"], "Normal")
+                    self.assertNotIn("ash_column_height_m", first)
 
     def test_outage_recovery_and_auth_precedence(self):
         original = {r["report_id"] for r in self.pvmbg.items("/volcanic-reports")}

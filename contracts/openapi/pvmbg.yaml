@@ -72,7 +72,7 @@ paths:
               description: Active raw payload schema; independent of OpenAPI info.version.
               schema:
                 type: integer
-                enum: [1, 2]
+                enum: [1, 2, 3, 4, 5]
           content:
             application/json:
               schema:
@@ -118,7 +118,11 @@ paths:
       operationId: setPvmbgSchemaVersion
       summary: Switch the active raw report schema at runtime
       description: |
-        Idempotently set v1 or v2 without restarting either PVMBG or BNPB. The
+        Idempotently set v1 through v5 without restarting either PVMBG or BNPB.
+        Versions 3–5 intentionally violate the baseline item schema. Version 3
+        emits volcano_alert in place of alert_level. Version 4 represents
+        eruption_count_24h as a decimal string. Version 5 omits ash_column_height_m
+        on Normal reports with zero height. The
         value survives until changed or the mock process restarts (initial v1).
         This endpoint remains callable during injected outage and applies the
         same PVMBG bearer authentication as data endpoints.
@@ -307,7 +311,7 @@ components:
       properties:
         version:
           type: integer
-          enum: [1, 2]
+          enum: [1, 2, 3, 4, 5]
     OutageState:
       type: object
       additionalProperties: false

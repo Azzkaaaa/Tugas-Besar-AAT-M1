@@ -5,8 +5,8 @@ use crate::config::Config;
 /// Single source of the M1 permission matrix, in precedence order. Zitadel appends these
 /// claims to userinfo, introspection and JWT access tokens through the Actions v2 target.
 const SCOPES_BY_ROLE: [(&str, &[&str]); 3] = [
-    ("BNPB_INTERNAL", &["hazards:read:summary", "hazards:read:full", "notifications:read", "webhooks:read", "webhooks:write"]),
-    ("FIELD_TEAM", &["hazards:read:summary", "hazards:read:full", "notifications:read", "webhooks:read", "webhooks:write"]),
+    ("BNPB_INTERNAL", &["hazards:read:summary", "hazards:read:full", "notifications:read", "webhooks:read", "webhooks:write", "ingest:inspect", "ingest:replay", "field-reports:read"]),
+    ("FIELD_TEAM", &["hazards:read:summary", "hazards:read:full", "notifications:read", "webhooks:read", "webhooks:write", "field-reports:write"]),
     ("MEDIA", &["hazards:read:summary", "notifications:read", "webhooks:read"]),
 ];
 const ACTIVE_GRANT: i64 = 1; // domain.UserGrantStateActive

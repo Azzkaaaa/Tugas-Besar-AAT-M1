@@ -377,8 +377,12 @@ services:
       OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-lgtm:4318
       OTEL_EXPORTER_OTLP_PROTOCOL: http/protobuf
       OTEL_SERVICE_NAME: aggregator-service
+      AUDIT_API_TOKEN: ${AUDIT_API_TOKEN:-}
+      INGEST_MAX_RESPONSE_BYTES: ${INGEST_MAX_RESPONSE_BYTES:-16777216}
+      PVMBG_SCHEMA_ADAPTERS: ${PVMBG_SCHEMA_ADAPTERS:-false}
     ports:
       - "9091:9091"
+      - "127.0.0.1:9092:9092"
     depends_on:
       aggregator-db:
         condition: service_healthy
@@ -426,6 +430,25 @@ services:
       timeout: 10s
       retries: 12
       start_period: 60s
+
+  field-report-worker:
+    profiles: [problem3]
+    build:
+      context: .
+      dockerfile: services/aggregator/Dockerfile
+    environment:
+      AGGREGATOR_MODE: field-report-worker
+      CANONICAL_STORE_CASSANDRA_HOSTS: aggregator-cassandra.local:9042
+      CANONICAL_STORE_CASSANDRA_KEYSPACE: bnpb_canonical
+      CANONICAL_STORE_CASSANDRA_BUCKET_PERIOD: ${AGGREGATOR_CASSANDRA_BUCKET_PERIOD:-1m}
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-lgtm:4318
+      OTEL_EXPORTER_OTLP_PROTOCOL: http/protobuf
+      OTEL_SERVICE_NAME: field-report-worker
+    depends_on:
+      aggregator-cassandra:
+        condition: service_healthy
+    restart: unless-stopped
+    networks: [bnpb_net]
 
   aggregator-db:
     image: postgres:17

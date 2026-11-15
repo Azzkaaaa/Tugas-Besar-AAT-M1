@@ -4,9 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
-	"net/url"
 	"time"
 
 	"github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/aggregator/internal/config"
@@ -20,11 +18,14 @@ import (
 )
 
 type PVMBGPoller struct {
-	cfg     *config.Config
-	hazards storage.HazardStore
-	sources storage.SourceStateStore
-	client  *http.Client
+	cfg      *config.Config
+	hazards  storage.HazardStore
+	sources  storage.SourceStateStore
+	client   *http.Client
+	pipeline *Pipeline
 }
+
+func (p *PVMBGPoller) SetPipeline(pipeline *Pipeline) { p.pipeline = pipeline }
 
 func NewPVMBGPoller(cfg *config.Config, hazards storage.HazardStore, sources storage.SourceStateStore) *PVMBGPoller {
 	return &PVMBGPoller{
@@ -91,12 +92,46 @@ func (p *PVMBGPoller) poll(ctx context.Context) error {
 	}
 
 	var watermark time.Time
-	if state, err := p.sources.Get(ctxPoll, domain.SourceKeyPVMBGVolcanic); err == nil {
+	state, stateErr := p.sources.Get(ctxPoll, domain.SourceKeyPVMBGVolcanic)
+	if stateErr == nil {
 		watermark = state.Watermark
 	}
 	fail := func(err error) {
 		recordPollMetrics(err, 0)
 		_ = p.sources.RecordFailure(ctxPoll, domain.SourceKeyPVMBGVolcanic, err.Error())
+	}
+	if p.pipeline != nil {
+		if stateErr != nil {
+			fail(stateErr)
+			return nil
+		}
+		response, err := p.volcanicResponse(ctxPoll, watermark, corrID)
+		var latest time.Time
+		if err == nil {
+			var received incoming
+			received, err = p.pipeline.receive(ctxPoll, response, domain.SourceKeyPVMBGVolcanic, formatVolcanic, corrID)
+			if err == nil {
+				latest, err = p.pipeline.stage(ctxPoll, received, nil)
+			}
+		}
+		count, processErr := p.pipeline.process(ctxPoll, domain.SourceKeyPVMBGVolcanic)
+		if err != nil {
+			fail(err)
+			return err
+		}
+		if processErr != nil {
+			fail(processErr)
+			return nil
+		}
+		if latest.After(watermark) {
+			watermark = latest
+		}
+		if err := p.sources.RecordSuccess(ctxPoll, domain.SourceKeyPVMBGVolcanic, watermark); err != nil {
+			fail(err)
+			return nil
+		}
+		recordPollMetrics(nil, count)
+		return nil
 	}
 
 	reports, err := p.fetchVolcanicReports(ctxPoll, watermark, corrID)
@@ -121,28 +156,11 @@ func (p *PVMBGPoller) poll(ctx context.Context) error {
 }
 
 func (p *PVMBGPoller) fetchVolcanicReports(ctx context.Context, since time.Time, corrID string) ([]*PVMBGVolcanicRaw, error) {
-	reqURL := fmt.Sprintf("%s/volcanic-reports", p.cfg.PVMBGBaseURL)
-	if !since.IsZero() {
-		reqURL += "?since=" + url.QueryEscape(since.Format(time.RFC3339))
-	}
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL, nil)
+	resp, err := p.volcanicResponse(ctx, since, corrID)
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("Authorization", "Bearer "+p.cfg.PVMBGBearerToken)
-	req.Header.Set("X-Correlation-ID", corrID)
-
-	resp, err := p.client.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("PVMBG unreachable or timeout: %w", err)
-	}
 	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("PVMBG volcanic endpoint returned HTTP %d: %s", resp.StatusCode, string(body))
-	}
 
 	type listResponse struct {
 		Items []*PVMBGVolcanicRaw `json:"items"`
@@ -152,4 +170,8 @@ func (p *PVMBGPoller) fetchVolcanicReports(ctx context.Context, since time.Time,
 		return nil, fmt.Errorf("failed decoding PVMBG response: %w", err)
 	}
 	return res.Items, nil
+}
+
+func (p *PVMBGPoller) volcanicResponse(ctx context.Context, since time.Time, corrID string) (*http.Response, error) {
+	return fetchSource(ctx, p.client, p.cfg.PVMBGBaseURL, "/volcanic-reports", "Authorization", "Bearer "+p.cfg.PVMBGBearerToken, since, corrID)
 }

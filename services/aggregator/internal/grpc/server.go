@@ -26,8 +26,11 @@ type Server struct {
 	hazards storage.HazardStore
 	sources storage.SourceStateStore
 	auth    *auth.JWTVerifier
+	reports storage.FieldReports
 	aggregatorv1.UnimplementedAggregatorServiceServer
 }
+
+func (s *Server) SetFieldReports(reports storage.FieldReports) { s.reports = reports }
 
 func NewServer(cfg *config.Config, hazards storage.HazardStore, sources storage.SourceStateStore, verifier *auth.JWTVerifier) *Server {
 	return &Server{cfg: cfg, hazards: hazards, sources: sources, auth: verifier}
@@ -48,6 +51,7 @@ func (s *Server) Start(ctx context.Context) error {
 	)
 	// register service implementation.
 	aggregatorv1.RegisterAggregatorServiceServer(grpcSrv, s)
+	aggregatorv1.RegisterFieldReportServiceServer(grpcSrv, fieldReportService{store: s.reports})
 	healthSrv := health.NewServer()
 	healthSrv.SetServingStatus("", healthpb.HealthCheckResponse_SERVING)
 	healthpb.RegisterHealthServer(grpcSrv, healthSrv)

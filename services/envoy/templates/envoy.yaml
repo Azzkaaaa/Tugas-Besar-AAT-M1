@@ -116,6 +116,9 @@ static_resources:
                         - match: { prefix: "${API_ROUTE_PREFIX}" }
                           route: { cluster: api_gateway, timeout: 0s }
 
+                        - match: { path: /field-reports }
+                          route: { cluster: api_gateway, timeout: 10s }
+
                         - match: { prefix: / }
                           route: { cluster: spa, timeout: 30s }
                           typed_per_filter_config: *api_filters_disabled

@@ -88,7 +88,7 @@ def prompt_choice(prompt_text: str, default: Optional[str] = None) -> str:
 
 def handle_schema_version() -> None:
     print_header("PVMBG Schema Version Control")
-    ver_str = prompt_choice("Enter schema version (1 or 2)", default="2")
+    ver_str = prompt_choice("Enter schema version (1-5)", default="2")
     if not ver_str.isdigit():
         print(f"{CLR_RED}Invalid version number.{CLR_RESET}")
         return
