@@ -3,10 +3,7 @@ package ingest
 import (
 	"context"
 	"encoding/json"
-	"fmt"
-	"io"
 	"net/http"
-	"net/url"
 	"time"
 
 	"github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/aggregator/internal/config"
@@ -20,11 +17,14 @@ import (
 )
 
 type BMKGPoller struct {
-	cfg     *config.Config
-	hazards storage.HazardStore
-	sources storage.SourceStateStore
-	client  *http.Client
+	cfg      *config.Config
+	hazards  storage.HazardStore
+	sources  storage.SourceStateStore
+	client   *http.Client
+	pipeline *Pipeline
 }
+
+func (p *BMKGPoller) SetPipeline(pipeline *Pipeline) { p.pipeline = pipeline }
 
 func NewBMKGPoller(cfg *config.Config, hazards storage.HazardStore, sources storage.SourceStateStore) *BMKGPoller {
 	return &BMKGPoller{
@@ -91,12 +91,38 @@ func (p *BMKGPoller) poll(ctx context.Context) error {
 	}
 
 	var watermark time.Time
-	if state, err := p.sources.Get(ctxPoll, domain.SourceKeyBMKGSeismic); err == nil {
+	state, stateErr := p.sources.Get(ctxPoll, domain.SourceKeyBMKGSeismic)
+	if stateErr == nil {
 		watermark = state.Watermark
 	}
 	fail := func(err error) {
 		recordPollMetrics(err, 0)
 		_ = p.sources.RecordFailure(ctxPoll, domain.SourceKeyBMKGSeismic, err.Error())
+	}
+	if p.pipeline != nil {
+		if stateErr != nil {
+			fail(stateErr)
+			return nil
+		}
+		latest, fetchErr := p.stageBMKG(ctxPoll, watermark, corrID)
+		count, processErr := p.pipeline.process(ctxPoll, domain.SourceKeyBMKGSeismic)
+		if fetchErr != nil {
+			fail(fetchErr)
+			return fetchErr
+		}
+		if processErr != nil {
+			fail(processErr)
+			return nil
+		}
+		if latest.After(watermark) {
+			watermark = latest
+		}
+		if err := p.sources.RecordSuccess(ctxPoll, domain.SourceKeyBMKGSeismic, watermark); err != nil {
+			fail(err)
+			return nil
+		}
+		recordPollMetrics(nil, count)
+		return nil
 	}
 
 	seismicEvents, err := p.fetchSeismicEvents(ctxPoll, watermark, corrID)
@@ -129,28 +155,11 @@ func (p *BMKGPoller) poll(ctx context.Context) error {
 }
 
 func (p *BMKGPoller) fetchSeismicEvents(ctx context.Context, since time.Time, corrID string) ([]*BMKGSeismicRaw, error) {
-	reqURL := fmt.Sprintf("%s/seismic-events", p.cfg.BMKGBaseURL)
-	if !since.IsZero() {
-		reqURL += "?since=" + url.QueryEscape(since.Format(time.RFC3339))
-	}
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL, nil)
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("X-BMKG-Key", p.cfg.BMKGAPIKey)
-	req.Header.Set("X-Correlation-ID", corrID)
-
-	resp, err := p.client.Do(req)
+	resp, err := p.bmkgResponse(ctx, "/seismic-events", since, corrID)
 	if err != nil {
 		return nil, err
 	}
 	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("BMKG seismic endpoint returned HTTP %d: %s", resp.StatusCode, string(body))
-	}
 
 	type listResponse struct {
 		Items []*BMKGSeismicRaw `json:"items"`
@@ -163,27 +172,11 @@ func (p *BMKGPoller) fetchSeismicEvents(ctx context.Context, since time.Time, co
 }
 
 func (p *BMKGPoller) fetchTsunamiWarnings(ctx context.Context, since time.Time, corrID string) ([]*BMKGTsunamiWarningRaw, error) {
-	reqURL := fmt.Sprintf("%s/tsunami-warnings", p.cfg.BMKGBaseURL)
-	if !since.IsZero() {
-		reqURL += "?since=" + url.QueryEscape(since.Format(time.RFC3339))
-	}
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL, nil)
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("X-BMKG-Key", p.cfg.BMKGAPIKey)
-	req.Header.Set("X-Correlation-ID", corrID)
-
-	resp, err := p.client.Do(req)
+	resp, err := p.bmkgResponse(ctx, "/tsunami-warnings", since, corrID)
 	if err != nil {
 		return nil, err
 	}
 	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("BMKG tsunami warning returned HTTP %d", resp.StatusCode)
-	}
 
 	type listResponse struct {
 		Items []*BMKGTsunamiWarningRaw `json:"items"`
@@ -193,4 +186,32 @@ func (p *BMKGPoller) fetchTsunamiWarnings(ctx context.Context, since time.Time, 
 		return nil, err
 	}
 	return res.Items, nil
+}
+
+func (p *BMKGPoller) bmkgResponse(ctx context.Context, path string, since time.Time, corrID string) (*http.Response, error) {
+	return fetchSource(ctx, p.client, p.cfg.BMKGBaseURL, path, "X-BMKG-Key", p.cfg.BMKGAPIKey, since, corrID)
+}
+
+func (p *BMKGPoller) stageBMKG(ctx context.Context, since time.Time, corrID string) (time.Time, error) {
+	stream := domain.SourceKeyBMKGSeismic
+	result := func(path, format string) (incoming, error) {
+		response, err := p.bmkgResponse(ctx, path, since, corrID)
+		if err != nil {
+			return incoming{}, err
+		}
+		return p.pipeline.receive(ctx, response, stream, format, corrID)
+	}
+	seismic, seismicErr := result("/seismic-events", formatSeismic)
+	warnings, warningErr := result("/tsunami-warnings", formatWarning)
+	var latest time.Time
+	if seismicErr == nil {
+		latest, seismicErr = p.pipeline.stage(ctx, seismic, validWarnings(warnings))
+	}
+	if warningErr == nil {
+		_, warningErr = p.pipeline.stage(ctx, warnings, nil)
+	}
+	if seismicErr != nil {
+		return time.Time{}, seismicErr
+	}
+	return latest, warningErr
 }

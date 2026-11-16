@@ -1,0 +1,48 @@
+openapi: 3.0.3
+info:
+  title: BNPB Tim Lapangan Report Intake
+  version: 1.0.0
+paths:
+  /field-reports:
+    post:
+      operationId: submitFieldReport
+      security: [{ bearerAuth: [] }]
+      x-required-scopes: [field-reports:write]
+      description: Requires the FIELD_TEAM role. The complete request body is limited to 16 KiB.
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [observed_at, area_name, description]
+              additionalProperties: false
+              properties:
+                observed_at: { type: string, format: date-time }
+                area_name: { type: string, minLength: 1, maxLength: 256 }
+                description: { type: string, minLength: 1 }
+      responses:
+        '202':
+          description: The report was committed to durable intake and can be processed asynchronously.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [report_id]
+                properties:
+                  report_id: { type: string }
+        '400': { description: Invalid report or idempotency key. }
+        '401': { description: Missing or invalid authentication. }
+        '403': { description: Caller lacks the field report permission. }
+        '409': { description: The caller already used this key with a different report. }
+        '413': { description: Report body exceeds 16 KiB. }
+        '429': { description: Intake concurrency limit reached. }
+        '503': { description: Durability could not be confirmed. Retry using the same key. }
+components:
+  securitySchemes:
+    bearerAuth: { type: http, scheme: bearer }

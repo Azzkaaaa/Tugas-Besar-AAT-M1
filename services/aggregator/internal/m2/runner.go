@@ -54,7 +54,12 @@ func (r *Runner) save(ctx context.Context, h *domain.HazardRecord, corr string) 
 	return err
 }
 func (r *Runner) park(ctx context.Context, source string, raw []byte, reason string, received time.Time) error {
-	err := r.Store.Streams.Park(ctx, storage.ParkedInput{MessageID: stableID("msg-", source+"|"+string(raw)), Source: source, Payload: raw, Reason: reason, ReceivedAt: received, Status: "parked", Attempts: 1})
+	var err error
+	if r.Store.Inbox != nil {
+		err = ingest.ParkExternal(ctx, r.Store.Inbox, source, raw, reason, stableID("input-", string(raw)), received)
+	} else {
+		err = r.Store.Streams.Park(ctx, storage.ParkedInput{MessageID: stableID("msg-", source+"|"+string(raw)), Source: source, Payload: raw, Reason: reason, ReceivedAt: received, Status: "parked", Attempts: 1})
+	}
 	if err == nil {
 		r.metrics.parked.Add(ctx, 1, metric.WithAttributes(attribute.String("source", source)))
 		slog.WarnContext(ctx, "input parked", "source", source, "reason", reason, "correlation_id", stableID("input-", string(raw)))

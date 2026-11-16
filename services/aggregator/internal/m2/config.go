@@ -25,6 +25,17 @@ func LoadConfig() (Config, error) {
 		AuditToken: os.Getenv("AUDIT_TOKEN"), HTTPAddress: os.Getenv("AGGREGATOR_M2_HTTP_ADDRESS"),
 		Lateness: 24 * time.Hour, CoastalPoll: 500 * time.Millisecond, Timeout: 1500 * time.Millisecond,
 		StaleAfter: 2 * time.Minute, OpenFor: 10 * time.Second, FailureThreshold: 3, MaxBodyBytes: 2 << 20, MaxDetections: 200000}
+	// P3's canonical name takes precedence over the earlier P4/P5 alias.
+	if token := os.Getenv("AUDIT_API_TOKEN"); token != "" {
+		c.AuditToken = token
+	}
+	if port := os.Getenv("AGGREGATOR_INTERNAL_HTTP_PORT"); port != "" {
+		address := ":" + port
+		if c.HTTPAddress != "" && c.HTTPAddress != address {
+			return c, fmt.Errorf("configure one internal HTTP listener: AGGREGATOR_INTERNAL_HTTP_PORT and AGGREGATOR_M2_HTTP_ADDRESS disagree")
+		}
+		c.HTTPAddress = address
+	}
 	if v := os.Getenv("SATELLITE_STREAM_ID"); v != "" {
 		c.SatelliteStream = v
 	}
@@ -59,7 +70,7 @@ func LoadConfig() (Config, error) {
 		}
 	}
 	if c.HTTPAddress != "" && len(c.AuditToken) < 16 {
-		return c, fmt.Errorf("AUDIT_TOKEN must contain at least 16 characters when M2 HTTP is enabled")
+		return c, fmt.Errorf("AUDIT_API_TOKEN (or AUDIT_TOKEN) must contain at least 16 characters when M2 HTTP is enabled")
 	}
 	return c, nil
 }

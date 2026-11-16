@@ -28,6 +28,7 @@ const (
 )
 
 type CallerContextData struct {
+	Subject  string
 	ClientID string
 	Role     string
 	Scopes   []string
@@ -322,6 +323,7 @@ func (v *JWTVerifier) parseVerified(ctx context.Context, tokenStr string) (*Call
 func extractCallerContext(claims jwt.MapClaims) *CallerContextData {
 	c := &CallerContextData{}
 
+	c.Subject, _ = claims["sub"].(string)
 	if clientID, ok := claims["client_id"].(string); ok {
 		c.ClientID = clientID
 	} else if sub, ok := claims["sub"].(string); ok {

@@ -432,3 +432,6 @@ login browser, expiry, refresh, dan logout ada di [panduan testing Auth](docs/au
 - [BMKG](services/bmkg-mock/README.md), [PVMBG](services/pvmbg-mock/README.md)
 - [Kontrak gRPC](contracts/proto/README.md), [OpenAPI gateway](contracts/openapi/gateway.yaml)
 - [Envoy](services/envoy/README.md), [Event Live Feed](services/event-live-feed/README.md), [Zitadel](services/zitadel/README.md)
+## Milestone 2 Problem 3
+
+Lihat [Surat dari Tetangga](docs/m2-problem-3.md) untuk replay ingest, API laporan lapangan, konfigurasi deployment, dan perintah demonstrasi.

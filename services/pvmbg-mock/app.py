@@ -76,7 +76,7 @@ class Application:
                 version = self.version
             try:
                 # Keep recording events during an injected outage.
-                self.store.append(version)
+                self.store.append(1 if version == 1 else 2)
             except Exception:
                 with self.lock:
                     self.generator_ok = False
@@ -312,9 +312,15 @@ class Handler(BaseHTTPRequestHandler):
             outage = self.app.outage
             if not outage:
                 version = self.app.version
-                if version == 1:
-                    for report in reports:
+                for report in reports:
+                    if version == 1:
                         report.pop("confidence_level", None)
+                    elif version == 3:
+                        report["volcano_alert"] = report.pop("alert_level")
+                    elif version == 4:
+                        report["eruption_count_24h"] = str(report["eruption_count_24h"])
+                    elif version == 5 and report["alert_level"] == "Normal" and report["ash_column_height_m"] == 0:
+                        del report["ash_column_height_m"]
         if outage:
             self.unavailable()
             return
@@ -332,8 +338,8 @@ class Handler(BaseHTTPRequestHandler):
     def admin(self):
         value = self.body()
         if self.route == "/admin/schema-version":
-            if set(value) != {"version"} or type(value["version"]) is not int or value["version"] not in (1, 2):
-                raise ValueError("Body must contain only version, an integer equal to 1 or 2")
+            if set(value) != {"version"} or type(value["version"]) is not int or value["version"] not in range(1, 6):
+                raise ValueError("Body must contain only version, an integer between 1 and 5")
             with self.app.lock:
                 self.app.version = value["version"]
                 result = {"version": self.app.version}

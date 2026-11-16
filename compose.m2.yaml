@@ -12,8 +12,9 @@ services:
       PANTAI_REQUEST_TIMEOUT: 1500ms
       PANTAI_STALE_AFTER: 2m
       AGGREGATOR_M2_HTTP_ADDRESS: :9092
-      AUDIT_TOKEN: ${AUDIT_TOKEN:?set AUDIT_TOKEN}
-    ports: ["127.0.0.1:9092:9092"]
+      # The application validates the token. A nested :? here is evaluated even
+      # when AUDIT_API_TOKEN is set by some Compose versions.
+      AUDIT_API_TOKEN: ${AUDIT_API_TOKEN:-${AUDIT_TOKEN:-}}
   api-gateway:
     environment:
       AUTH_AUTHORITY: ${AUTH_AUTHORITY:-http://auth.localhost:8080}

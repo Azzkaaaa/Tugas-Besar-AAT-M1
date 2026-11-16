@@ -45,6 +45,11 @@ type HazardStore interface {
 	HasData(ctx context.Context, source string) (bool, error)
 }
 
+type SequencedHazardStore interface {
+	ApplyIngestRevision(context.Context, *domain.HazardRecord, int64,
+		func(*domain.HazardRecord) (OutboxEvent, error)) (*domain.HazardRecord, bool, error)
+}
+
 // HazardQuery is the closed set of filters List supports. Empty strings and zero times mean
 // "any". Since is inclusive, Until exclusive.
 type HazardQuery struct {
@@ -134,6 +139,8 @@ type Backend struct {
 	Sources SourceStateStore
 	Outbox  Outbox
 	Streams StreamStore
+	Reports FieldReports
+	Inbox   IngestInbox
 	// OutboxSingleConsumer is true when at most one publisher may claim from Outbox at a time.
 	OutboxSingleConsumer bool
 	// Close releases the backend's connections.

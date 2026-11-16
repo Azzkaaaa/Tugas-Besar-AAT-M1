@@ -43,8 +43,8 @@ func (r *Runner) AuditHandler(verifier *auth.JWTVerifier) http.Handler {
 				auditError(w, 401, "unauthorized", "token tidak valid")
 				return
 			}
-			if caller.Role != "BNPB_INTERNAL" {
-				auditError(w, 403, "forbidden", "BNPB Internal Ops required")
+			if caller.Role != "BNPB_INTERNAL" || !caller.HasScope("ingest:inspect") {
+				auditError(w, 403, "forbidden", "BNPB Internal Ops with ingest:inspect required")
 				return
 			}
 		} else if r.Config.AuditToken == "" || subtle.ConstantTimeCompare([]byte(token), []byte(r.Config.AuditToken)) != 1 {

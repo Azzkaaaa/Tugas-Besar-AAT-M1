@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"sync"
 	"syscall"
 	"time"
@@ -18,6 +19,7 @@ import (
 	"github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/aggregator/internal/ingest"
 	"github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/aggregator/internal/leader/elect"
 	"github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/aggregator/internal/m2"
+	"github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/aggregator/internal/problem3"
 	"github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/aggregator/internal/storage/open"
 	"github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/aggregator/internal/telemetry"
 )
@@ -26,7 +28,16 @@ func main() {
 	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, nil)))
 	log.Println("[Aggregator] Starting BNPB Aggregator Service...")
 
-	cfg, err := config.Load()
+	workerMode := os.Getenv("AGGREGATOR_MODE") == "field-report-worker"
+	var cfg *config.Config
+	var err error
+	if workerMode {
+		var cassandra config.CassandraConfig
+		cassandra, err = config.LoadCassandra()
+		cfg = &config.Config{CanonicalStoreBackend: "cassandra", Cassandra: cassandra, OutboxRetention: 168 * time.Hour}
+	} else {
+		cfg, err = config.Load()
+	}
 	if err != nil {
 		log.Fatalf("Fatal configuration error: %v", err)
 	}
@@ -65,11 +76,31 @@ func main() {
 	}
 	defer store.Close()
 	log.Println("[Aggregator] Canonical store connected and migrations applied successfully.")
+	if workerMode {
+		if store.Reports == nil {
+			log.Fatal("field-report-worker requires Cassandra")
+		}
+		go serveProblem3HTTP(ctx, cancel, store, nil)
+		problem3.RunWorker(ctx, store.Reports)
+		return
+	}
 	m2cfg, err := m2.LoadConfig()
 	if err != nil {
 		log.Fatalf("[Aggregator] M2 configuration: %v", err)
 	}
 	m2runner := m2.NewRunner(m2cfg, store.Backend)
+	var pipeline *ingest.Pipeline
+	if store.Inbox != nil {
+		const defaultLimit = 16 << 20
+		limit := int64(defaultLimit)
+		if value := os.Getenv("INGEST_MAX_RESPONSE_BYTES"); value != "" {
+			limit, err = strconv.ParseInt(value, 10, 32)
+			if err != nil || limit < 1 || limit > 64<<20 {
+				log.Fatal("INGEST_MAX_RESPONSE_BYTES must be between 1 and 67108864")
+			}
+		}
+		pipeline = ingest.NewPipeline(store.Inbox, store.Hazards, os.Getenv("PVMBG_SCHEMA_ADAPTERS") == "true", limit)
+	}
 
 	// 2. Leader election (LEADER_ELECTION; default: the store backend). Each leader-only job has
 	// its own lease, so jobs fail over independently and spread across replicas; every replica
@@ -84,8 +115,16 @@ func main() {
 	// store allows a single outbox consumer.
 	pub := broker.NewOutboxPublisher(cfg, store.Outbox)
 	jobs := map[string]func(ctx context.Context){
-		elect.JobBMKGPoller:   func(ctx context.Context) { ingest.NewBMKGPoller(cfg, store.Hazards, store.Sources).Start(ctx) },
-		elect.JobPVMBGPoller:  func(ctx context.Context) { ingest.NewPVMBGPoller(cfg, store.Hazards, store.Sources).Start(ctx) },
+		elect.JobBMKGPoller: func(ctx context.Context) {
+			poller := ingest.NewBMKGPoller(cfg, store.Hazards, store.Sources)
+			poller.SetPipeline(pipeline)
+			poller.Start(ctx)
+		},
+		elect.JobPVMBGPoller: func(ctx context.Context) {
+			poller := ingest.NewPVMBGPoller(cfg, store.Hazards, store.Sources)
+			poller.SetPipeline(pipeline)
+			poller.Start(ctx)
+		},
 		elect.JobOutboxPruner: func(ctx context.Context) { broker.RunOutboxPruner(ctx, store.Outbox, cfg.OutboxRetention) },
 	}
 	if store.OutboxSingleConsumer {
@@ -129,8 +168,15 @@ func main() {
 		log.Fatalf("[Aggregator] FATAL: Invalid JWT verifier configuration: %v", err)
 	}
 	defer verifier.Close()
-	if m2cfg.HTTPAddress != "" {
-		httpServer := &http.Server{Addr: m2cfg.HTTPAddress, Handler: m2runner.AuditHandler(verifier), ReadHeaderTimeout: 3 * time.Second, WriteTimeout: 10 * time.Second, IdleTimeout: 30 * time.Second}
+	address := m2cfg.HTTPAddress
+	if address == "" && store.Inbox != nil {
+		address = ":9092"
+	}
+	if address != "" {
+		// One listener serves P3 operations and P4/P5 audit. Cassandra adapters
+		// park into P3's inbox; PostgreSQL keeps the standalone M2 fallback.
+		handler := problem3.Handler(store.Backend, verifier, m2cfg.AuditToken, m2runner.AuditHandler(verifier))
+		httpServer := &http.Server{Addr: address, Handler: handler, ReadHeaderTimeout: 3 * time.Second, ReadTimeout: 10 * time.Second, WriteTimeout: 30 * time.Second, IdleTimeout: 30 * time.Second}
 		go func() {
 			if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 				slog.Error("M2 HTTP server failed", "error", err)
@@ -146,10 +192,22 @@ func main() {
 
 	// 5. Initialize & Start gRPC Server
 	srv := grpc.NewServer(cfg, store.Hazards, store.Sources, verifier)
+	srv.SetFieldReports(store.Reports)
 	log.Printf("[Aggregator] Starting gRPC server on port %s...", cfg.GRPCPort)
 	if err := srv.Start(ctx); err != nil {
 		log.Fatalf("[Aggregator] gRPC server error: %v", err)
 	}
 
 	log.Println("[Aggregator] Service stopped cleanly.")
+}
+
+func serveProblem3HTTP(ctx context.Context, cancel context.CancelFunc, store *open.Store, verifier *auth.JWTVerifier) {
+	port := os.Getenv("AGGREGATOR_INTERNAL_HTTP_PORT")
+	if port == "" {
+		port = "9092"
+	}
+	if err := problem3.StartHTTP(ctx, port, store.Backend, verifier, os.Getenv("AUDIT_API_TOKEN")); err != nil {
+		log.Printf("[Aggregator] Internal HTTP failed: %v", err)
+		cancel()
+	}
 }

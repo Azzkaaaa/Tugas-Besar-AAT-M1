@@ -68,6 +68,7 @@ func New(opts Options) http.Handler {
 	router := chi.NewRouter()
 	router.Use(spanRoute, g.recoverer, g.correlation)
 	router.Get("/healthz", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) })
+	router.Post("/field-reports", g.submitFieldReport(opts.Clients.FieldReports, opts.RequestTimeout))
 	router.NotFound(func(w http.ResponseWriter, r *http.Request) {
 		g.write(w, r, nil, problem.New(http.StatusNotFound, "No API operation matches this path."))
 	})
@@ -171,22 +172,30 @@ func (g *gateway) limit(next gw.StrictHandlerFunc, operationID string) gw.Strict
 		return next
 	}
 	return func(ctx context.Context, w http.ResponseWriter, r *http.Request, request any) (any, error) {
-		select {
-		case g.inFlight <- struct{}{}:
-			defer func() { <-g.inFlight }()
-			return next(ctx, w, r, request)
-		default:
-			if g.priorityAllowed != nil && g.priorityAllowed(r) {
-				select {
-				case g.reserved <- struct{}{}:
-					defer func() { <-g.reserved }()
-					return next(ctx, w, r, request)
-				default:
-				}
-			}
+		release, ok := g.acquire(r)
+		if !ok {
 			return nil, problem.New(http.StatusTooManyRequests, "Too many requests; retry later.")
 		}
+		defer release()
+		return next(ctx, w, r, request)
 	}
+}
+
+// acquire is shared by generated unary routes and P3's field-report intake.
+func (g *gateway) acquire(r *http.Request) (func(), bool) {
+	select {
+	case g.inFlight <- struct{}{}:
+		return func() { <-g.inFlight }, true
+	default:
+	}
+	if g.priorityAllowed != nil && g.priorityAllowed(r) {
+		select {
+		case g.reserved <- struct{}{}:
+			return func() { <-g.reserved }, true
+		default:
+		}
+	}
+	return nil, false
 }
 
 func (g *gateway) recoverer(next http.Handler) http.Handler {

@@ -5,8 +5,9 @@
 P4/P5 dapat dikerjakan paralel dengan P3. Keduanya menggunakan penyimpanan
 kanonik dan leader election P1/P2, kemudian outbox RabbitMQ dan Danger
 Notification dari M1. P3 tidak diperlukan untuk mulai menulis adapter sumber.
-Titik penggabungan dengan P3 adalah pesan gagal, autentikasi Internal Ops,
-serta endpoint `GET /internal/audit/unprocessed`.
+Integrasi dengan commit P3 `dde7d00` sudah tersedia: server HTTP internal,
+karantina, autentikasi Internal Ops, dan prioritas laporan Tim Lapangan memakai
+jalur bersama. Rincian verifikasi ada di [hasil integrasi P3–P5](m2-integration.md).
 
 Kode ini menambahkan dua job di Aggregator: `satellite-stream` dan
 `coastal-poller`. Masing-masing memiliki lease dan HTTP client sendiri.
@@ -139,7 +140,7 @@ Development Docker Compose: siapkan konfigurasi M1 sesuai README, isi token
 di `.env` lokal, kemudian:
 
 ```sh
-docker compose --env-file .env --env-file .env.auth -f compose.yaml -f compose.m2.yaml up --build -d
+docker compose --env-file .env --env-file .env.auth -f compose.yaml -f compose.m2.yaml --profile problem3 up --build -d
 ```
 
 Daftar konfigurasi lengkap ada pada bagian M2 di `.env.example`. Menjalankan
@@ -197,7 +198,11 @@ Log baru memuat source/reason/correlation_id. Metrik:
 | `bnpb.m2.inputs`, `.parked` | Input selesai / input diparkir per sumber |
 | `bnpb.m2.ingest.duration` | Waktu sejak input diterima hingga penyimpanan; bukan latensi penerima push |
 
-Audit berada pada port `AGGREGATOR_M2_HTTP_ADDRESS`, opsional default nonaktif:
+Audit dan Internal Ops memakai satu listener: port 9092 ketika backend Cassandra
+aktif; `AGGREGATOR_M2_HTTP_ADDRESS` dapat mengaktifkannya untuk PostgreSQL.
+`AGGREGATOR_INTERNAL_HTTP_PORT` juga didukung dan harus konsisten jika keduanya
+diisi. Token bersama adalah `AUDIT_API_TOKEN`, dengan `AUDIT_TOKEN` sebagai alias
+lama yang hanya dipakai bila nama utama kosong. Endpoint:
 `/internal/audit/events`, `/checksum`, `/unprocessed`. Token audit dibandingkan
 constant-time. Events berurutan ingested_at lalu hazard_id dan memakai keyset
 cursor. Checksum mengikuti SHA-256 source_ref_id terurut, newline tanpa newline
@@ -205,11 +210,17 @@ akhir. Bila pembacaan gagal, hasil bertanda partial, bukan klaim lengkap.
 `unavailable_units` saat ini konservatif pada level backend, bukan daftar shard
 per node; gabungkan dengan implementasi Audit P1 untuk granularitas itu.
 
-Raw input hanya di `/internal/ops/m2/unprocessed` untuk JWT BNPB_INTERNAL;
-endpoint audit hanya memberikan metadata. Tabel `m2_parked_inputs` khusus
-adapter ini tidak menggantikan DLQ/replay P3. Integrasikan response P3 dan
-adapter ini sebelum demo bersama; jangan mendaftarkan dua handler dengan path
-yang sama pada satu server.
+Pada Cassandra, input gagal P4/P5 masuk ke inbox P3 dan terlihat bersama BMKG/
+PVMBG di `/internal/audit/unprocessed`. Payload asli dibaca lewat
+`/internal/ops/ingest/{id}/payload` dengan JWT BNPB_INTERNAL dan scope
+`ingest:inspect`. Input invalid P4/P5 tetap parked; replay schema P3 tidak
+memaksakan parser BMKG/PVMBG ke data satelit/sensor. Journal/recovery valid
+P4/P5 tetap memakai stream checkpoint sendiri.
+
+PostgreSQL tidak menyediakan inbox/field-report P3. Backend tersebut mempertahankan
+karantina `m2_parked_inputs` dan `/internal/ops/m2/unprocessed` untuk raw input
+(base64), juga memerlukan role dan scope yang sama. Endpoint audit tidak
+menampilkan raw bytes. Jalur M2 lama ini tetap tersedia untuk inspeksi tabel lama.
 
 ## Bukti lokal dan yang masih harus diukur
 
@@ -224,8 +235,9 @@ yang sama pada satu server.
 | Waktu replay sampel | ±0,136 s; p95 komputasi ±1 ms, **bukan** latensi storage/FCM |
 | Frontend | Build lulus; 33 tes lulus, termasuk penarikan wildfire pada SSE |
 | Gateway | Seluruh tes lulus, termasuk verifikasi JWT dan slot Tim Lapangan ketika Media memenuhi pool umum |
+| Integrasi P3–P5 | Audit gabungan, raw-byte quarantine, prioritas `/field-reports`, serta 4 tes Cassandra nyata lulus pada 16 November 2026 |
 | Danger Notification | 78 tes lulus |
-| Infrastruktur | Render Kustomize dan sintaks script PowerShell lulus; belum rollout cluster |
+| Infrastruktur | Render Kustomize, Helm lint/render gabungan P3–P5, dan sintaks PowerShell lulus; belum rollout cluster |
 | Referensi asisten seluruh aliran | Belum tersedia/dibandingkan |
 | Node mati/partition/freeze, Cassandra multi-node, autoscaling | Belum dibuktikan oleh pekerjaan P4/P5 ini |
 | Catch-up ≤60 s dan p95 sampai HazardEvent tersimpan pada cluster | Perlu pengukuran end-to-end |

@@ -1,0 +1,20 @@
+syntax = "proto3";
+
+package bnpb.aggregator.v1;
+
+option go_package = "github.com/Azzkaaaa/Tugas-Besar-AAT-M1/packages/bnpb-aggregator-go/bnpb/aggregator/v1;aggregatorv1";
+
+service FieldReportService {
+  rpc SubmitFieldReport(SubmitFieldReportRequest) returns (SubmitFieldReportResponse);
+}
+
+message SubmitFieldReportRequest {
+  string idempotency_key = 1;
+  string observed_at = 2;
+  string area_name = 3;
+  string description = 4;
+}
+
+message SubmitFieldReportResponse {
+  string report_id = 1;
+}

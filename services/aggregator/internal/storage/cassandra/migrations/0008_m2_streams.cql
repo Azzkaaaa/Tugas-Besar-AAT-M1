@@ -1,3 +1,4 @@
+-- Version 7 belongs to P3's inbox and field reports.
 CREATE TABLE IF NOT EXISTS m2_stream_journal (
     stream text, block bigint, sequence bigint, kind text, cursor text,
     payload blob, received_at timestamp,
