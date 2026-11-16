@@ -137,6 +137,8 @@ public class MessageService : IInboundMessageProvider
     {
       HazardType.Seismic => "Gempa bumi",
       HazardType.Volcanic => "Aktivitas gunung api",
+      HazardType.Wildfire => "Kebakaran hutan",
+      HazardType.Coastal => "Bahaya pesisir",
       _ => "Bahaya",
     };
 
@@ -144,6 +146,8 @@ public class MessageService : IInboundMessageProvider
     {
       HazardSource.BMKG => "BMKG",
       HazardSource.PVMBG => "PVMBG",
+      HazardSource.Satellite => "SATELIT",
+      HazardSource.CoastSensor => "SENSOR_PANTAI",
       _ => "sumber tidak diketahui",
     };
 

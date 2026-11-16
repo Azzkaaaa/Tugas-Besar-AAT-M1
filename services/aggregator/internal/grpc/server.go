@@ -164,7 +164,7 @@ func (s *Server) GetHazard(ctx context.Context, req *aggregatorv1.GetHazardReque
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "get hazard failed: %v", err)
 	}
-	if rec == nil {
+	if rec == nil || domain.Withdrawn(rec) {
 		return nil, status.Errorf(codes.NotFound, "hazard %s not found", req.HazardId)
 	}
 	proj, err := rec.ToProjection(req.View)

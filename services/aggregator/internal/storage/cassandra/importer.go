@@ -85,7 +85,7 @@ func (db *DB) ImportPendingEvent(ctx context.Context, ev *storage.ClaimedEvent) 
 	b.Query(`INSERT INTO outbox_pending (shard, created_at, event_id, hazard_id, source, payload, trace_context,
 			retry_count, next_attempt_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		pendingShard, createdAt, ev.EventID, ev.HazardID, ev.Source, ev.Payload, traceContext, ev.RetryCount, msUTC(time.Now()))
+		pendingPartition(ev.Source), createdAt, ev.EventID, ev.HazardID, ev.Source, ev.Payload, traceContext, ev.RetryCount, msUTC(time.Now()))
 	return b.Exec()
 }
 

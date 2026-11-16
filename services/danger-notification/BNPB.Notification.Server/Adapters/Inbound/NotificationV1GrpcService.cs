@@ -249,7 +249,9 @@ public class NotificationV1GrpcService : DangerNotificationService.DangerNotific
     {
       EHazardType.Seismic => [Source.Bmkg],
       EHazardType.Volcanic => [Source.Pvmbg],
-      _ => [Source.Bmkg, Source.Pvmbg],
+      EHazardType.Wildfire => [Source.Satelite],
+      EHazardType.Coastal => [Source.CoastSensor],
+      _ => [Source.Bmkg, Source.Pvmbg, Source.Satelite, Source.CoastSensor],
     };
   }
 
@@ -303,6 +305,8 @@ public class NotificationV1GrpcService : DangerNotificationService.DangerNotific
     Source.Unspecified => null,
     Source.Bmkg => HazardSource.BMKG,
     Source.Pvmbg => HazardSource.PVMBG,
+    Source.Satelite => HazardSource.Satellite,
+    Source.CoastSensor => HazardSource.CoastSensor,
     _ => throw new AdapterBadInputException("Source is invalid"),
   };
 
@@ -310,6 +314,8 @@ public class NotificationV1GrpcService : DangerNotificationService.DangerNotific
   {
     HazardSource.BMKG => Source.Bmkg,
     HazardSource.PVMBG => Source.Pvmbg,
+    HazardSource.Satellite => Source.Satelite,
+    HazardSource.CoastSensor => Source.CoastSensor,
     _ => Source.Unspecified,
   };
 
@@ -318,6 +324,8 @@ public class NotificationV1GrpcService : DangerNotificationService.DangerNotific
     EHazardType.Unspecified => null,
     EHazardType.Seismic => HazardType.Seismic,
     EHazardType.Volcanic => HazardType.Volcanic,
+    EHazardType.Wildfire => HazardType.Wildfire,
+    EHazardType.Coastal => HazardType.Coastal,
     _ => throw new AdapterBadInputException("Hazard type is invalid"),
   };
 

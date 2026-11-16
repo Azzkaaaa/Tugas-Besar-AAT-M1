@@ -3,7 +3,7 @@ namespace BNPB.Notification.Server.Adapters.Outbound.Persistence;
 // Bound from the "Outbox" configuration section.
 public sealed class OutboxOptions
 {
-  public TimeSpan PollInterval { get; set; } = TimeSpan.FromSeconds(5);
+  public TimeSpan PollInterval { get; set; } = TimeSpan.FromMilliseconds(250);
   public int BatchSize { get; set; } = 10;
   public int MaxAttempts { get; set; } = 5;
   public TimeSpan BaseBackoff { get; set; } = TimeSpan.FromSeconds(5);

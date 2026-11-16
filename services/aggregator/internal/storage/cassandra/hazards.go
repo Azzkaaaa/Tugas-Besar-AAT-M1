@@ -130,6 +130,9 @@ func (s hazards) applyRevision(ctx context.Context, rev *domain.HazardRecord, se
 			return st.rec, false, nil
 		}
 		h.IngestedAt = st.rec.IngestedAt
+		if domain.StreamSequence(st.rec) > domain.StreamSequence(&h) {
+			return st.rec, false, nil
+		}
 		written, err := s.writtenOut(ctx, st)
 		if err != nil {
 			return nil, false, err
@@ -447,7 +450,9 @@ func (s hazards) readBucket(ctx context.Context, bucket time.Time, q storage.Haz
 			(q.Severity != "" && h.Severity != q.Severity) {
 			continue
 		}
-		out = append(out, h)
+		if !domain.Withdrawn(h) {
+			out = append(out, h)
+		}
 	}
 	if err := scanner.Err(); err != nil {
 		return nil, fmt.Errorf("failed reading hazard bucket: %w", err)

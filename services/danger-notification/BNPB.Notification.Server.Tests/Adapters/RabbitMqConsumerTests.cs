@@ -24,6 +24,6 @@ public class RabbitMqConsumerTests
     => Assert.True(RabbitMqConsumer.ShouldRequeue(new InvalidOperationException(), redelivered: false));
 
   [Fact]
-  public void ShouldRequeue_RedeliveredFailure_DeadLetters()
-    => Assert.False(RabbitMqConsumer.ShouldRequeue(new InvalidOperationException(), redelivered: true));
+  public void ShouldRequeue_RedeliveredFailure_RetriesTransientOutage()
+    => Assert.True(RabbitMqConsumer.ShouldRequeue(new InvalidOperationException(), redelivered: true));
 }

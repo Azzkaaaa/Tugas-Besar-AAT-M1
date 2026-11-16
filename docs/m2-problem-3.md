@@ -74,6 +74,6 @@ go test -p 1 -parallel 1 -v -run 'TestPipeline|TestRejectPoisonItems|TestPVMBGSc
 go test -p 1 -parallel 1 -tags integration -run '^TestProblem3' ./internal/storage/cassandra
 ```
 
-Local checks passed for the Aggregator and API Gateway Go suites, 10 PVMBG unit tests, 16 mock HTTP tests, and both legacy and P3 Helm rendering and linting. The tagged Cassandra tests compiled. They require a test Cassandra instance to exercise the storage protocol and restart scenarios.
+Local checks passed for the Aggregator and API Gateway Go suites, 10 PVMBG unit tests, 16 mock HTTP tests, and both legacy and P3 Helm rendering and linting. During the P4/P5 integration on 16 November 2026, the tagged P3 Cassandra tests also passed against Cassandra 5.0.9. See [P3–P5 integration evidence](m2-integration.md) for scope and reproduction commands.
 
 Cluster evidence to collect for the report consists of the schema mode and Audit outputs, raw-byte comparisons, replay revision logs, restart counts, receipt p95 and acknowledged-versus-processed IDs. Those measurements depend on the P1/P2 cluster run.

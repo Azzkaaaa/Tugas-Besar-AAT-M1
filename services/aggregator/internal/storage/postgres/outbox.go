@@ -59,7 +59,7 @@ func (o outbox) ClaimDue(ctx context.Context, limit int, lease time.Duration) ([
 		WHERE event_id IN (
 			SELECT event_id FROM outbox_events
 			WHERE published_at IS NULL AND failed_at IS NULL AND next_attempt_at <= NOW()
-			ORDER BY created_at ASC
+			ORDER BY (source = 'SENSOR_PANTAI') DESC, created_at ASC
 			LIMIT $1
 			FOR UPDATE SKIP LOCKED
 		)

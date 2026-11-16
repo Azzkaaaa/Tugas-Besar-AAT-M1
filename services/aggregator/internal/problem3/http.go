@@ -23,11 +23,18 @@ type api struct {
 	store      *storage.Backend
 	verifier   *auth.JWTVerifier
 	auditToken string
+	fallback   http.Handler
+}
+
+// Handler composes the shared P3-P5 internal API without opening another socket.
+// The fallback provides canonical event/checksum audit and PostgreSQL-only M2 ops.
+func Handler(store *storage.Backend, verifier *auth.JWTVerifier, auditToken string, fallback http.Handler) http.Handler {
+	return otelhttp.NewHandler((&api{store: store, verifier: verifier, auditToken: auditToken, fallback: fallback}).routes(), "aggregator.internal")
 }
 
 func StartHTTP(ctx context.Context, port string, store *storage.Backend, verifier *auth.JWTVerifier, auditToken string) error {
-	handler := (&api{store: store, verifier: verifier, auditToken: auditToken}).routes()
-	server := &http.Server{Addr: ":" + port, Handler: otelhttp.NewHandler(handler, "aggregator.problem3"),
+	handler := Handler(store, verifier, auditToken, nil)
+	server := &http.Server{Addr: ":" + port, Handler: handler,
 		ReadHeaderTimeout: 3 * time.Second, ReadTimeout: 10 * time.Second, WriteTimeout: 30 * time.Second}
 	stop := context.AfterFunc(ctx, func() {
 		shutdown, cancel := context.WithTimeout(context.Background(), 3*time.Second)
@@ -44,6 +51,9 @@ func StartHTTP(ctx context.Context, port string, store *storage.Backend, verifie
 func (a *api) routes() http.Handler {
 	routes := http.NewServeMux()
 	routes.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) })
+	if a.fallback != nil {
+		routes.Handle("/", a.fallback)
+	}
 	if a.store.Inbox != nil && a.verifier != nil {
 		routes.HandleFunc("GET /internal/audit/unprocessed", a.listAudit)
 		routes.HandleFunc("GET /internal/ops/ingest", a.ops("ingest:inspect", a.list))

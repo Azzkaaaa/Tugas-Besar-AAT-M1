@@ -138,6 +138,7 @@ type Backend struct {
 	Hazards HazardStore
 	Sources SourceStateStore
 	Outbox  Outbox
+	Streams StreamStore
 	Reports FieldReports
 	Inbox   IngestInbox
 	// OutboxSingleConsumer is true when at most one publisher may claim from Outbox at a time.

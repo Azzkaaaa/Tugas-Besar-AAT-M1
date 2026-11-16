@@ -23,6 +23,7 @@ import (
 	"github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/api-gateway/internal/config"
 	"github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/api-gateway/internal/contract"
 	"github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/api-gateway/internal/handlers"
+	"github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/api-gateway/internal/priority"
 	"github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/api-gateway/internal/server"
 	"github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/api-gateway/internal/telemetry"
 )
@@ -98,6 +99,8 @@ func run(cfg config.Config) error {
 		Contract:          spec,
 		RequestTimeout:    cfg.RequestTimeout,
 		MaxInFlight:       cfg.MaxInFlight,
+		ReservedInFlight:  cfg.ReservedInFlight,
+		PriorityAllowed:   priority.New(ctx, cfg.AuthAuthority, cfg.AuthAudience).Allowed,
 		RetryAfterSeconds: cfg.RetryAfterSeconds,
 		Heartbeat:         cfg.Heartbeat,
 	})

@@ -8,6 +8,7 @@ replace (
 )
 
 require (
+	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/Azzkaaaa/Tugas-Besar-AAT-M1/packages/bnpb-aggregator-go v0.0.0-20261101210803-225084bb9fc2
 	github.com/Azzkaaaa/Tugas-Besar-AAT-M1/packages/bnpb-gateway-go v0.0.0-20261101210803-225084bb9fc2
 	github.com/getkin/kin-openapi v0.153.0

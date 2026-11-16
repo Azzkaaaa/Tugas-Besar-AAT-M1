@@ -42,10 +42,10 @@ public class RabbitMqConsumer : BackgroundService
     _deadLetterQueue = _configuration["RabbitMq:DeadLetterQueue"];
   }
 
-  // Parse failures never succeed on retry. Anything else gets one redelivery
-  // before it is dead-lettered, so a persistent failure cannot loop forever.
+  // Parse failures are permanent. A valid event must survive a prolonged store
+  // outage; delay its redelivery instead of dropping it after two attempts.
   internal static bool ShouldRequeue(Exception ex, bool redelivered)
-    => ex is not InvalidProtocolBufferException && !redelivered;
+    => ex is not InvalidProtocolBufferException;
 
   private async Task InitializeRabbitMqListener()
   {
@@ -152,6 +152,8 @@ public class RabbitMqConsumer : BackgroundService
         {
           ExternalSource.Bmkg => HazardSource.BMKG,
           ExternalSource.Pvmbg => HazardSource.PVMBG,
+          ExternalSource.Satelite => HazardSource.Satellite,
+          ExternalSource.CoastSensor => HazardSource.CoastSensor,
           _ => HazardSource.Unknown,
         };
 
@@ -159,6 +161,8 @@ public class RabbitMqConsumer : BackgroundService
         {
           ExternalType.Seismic => HazardType.Seismic,
           ExternalType.Volcanic => HazardType.Volcanic,
+          ExternalType.Wildfire => HazardType.Wildfire,
+          ExternalType.Coastal => HazardType.Coastal,
           _ => HazardType.Unknown,
         };
 
@@ -204,6 +208,8 @@ public class RabbitMqConsumer : BackgroundService
           eventId,
           requeue ? "requeued" : "dead-lettered");
 
+        if (requeue && !stoppingToken.IsCancellationRequested)
+          await Task.Delay(TimeSpan.FromSeconds(1), stoppingToken);
         await _channel.BasicNackAsync(deliveryTag: ea.DeliveryTag, multiple: false, requeue: requeue);
 
         NotificationTelemetry.EventsConsumed.Add(1,

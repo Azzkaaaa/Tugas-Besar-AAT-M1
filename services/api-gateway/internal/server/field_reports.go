@@ -27,13 +27,12 @@ func (g *gateway) submitFieldReport(client aggregatorv1.FieldReportServiceClient
 			g.write(w, r, nil, problem.New(http.StatusServiceUnavailable, "Report intake is unavailable."))
 			return
 		}
-		select {
-		case g.inFlight <- struct{}{}:
-			defer func() { <-g.inFlight }()
-		default:
+		release, ok := g.acquire(r)
+		if !ok {
 			g.write(w, r, nil, problem.New(http.StatusTooManyRequests, "Report intake is busy."))
 			return
 		}
+		defer release()
 		mediaType, _, _ := mime.ParseMediaType(r.Header.Get("Content-Type"))
 		if mediaType != "application/json" || len(r.Header.Values("Idempotency-Key")) != 1 {
 			g.write(w, r, nil, problem.BadRequest("Provide application/json and one Idempotency-Key."))

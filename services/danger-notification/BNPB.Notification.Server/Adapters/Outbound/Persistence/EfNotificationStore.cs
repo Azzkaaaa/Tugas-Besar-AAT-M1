@@ -121,9 +121,10 @@ public class EfNotificationStore : IMessageStore, IPushOutbox, IMessageProvider,
           && (r.LeaseExpiresAt == null || r.LeaseExpiresAt <= now)
           && (r.PushStatus == EPushStatus.Pending
             || (r.PushStatus == EPushStatus.Failed
-              && r.FailedPushAttempts < maxAttempts
+              && (r.FailedPushAttempts < maxAttempts || r.Source == Source.CoastSensor)
               && r.NextPushAttemptAt <= now)))
-        .OrderBy(r => r.CreatedAt)
+        .OrderByDescending(r => r.Source == Source.CoastSensor)
+        .ThenBy(r => r.CreatedAt)
         .ThenBy(r => r.Id)
         .Select(r => r.Id)
         .Take(limit)
@@ -167,6 +168,7 @@ public class EfNotificationStore : IMessageStore, IPushOutbox, IMessageProvider,
   {
     var pending = (int)EPushStatus.Pending;
     var failed = (int)EPushStatus.Failed;
+    var coastal = (int)Source.CoastSensor;
 
     var records = await db.Notifications
       .FromSql($"""
@@ -178,9 +180,9 @@ public class EfNotificationStore : IMessageStore, IPushOutbox, IMessageProvider,
             AND ("LeaseExpiresAt" IS NULL OR "LeaseExpiresAt" <= {now})
             AND ("PushStatus" = {pending}
               OR ("PushStatus" = {failed}
-                AND "FailedPushAttempts" < {maxAttempts}
+                AND ("FailedPushAttempts" < {maxAttempts} OR "Source" = {coastal})
                 AND "NextPushAttemptAt" <= {now}))
-          ORDER BY "CreatedAt", "Id"
+          ORDER BY ("Source" = {coastal}) DESC, "CreatedAt", "Id"
           LIMIT {limit}
           FOR UPDATE SKIP LOCKED)
         RETURNING *, xmin
@@ -489,12 +491,16 @@ public class EfNotificationStore : IMessageStore, IPushOutbox, IMessageProvider,
       {
         Source.Bmkg => HazardSource.BMKG,
         Source.Pvmbg => HazardSource.PVMBG,
+        Source.Satelite => HazardSource.Satellite,
+        Source.CoastSensor => HazardSource.CoastSensor,
         _ => HazardSource.Unknown,
       },
       hazard.HazardType switch
       {
         EHazardType.Seismic => HazardType.Seismic,
         EHazardType.Volcanic => HazardType.Volcanic,
+        EHazardType.Wildfire => HazardType.Wildfire,
+        EHazardType.Coastal => HazardType.Coastal,
         _ => HazardType.Unknown,
       },
       hazard.Severity switch
@@ -540,6 +546,8 @@ public class EfNotificationStore : IMessageStore, IPushOutbox, IMessageProvider,
   {
     HazardSource.BMKG => Source.Bmkg,
     HazardSource.PVMBG => Source.Pvmbg,
+    HazardSource.Satellite => Source.Satelite,
+    HazardSource.CoastSensor => Source.CoastSensor,
     _ => Source.Unspecified,
   };
 
@@ -547,6 +555,8 @@ public class EfNotificationStore : IMessageStore, IPushOutbox, IMessageProvider,
   {
     HazardType.Seismic => EHazardType.Seismic,
     HazardType.Volcanic => EHazardType.Volcanic,
+    HazardType.Wildfire => EHazardType.Wildfire,
+    HazardType.Coastal => EHazardType.Coastal,
     _ => EHazardType.Unspecified,
   };
 

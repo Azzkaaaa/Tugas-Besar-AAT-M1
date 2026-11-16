@@ -65,3 +65,29 @@ func TestFieldReportResponses(t *testing.T) {
 		})
 	}
 }
+
+func TestFieldReportsUseReservedCapacityDuringMediaLoad(t *testing.T) {
+	client := &fieldReportClient{}
+	g := &gateway{inFlight: make(chan struct{}, 1), reserved: make(chan struct{}, 1),
+		priorityAllowed: func(r *http.Request) bool { return r.Header.Get("Authorization") == "Bearer verified-field" }}
+	// Model an in-flight Media read holding the only common permit.
+	g.inFlight <- struct{}{}
+	for _, tc := range []struct {
+		bearer string
+		status int
+	}{{"Bearer media", 429}, {"Bearer verified-field", 202}, {"Bearer verified-field", 202}} {
+		client.called = false
+		req := httptest.NewRequest("POST", "/field-reports", strings.NewReader(`{"area_name":"Padang","description":"Rising water","observed_at":"2026-11-15T08:00:00Z"}`))
+		req.Header.Set("Authorization", tc.bearer)
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Idempotency-Key", "1428bc5d-eb41-4c95-b3f2-976ee413ff03")
+		response := httptest.NewRecorder()
+		g.correlation(g.submitFieldReport(client, time.Second)).ServeHTTP(response, req)
+		if response.Code != tc.status || client.called != (tc.status == 202) {
+			t.Fatalf("%s: status %d called=%t", tc.bearer, response.Code, client.called)
+		}
+		if len(g.reserved) != 0 || len(g.inFlight) != 1 {
+			t.Fatal("permit leak or common capacity corrupted")
+		}
+	}
+}

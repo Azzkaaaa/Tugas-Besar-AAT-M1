@@ -145,6 +145,7 @@ func (db *DB) Backend() *storage.Backend {
 		Hazards:              hazards{db},
 		Sources:              sources{db},
 		Outbox:               &outbox{db: db},
+		Streams:              streams{db},
 		Reports:              fieldReports{db},
 		Inbox:                ingestInbox{db},
 		OutboxSingleConsumer: true,

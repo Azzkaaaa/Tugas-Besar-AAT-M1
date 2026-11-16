@@ -5,4 +5,6 @@ public enum HazardType
   Seismic,
   Volcanic,
   Unknown,
+  Wildfire,
+  Coastal,
 };

@@ -5,4 +5,6 @@ public enum HazardSource
   BMKG,
   PVMBG,
   Unknown,
+  Satellite,
+  CoastSensor,
 };

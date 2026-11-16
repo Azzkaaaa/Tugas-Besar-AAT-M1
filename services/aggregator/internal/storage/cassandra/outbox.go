@@ -9,12 +9,18 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/aggregator/internal/domain"
 	"github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/aggregator/internal/storage"
 	gocql "github.com/apache/cassandra-gocql-driver/v2"
 )
 
-// pendingShard is the only outbox_pending partition: there is a single consumer.
-const pendingShard = 0
+// The elected publisher serves separate coastal and regular partitions.
+func pendingPartition(source string) int {
+	if source == domain.SourceCoastal {
+		return 1
+	}
+	return 0
+}
 
 // claimScanLimit bounds the pending rows one claim reads. Due events behind that many events
 // still in backoff wait until those are due (at most the max backoff).
@@ -29,7 +35,7 @@ type outbox struct {
 	mu sync.Mutex
 	// scanFrom is the creation time of the oldest event pending at the last claim. Claims start
 	// there, so they skip the tombstones of the events published before it.
-	scanFrom time.Time
+	scanFrom [2]time.Time
 }
 
 // addOutboxEnqueue adds the writes that enqueue ev to b (see hazards.ApplyRevision).
@@ -41,7 +47,7 @@ func addOutboxEnqueue(b *gocql.Batch, ev storage.OutboxEvent, now time.Time) {
 	b.Query(`INSERT INTO outbox_pending (shard, created_at, event_id, hazard_id, source, payload, trace_context,
 			retry_count, next_attempt_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?)`,
-		pendingShard, createdAt, ev.EventID, ev.HazardID, ev.Source, ev.Payload, traceContext, createdAt)
+		pendingPartition(ev.Source), createdAt, ev.EventID, ev.HazardID, ev.Source, ev.Payload, traceContext, createdAt)
 }
 
 // encodeTraceContext returns the carrier as JSON, or nil (null) when there is no trace.
@@ -76,33 +82,42 @@ func (o *outbox) ClaimDue(ctx context.Context, limit int, lease time.Duration) (
 	defer o.mu.Unlock()
 
 	now := time.Now().UTC()
-	iter := o.db.session.Query(`SELECT created_at, event_id, hazard_id, source, payload, trace_context, retry_count, next_attempt_at
-		FROM outbox_pending WHERE shard = ? AND created_at >= ? LIMIT `+strconv.Itoa(claimScanLimit),
-		pendingShard, o.scanFrom).WithContext(ctx).PageSize(200).Iter()
-
 	var claimed []*storage.ClaimedEvent
-	var oldest time.Time
-	var rec storage.ClaimedEvent
-	var traceContext string
-	var nextAttempt time.Time
-	for iter.Scan(&rec.CreatedAt, &rec.EventID, &rec.HazardID, &rec.Source, &rec.Payload, &traceContext,
-		&rec.RetryCount, &nextAttempt) {
-		if oldest.IsZero() {
-			oldest = rec.CreatedAt
+	// Separate coastal partition prevents satellite backlog from hiding warnings.
+	// Reserve half each batch for regular sources to avoid starvation in either direction.
+	for _, shard := range []int{1, 0} {
+		allowance := limit - len(claimed)
+		if shard == 1 {
+			allowance = max(1, limit/2)
 		}
-		if len(claimed) < limit && !nextAttempt.After(now) {
-			ev := rec
-			ev.CreatedAt = ev.CreatedAt.UTC()
-			ev.TraceContext = decodeTraceContext(traceContext)
-			claimed = append(claimed, &ev)
+		iter := o.db.session.Query(`SELECT created_at, event_id, hazard_id, source, payload, trace_context, retry_count, next_attempt_at
+            FROM outbox_pending WHERE shard = ? AND created_at >= ? LIMIT `+strconv.Itoa(claimScanLimit),
+			shard, o.scanFrom[shard]).WithContext(ctx).PageSize(200).Iter()
+		var oldest time.Time
+		var rec storage.ClaimedEvent
+		var traceContext string
+		var nextAttempt time.Time
+		taken := 0
+		for iter.Scan(&rec.CreatedAt, &rec.EventID, &rec.HazardID, &rec.Source, &rec.Payload, &traceContext, &rec.RetryCount, &nextAttempt) {
+			if oldest.IsZero() {
+				oldest = rec.CreatedAt
+			}
+			if taken < allowance && !nextAttempt.After(now) {
+				ev := rec
+				ev.CreatedAt = ev.CreatedAt.UTC()
+				ev.Payload = append([]byte(nil), rec.Payload...)
+				ev.TraceContext = decodeTraceContext(traceContext)
+				claimed = append(claimed, &ev)
+				taken++
+			}
+			rec, traceContext, nextAttempt = storage.ClaimedEvent{}, "", time.Time{}
 		}
-		rec, traceContext, nextAttempt = storage.ClaimedEvent{}, "", time.Time{}
-	}
-	if err := iter.Close(); err != nil {
-		return nil, err
-	}
-	if !oldest.IsZero() {
-		o.scanFrom = oldest
+		if err := iter.Close(); err != nil {
+			return nil, err
+		}
+		if !oldest.IsZero() {
+			o.scanFrom[shard] = oldest
+		}
 	}
 
 	claimed, err := o.dropFinished(ctx, claimed)
@@ -114,7 +129,7 @@ func (o *outbox) ClaimDue(ctx context.Context, limit int, lease time.Duration) (
 	for _, ev := range claimed {
 		if err := o.db.session.Query(`UPDATE outbox_pending SET next_attempt_at = ?
 			WHERE shard = ? AND created_at = ? AND event_id = ?`,
-			leaseUntil, pendingShard, ev.CreatedAt, ev.EventID).WithContext(ctx).Exec(); err != nil {
+			leaseUntil, pendingPartition(ev.Source), ev.CreatedAt, ev.EventID).WithContext(ctx).Exec(); err != nil {
 			return nil, err
 		}
 	}
@@ -139,7 +154,7 @@ func (o *outbox) dropFinished(ctx context.Context, evs []*storage.ClaimedEvent) 
 			continue
 		}
 		if err := o.db.session.Query(`DELETE FROM outbox_pending WHERE shard = ? AND created_at = ? AND event_id = ?`,
-			pendingShard, ev.CreatedAt, ev.EventID).WithContext(ctx).Exec(); err != nil {
+			pendingPartition(ev.Source), ev.CreatedAt, ev.EventID).WithContext(ctx).Exec(); err != nil {
 			return nil, err
 		}
 	}
@@ -176,7 +191,7 @@ func (o *outbox) finish(ctx context.Context, ev *storage.ClaimedEvent, published
 ) error {
 	b := o.db.session.Batch(gocql.LoggedBatch).WithContext(ctx)
 	b.Query(`DELETE FROM outbox_pending WHERE shard = ? AND created_at = ? AND event_id = ?`,
-		pendingShard, ev.CreatedAt, ev.EventID)
+		pendingPartition(ev.Source), ev.CreatedAt, ev.EventID)
 	b.Query(`INSERT INTO outbox_events (event_id, hazard_id, source, payload, trace_context, created_at, retry_count,
 			last_error, published_at, failed_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) USING TTL `+o.ttl(),
@@ -228,7 +243,7 @@ func (o *outbox) RetryLater(ctx context.Context, eventID, lastErr string, backof
 	}
 	var retryCount int
 	err = o.db.session.Query(`SELECT retry_count FROM outbox_pending WHERE shard = ? AND created_at = ? AND event_id = ?`,
-		pendingShard, ev.CreatedAt, eventID).WithContext(ctx).Scan(&retryCount)
+		pendingPartition(ev.Source), ev.CreatedAt, eventID).WithContext(ctx).Scan(&retryCount)
 	if errors.Is(err, gocql.ErrNotFound) {
 		return nil
 	}
@@ -239,7 +254,7 @@ func (o *outbox) RetryLater(ctx context.Context, eventID, lastErr string, backof
 	b := o.db.session.Batch(gocql.LoggedBatch).WithContext(ctx)
 	b.Query(`UPDATE outbox_pending SET retry_count = ?, last_error = ?, next_attempt_at = ?
 		WHERE shard = ? AND created_at = ? AND event_id = ?`,
-		retryCount, lastErr, msUTC(time.Now().Add(backoff)), pendingShard, ev.CreatedAt, eventID)
+		retryCount, lastErr, msUTC(time.Now().Add(backoff)), pendingPartition(ev.Source), ev.CreatedAt, eventID)
 	b.Query(`UPDATE outbox_events SET retry_count = ?, last_error = ? WHERE event_id = ?`, retryCount, lastErr, eventID)
 	return b.Exec()
 }
@@ -256,7 +271,7 @@ func (o *outbox) Release(ctx context.Context, eventIDs []string) error {
 		}
 		if _, err := o.db.session.Query(`UPDATE outbox_pending SET next_attempt_at = ?
 			WHERE shard = ? AND created_at = ? AND event_id = ? IF EXISTS`,
-			now, pendingShard, ev.CreatedAt, id).WithContext(ctx).MapScanCAS(map[string]any{}); err != nil {
+			now, pendingPartition(ev.Source), ev.CreatedAt, id).WithContext(ctx).MapScanCAS(map[string]any{}); err != nil {
 			return fmt.Errorf("release outbox event %s: %w", id, err)
 		}
 	}

@@ -3,6 +3,8 @@ package main
 import (
 	"context"
 	"log"
+	"log/slog"
+	"net/http"
 	"os"
 	"os/signal"
 	"strconv"
@@ -16,12 +18,14 @@ import (
 	"github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/aggregator/internal/grpc"
 	"github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/aggregator/internal/ingest"
 	"github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/aggregator/internal/leader/elect"
+	"github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/aggregator/internal/m2"
 	"github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/aggregator/internal/problem3"
 	"github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/aggregator/internal/storage/open"
 	"github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/aggregator/internal/telemetry"
 )
 
 func main() {
+	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, nil)))
 	log.Println("[Aggregator] Starting BNPB Aggregator Service...")
 
 	workerMode := os.Getenv("AGGREGATOR_MODE") == "field-report-worker"
@@ -80,6 +84,11 @@ func main() {
 		problem3.RunWorker(ctx, store.Reports)
 		return
 	}
+	m2cfg, err := m2.LoadConfig()
+	if err != nil {
+		log.Fatalf("[Aggregator] M2 configuration: %v", err)
+	}
+	m2runner := m2.NewRunner(m2cfg, store.Backend)
 	var pipeline *ingest.Pipeline
 	if store.Inbox != nil {
 		const defaultLimit = 16 << 20
@@ -124,6 +133,12 @@ func main() {
 		log.Println("[Aggregator] Starting RabbitMQ Outbox Publisher...")
 		pub.Start(ctx)
 	}
+	if m2cfg.SatelliteURL != "" {
+		jobs["satellite-stream"] = m2runner.Satellite
+	}
+	if m2cfg.CoastalURL != "" {
+		jobs["coastal-poller"] = m2runner.Coastal
+	}
 	var leaders sync.WaitGroup
 	for job, run := range jobs {
 		leaders.Add(1)
@@ -153,8 +168,26 @@ func main() {
 		log.Fatalf("[Aggregator] FATAL: Invalid JWT verifier configuration: %v", err)
 	}
 	defer verifier.Close()
-	if store.Inbox != nil {
-		go serveProblem3HTTP(ctx, cancel, store, verifier)
+	address := m2cfg.HTTPAddress
+	if address == "" && store.Inbox != nil {
+		address = ":9092"
+	}
+	if address != "" {
+		// One listener serves P3 operations and P4/P5 audit. Cassandra adapters
+		// park into P3's inbox; PostgreSQL keeps the standalone M2 fallback.
+		handler := problem3.Handler(store.Backend, verifier, m2cfg.AuditToken, m2runner.AuditHandler(verifier))
+		httpServer := &http.Server{Addr: address, Handler: handler, ReadHeaderTimeout: 3 * time.Second, ReadTimeout: 10 * time.Second, WriteTimeout: 30 * time.Second, IdleTimeout: 30 * time.Second}
+		go func() {
+			if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+				slog.Error("M2 HTTP server failed", "error", err)
+				cancel()
+			}
+		}()
+		defer func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+			defer cancel()
+			_ = httpServer.Shutdown(ctx)
+		}()
 	}
 
 	// 5. Initialize & Start gRPC Server

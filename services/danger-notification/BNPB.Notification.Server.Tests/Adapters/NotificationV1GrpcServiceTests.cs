@@ -128,7 +128,8 @@ public class NotificationV1GrpcServiceTests : IClassFixture<NotificationV1GrpcSe
 
     var response = await Client().ListNotificationsAsync(new ListNotificationsRequest(), As(SummaryScopes));
 
-    Assert.Equal([Source.Bmkg, Source.Pvmbg], response.Freshness.Select(f => f.Source));
+    Assert.Equal([Source.Bmkg, Source.Pvmbg, Source.Satelite, Source.CoastSensor], response.Freshness.Select(f => f.Source));
+    Assert.All(response.Freshness.Skip(2), f => Assert.Equal(SourceStatus.Unavailable, f.Status));
     Assert.True(response.Partial);
   }
 
@@ -156,7 +157,7 @@ public class NotificationV1GrpcServiceTests : IClassFixture<NotificationV1GrpcSe
 
     Assert.Empty(response.Items);
     Assert.Equal("", response.NextPageToken);
-    Assert.Equal(2, response.Freshness.Count);
+    Assert.Equal(4, response.Freshness.Count);
     await _messages.DidNotReceiveWithAnyArgs().GetMessageListAsync(
       default, default, default, default, default, default, default, default, default!, default);
   }
