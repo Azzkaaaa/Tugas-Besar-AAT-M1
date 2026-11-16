@@ -18,6 +18,9 @@ type Config struct {
 	ResolveInterval     time.Duration
 	RequestTimeout      time.Duration
 	MaxInFlight         int
+	ReservedInFlight    int
+	AuthAuthority       string
+	AuthAudience        string
 	RetryAfterSeconds   int
 	Heartbeat           time.Duration
 	LogLevel            string
@@ -52,6 +55,9 @@ func Load() (Config, error) {
 		ResolveInterval:     time.Duration(number("GATEWAY_GRPC_RESOLVE_INTERVAL_SECONDS", 30)) * time.Second,
 		RequestTimeout:      time.Duration(number("GATEWAY_REQUEST_TIMEOUT_MS", 2000)) * time.Millisecond,
 		MaxInFlight:         number("GATEWAY_MAX_IN_FLIGHT", 100),
+		ReservedInFlight:    number("GATEWAY_RESERVED_IN_FLIGHT", 25),
+		AuthAuthority:       text("AUTH_AUTHORITY", ""),
+		AuthAudience:        text("AUTH_AUDIENCE", ""),
 		RetryAfterSeconds:   number("GATEWAY_RETRY_AFTER_SECONDS", 5),
 		Heartbeat:           time.Duration(number("GATEWAY_SSE_HEARTBEAT_SECONDS", 15)) * time.Second,
 		LogLevel:            text("LOG_LEVEL", "info"),

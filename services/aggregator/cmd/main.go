@@ -3,6 +3,8 @@ package main
 import (
 	"context"
 	"log"
+	"log/slog"
+	"net/http"
 	"os"
 	"os/signal"
 	"sync"
@@ -15,11 +17,13 @@ import (
 	"github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/aggregator/internal/grpc"
 	"github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/aggregator/internal/ingest"
 	"github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/aggregator/internal/leader/elect"
+	"github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/aggregator/internal/m2"
 	"github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/aggregator/internal/storage/open"
 	"github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/aggregator/internal/telemetry"
 )
 
 func main() {
+	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, nil)))
 	log.Println("[Aggregator] Starting BNPB Aggregator Service...")
 
 	cfg, err := config.Load()
@@ -61,6 +65,11 @@ func main() {
 	}
 	defer store.Close()
 	log.Println("[Aggregator] Canonical store connected and migrations applied successfully.")
+	m2cfg, err := m2.LoadConfig()
+	if err != nil {
+		log.Fatalf("[Aggregator] M2 configuration: %v", err)
+	}
+	m2runner := m2.NewRunner(m2cfg, store.Backend)
 
 	// 2. Leader election (LEADER_ELECTION; default: the store backend). Each leader-only job has
 	// its own lease, so jobs fail over independently and spread across replicas; every replica
@@ -84,6 +93,12 @@ func main() {
 	} else {
 		log.Println("[Aggregator] Starting RabbitMQ Outbox Publisher...")
 		pub.Start(ctx)
+	}
+	if m2cfg.SatelliteURL != "" {
+		jobs["satellite-stream"] = m2runner.Satellite
+	}
+	if m2cfg.CoastalURL != "" {
+		jobs["coastal-poller"] = m2runner.Coastal
 	}
 	var leaders sync.WaitGroup
 	for job, run := range jobs {
@@ -114,6 +129,20 @@ func main() {
 		log.Fatalf("[Aggregator] FATAL: Invalid JWT verifier configuration: %v", err)
 	}
 	defer verifier.Close()
+	if m2cfg.HTTPAddress != "" {
+		httpServer := &http.Server{Addr: m2cfg.HTTPAddress, Handler: m2runner.AuditHandler(verifier), ReadHeaderTimeout: 3 * time.Second, WriteTimeout: 10 * time.Second, IdleTimeout: 30 * time.Second}
+		go func() {
+			if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+				slog.Error("M2 HTTP server failed", "error", err)
+				cancel()
+			}
+		}()
+		defer func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+			defer cancel()
+			_ = httpServer.Shutdown(ctx)
+		}()
+	}
 
 	// 5. Initialize & Start gRPC Server
 	srv := grpc.NewServer(cfg, store.Hazards, store.Sources, verifier)

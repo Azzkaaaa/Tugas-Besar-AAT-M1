@@ -133,6 +133,7 @@ type Backend struct {
 	Hazards HazardStore
 	Sources SourceStateStore
 	Outbox  Outbox
+	Streams StreamStore
 	// OutboxSingleConsumer is true when at most one publisher may claim from Outbox at a time.
 	OutboxSingleConsumer bool
 	// Close releases the backend's connections.

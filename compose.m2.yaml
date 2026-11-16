@@ -1,0 +1,31 @@
+# Optional development overlay. Kubernetes demo deployment lives in infrastructure/m2.
+services:
+  aggregator-service:
+    environment:
+      SATELLITE_BASE_URL: ${SATELLITE_BASE_URL:-https://satellite.naufarrel.dev}
+      SATELLITE_TOKEN: ${SATELLITE_TOKEN:?set SATELLITE_TOKEN}
+      SATELLITE_STREAM_ID: ${SATELLITE_STREAM_ID:-satellite-practice-v1}
+      SATELLITE_ALLOWED_LATENESS: ${SATELLITE_ALLOWED_LATENESS:-24h}
+      PANTAI_BASE_URL: http://sensor-pantai:8080
+      PANTAI_AUTH_TOKEN: ${PANTAI_AUTH_TOKEN:?set PANTAI_AUTH_TOKEN}
+      PANTAI_POLL_INTERVAL: 500ms
+      PANTAI_REQUEST_TIMEOUT: 1500ms
+      PANTAI_STALE_AFTER: 2m
+      AGGREGATOR_M2_HTTP_ADDRESS: :9092
+      AUDIT_TOKEN: ${AUDIT_TOKEN:?set AUDIT_TOKEN}
+    ports: ["127.0.0.1:9092:9092"]
+  api-gateway:
+    environment:
+      AUTH_AUTHORITY: ${AUTH_AUTHORITY:-http://auth.localhost:8080}
+      AUTH_AUDIENCE: ${AUTH_AUDIENCE:-}
+      GATEWAY_RESERVED_IN_FLIGHT: "25"
+  sensor-pantai:
+    image: sustuna/sensor-pantai@sha256:51fbd90d3891ad6e9f5768ad330ffb65205644cb29e50da65c7538f2e0b4397d
+    environment:
+      PANTAI_AUTH_TOKEN: ${PANTAI_AUTH_TOKEN:?set PANTAI_AUTH_TOKEN}
+      PANTAI_PROFILE: practice
+      PANTAI_SPEED: "60"
+      PANTAI_SEED: "42"
+    networks: [bnpb_net]
+    restart: unless-stopped
+    mem_limit: 256m

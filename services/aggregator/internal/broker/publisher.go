@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/aggregator/internal/config"
+	"github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/aggregator/internal/domain"
 	"github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/aggregator/internal/leader"
 	"github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/aggregator/internal/storage"
 	"github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/aggregator/internal/telemetry"
@@ -160,7 +161,7 @@ func (p *OutboxPublisher) processOutboxLoop(ctx context.Context) {
 					log.Printf("[OutboxPublisher] Failed to publish outbox event %s (hazard=%s, retry=%d): %v",
 						rec.EventID, rec.HazardID, rec.RetryCount, pubErr)
 
-					if rec.RetryCount+1 >= maxRetries {
+					if rec.RetryCount+1 >= maxRetries && rec.Source != domain.SourceCoastal {
 						log.Printf("[OutboxPublisher] Outbox event %s reached max retries (%d), marking as failed", rec.EventID, maxRetries)
 						_ = p.outbox.DeadLetter(ctx, rec, pubErr.Error())
 					} else {

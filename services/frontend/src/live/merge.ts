@@ -2,6 +2,10 @@ import type { Hazard, HazardFilters } from '../types';
 
 /** Mirrors the Gateway list filters the dashboard sends; until/hazard_type are not used there. */
 export function matchesFilters(hazard: Hazard, filters: HazardFilters): boolean {
+  if ('attributes' in hazard && hazard.attributes.withdrawn === true) return false;
+  // Active WILDFIRE is always at least WASPADA; NORMAL is its withdrawal revision
+  // and remains recognizable even in the strictly limited summary projection.
+  if (hazard.hazard_type === 'WILDFIRE' && hazard.severity === 'NORMAL') return false;
   if (filters.source && hazard.source !== filters.source) return false;
   if (filters.hazard_type && hazard.hazard_type !== filters.hazard_type) return false;
   if (filters.severity && hazard.severity !== filters.severity) return false;

@@ -24,6 +24,8 @@ menampilkan dashboard.
 
 ## Prasyarat
 
+Milestone 2 problem 4–5: [implementasi, deployment, pengujian, dan batas pembuktian](docs/m2-problems-4-5.md).
+
 **Untuk menjalankan sistem** (semua service dikompilasi di dalam Docker; satu
 langkah generasi kode .NET berjalan di host, lihat langkah 2):
 

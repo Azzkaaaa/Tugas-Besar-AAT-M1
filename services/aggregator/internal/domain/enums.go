@@ -9,11 +9,15 @@ import (
 // Canonical string values stored for hazards and source state. These are the only place the
 // strings are spelled out; every other package uses the constants.
 const (
-	SourceBMKG  = "BMKG"
-	SourcePVMBG = "PVMBG"
+	SourceBMKG      = "BMKG"
+	SourcePVMBG     = "PVMBG"
+	SourceSatellite = "SATELIT"
+	SourceCoastal   = "SENSOR_PANTAI"
 
 	HazardTypeSeismic  = "SEISMIC"
 	HazardTypeVolcanic = "VOLCANIC"
+	HazardTypeWildfire = "WILDFIRE"
+	HazardTypeCoastal  = "COASTAL"
 
 	SeverityNormal  = "NORMAL"
 	SeverityWaspada = "WASPADA"
@@ -31,6 +35,8 @@ type SourceKey string
 const (
 	SourceKeyBMKGSeismic   SourceKey = "bmkg_seismic"
 	SourceKeyPVMBGVolcanic SourceKey = "pvmbg_volcanic"
+	SourceKeySatellite     SourceKey = "satelit_wildfire"
+	SourceKeyCoastal       SourceKey = "sensor_pantai_coastal"
 )
 
 // AllSources lists every source with the key of its ingest stream, in display order.
@@ -40,6 +46,8 @@ var AllSources = []struct {
 }{
 	{SourceBMKG, SourceKeyBMKGSeismic},
 	{SourcePVMBG, SourceKeyPVMBGVolcanic},
+	{SourceSatellite, SourceKeySatellite},
+	{SourceCoastal, SourceKeyCoastal},
 }
 
 // SourceKeyFor returns the ingest stream of a source ("" when unknown).
@@ -54,6 +62,11 @@ func SourceKeyFor(source string) SourceKey {
 
 // SourceOf returns the source a key belongs to ("BMKG" for "bmkg_seismic").
 func SourceOf(key SourceKey) string {
+	for _, s := range AllSources {
+		if s.Key == key {
+			return s.Source
+		}
+	}
 	head, _, _ := strings.Cut(string(key), "_")
 	return strings.ToUpper(head)
 }
@@ -64,6 +77,10 @@ func SourceToProto(s string) commonv1.Source {
 		return commonv1.Source_SOURCE_BMKG
 	case SourcePVMBG:
 		return commonv1.Source_SOURCE_PVMBG
+	case SourceSatellite:
+		return commonv1.Source_SOURCE_SATELITE
+	case SourceCoastal:
+		return commonv1.Source_SOURCE_COAST_SENSOR
 	}
 	return commonv1.Source_SOURCE_UNSPECIFIED
 }
@@ -75,6 +92,10 @@ func SourceFromProto(s commonv1.Source) string {
 		return SourceBMKG
 	case commonv1.Source_SOURCE_PVMBG:
 		return SourcePVMBG
+	case commonv1.Source_SOURCE_SATELITE:
+		return SourceSatellite
+	case commonv1.Source_SOURCE_COAST_SENSOR:
+		return SourceCoastal
 	}
 	return ""
 }
@@ -85,6 +106,10 @@ func HazardTypeToProto(t string) commonv1.HazardType {
 		return commonv1.HazardType_HAZARD_TYPE_SEISMIC
 	case HazardTypeVolcanic:
 		return commonv1.HazardType_HAZARD_TYPE_VOLCANIC
+	case HazardTypeWildfire:
+		return commonv1.HazardType_HAZARD_TYPE_WILDFIRE
+	case HazardTypeCoastal:
+		return commonv1.HazardType_HAZARD_TYPE_COASTAL
 	}
 	return commonv1.HazardType_HAZARD_TYPE_UNSPECIFIED
 }
@@ -95,6 +120,10 @@ func HazardTypeFromProto(t commonv1.HazardType) string {
 		return HazardTypeSeismic
 	case commonv1.HazardType_HAZARD_TYPE_VOLCANIC:
 		return HazardTypeVolcanic
+	case commonv1.HazardType_HAZARD_TYPE_WILDFIRE:
+		return HazardTypeWildfire
+	case commonv1.HazardType_HAZARD_TYPE_COASTAL:
+		return HazardTypeCoastal
 	}
 	return ""
 }

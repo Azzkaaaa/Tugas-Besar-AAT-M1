@@ -48,4 +48,13 @@ describe('live feed merge', () => {
     expect(isNotificationWorthy(hazard('a', 1, { severity: 'AWAS' }))).toBe(true);
     expect(isNotificationWorthy(hazard('a', 1, { severity: 'WASPADA' }))).toBe(false);
   });
+
+  it('removes a retracted wildfire for both full and summary subscribers', () => {
+    const fire = hazard('fire', 1, { source: 'SATELITE', hazard_type: 'WILDFIRE', severity: 'WASPADA' });
+    const withdrawn = { ...fire, severity: 'NORMAL' as const, ingested_at: new Date(Date.parse(fire.ingested_at) + 1).toISOString() };
+    expect(upsertHazard([fire], withdrawn, {})).toEqual([]);
+    const full: HazardFull = { ...withdrawn, source_ref_id: 'fire', latitude: 0, longitude: 0, attributes: { withdrawn: true } };
+    expect(upsertHazard([fire], full, {})).toEqual([]);
+    expect(upsertHazard([], withdrawn, {})).toEqual([]);
+  });
 });

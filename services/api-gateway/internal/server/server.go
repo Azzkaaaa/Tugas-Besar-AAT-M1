@@ -39,17 +39,23 @@ type Options struct {
 	MaxInFlight       int
 	RetryAfterSeconds int
 	Heartbeat         time.Duration
+	ReservedInFlight  int
+	PriorityAllowed   func(*http.Request) bool
 }
 
 type gateway struct {
-	contract   *contract.Contract
-	retryAfter int
-	inFlight   chan struct{}
+	contract        *contract.Contract
+	retryAfter      int
+	inFlight        chan struct{}
+	reserved        chan struct{}
+	priorityAllowed func(*http.Request) bool
 }
 
 // New returns the gateway handler.
 func New(opts Options) http.Handler {
-	g := &gateway{contract: opts.Contract, retryAfter: opts.RetryAfterSeconds, inFlight: make(chan struct{}, max(opts.MaxInFlight, 1))}
+	capacity := max(opts.MaxInFlight, 1)
+	reserve := min(max(opts.ReservedInFlight, 0), capacity-1)
+	g := &gateway{contract: opts.Contract, retryAfter: opts.RetryAfterSeconds, inFlight: make(chan struct{}, capacity-reserve), reserved: make(chan struct{}, reserve), priorityAllowed: opts.PriorityAllowed}
 	strict := gw.NewStrictHandlerWithOptions(
 		&handlers.Handlers{Clients: opts.Clients, Timeout: opts.RequestTimeout, Heartbeat: opts.Heartbeat},
 		[]gw.StrictMiddlewareFunc{g.limit},
@@ -170,6 +176,14 @@ func (g *gateway) limit(next gw.StrictHandlerFunc, operationID string) gw.Strict
 			defer func() { <-g.inFlight }()
 			return next(ctx, w, r, request)
 		default:
+			if g.priorityAllowed != nil && g.priorityAllowed(r) {
+				select {
+				case g.reserved <- struct{}{}:
+					defer func() { <-g.reserved }()
+					return next(ctx, w, r, request)
+				default:
+				}
+			}
 			return nil, problem.New(http.StatusTooManyRequests, "Too many requests; retry later.")
 		}
 	}

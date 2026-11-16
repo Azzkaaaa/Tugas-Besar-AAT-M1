@@ -137,6 +137,9 @@ func applyRevision(ctx context.Context, tx pgx.Tx, rev *domain.HazardRecord) (*d
 	}
 
 	// Existing record: keep ingested_at.
+	if domain.StreamSequence(existing) > domain.StreamSequence(&h) {
+		return existing, false, nil
+	}
 	h.IngestedAt = existing.IngestedAt
 	h.Revision = existing.Revision
 	if sameContent(existing, &h) {
@@ -176,7 +179,7 @@ func (s hazards) Get(ctx context.Context, hazardID string) (*domain.HazardRecord
 }
 
 func (s hazards) List(ctx context.Context, q storage.HazardQuery, page storage.PageRequest) (storage.HazardPage, error) {
-	where := []string{"1=1"}
+	where := []string{"COALESCE(attributes->>'withdrawn', 'false') <> 'true'"}
 	args := []any{}
 	arg := func(v any) string {
 		args = append(args, v)
