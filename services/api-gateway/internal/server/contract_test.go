@@ -363,6 +363,58 @@ func feedEvent(seq uint64, projection *commonv1.HazardProjection) *feedv1.FeedEv
 
 // ---- tests -------------------------------------------------------------------------------
 
+func TestM2CanonicalSourceLabelsRoundTripThroughREST(t *testing.T) {
+	for _, tc := range []struct {
+		label  string
+		source commonv1.Source
+		kind   commonv1.HazardType
+	}{
+		{"SATELIT", commonv1.Source_SOURCE_SATELITE, commonv1.HazardType_HAZARD_TYPE_WILDFIRE},
+		{"SENSOR_PANTAI", commonv1.Source_SOURCE_COAST_SENSOR, commonv1.HazardType_HAZARD_TYPE_COASTAL},
+	} {
+		t.Run(tc.label, func(t *testing.T) {
+			h := newHarness(t)
+			item := summary("m2-hazard")
+			item.GetSummary().Source = tc.source
+			item.GetSummary().HazardType = tc.kind
+			h.backend.reply("ListHazards", reply(&aggregatorv1.ListHazardsResponse{
+				Items: []*commonv1.HazardProjection{item}, Freshness: []*commonv1.SourceFreshness{
+					{Source: tc.source, Status: commonv1.SourceStatus_SOURCE_STATUS_FRESH, LastSuccessAt: now},
+				},
+			}))
+			r := h.do("GET", "/api/v1/hazards?source="+tc.label, nil, nil)
+			if r.status != 200 {
+				t.Fatalf("canonical filter rejected: %d %s", r.status, r.body)
+			}
+			req := h.backend.request("ListHazards").(*aggregatorv1.ListHazardsRequest)
+			if req.GetFilter().GetSource() != tc.source {
+				t.Fatal("source filter changed across REST/gRPC")
+			}
+			items := r.json(t)["items"].([]any)
+			if items[0].(map[string]any)["source"] != tc.label {
+				t.Fatalf("noncanonical source in %s", r.body)
+			}
+		})
+	}
+}
+
+func TestM2AllFourSourcesFitThePublicContract(t *testing.T) {
+	h := newHarness(t)
+	statuses := freshness()
+	for _, source := range []commonv1.Source{commonv1.Source_SOURCE_SATELITE, commonv1.Source_SOURCE_COAST_SENSOR} {
+		statuses = append(statuses, &commonv1.SourceFreshness{
+			Source: source, Status: commonv1.SourceStatus_SOURCE_STATUS_FRESH, LastSuccessAt: now,
+		})
+	}
+	h.backend.reply("ListHazards", reply(&aggregatorv1.ListHazardsResponse{
+		Items: []*commonv1.HazardProjection{summary("m2")}, Freshness: statuses,
+	}))
+	r := h.do("GET", "/api/v1/hazards", nil, nil)
+	if r.status != 200 || len(r.json(t)["freshness"].([]any)) != 4 {
+		t.Fatalf("four-source page failed: %s", r.body)
+	}
+}
+
 func TestContract(t *testing.T) {
 	h := newHarness(t)
 	b := h.backend

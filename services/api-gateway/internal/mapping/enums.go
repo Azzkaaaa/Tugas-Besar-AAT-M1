@@ -63,10 +63,10 @@ func (e enum[L, P]) optionalLabel(value P) (*L, error) {
 
 var (
 	sources = newEnum("source", map[gw.Source]commonv1.Source{
-		gw.BMKG:        commonv1.Source_SOURCE_BMKG,
-		gw.PVMBG:       commonv1.Source_SOURCE_PVMBG,
-		gw.SATELITE:    commonv1.Source_SOURCE_SATELITE,
-		gw.COASTSENSOR: commonv1.Source_SOURCE_COAST_SENSOR,
+		gw.BMKG:         commonv1.Source_SOURCE_BMKG,
+		gw.PVMBG:        commonv1.Source_SOURCE_PVMBG,
+		gw.SATELIT:      commonv1.Source_SOURCE_SATELITE,
+		gw.SENSORPANTAI: commonv1.Source_SOURCE_COAST_SENSOR,
 	})
 	hazardTypes = newEnum("hazard_type", map[gw.HazardType]commonv1.HazardType{
 		gw.SEISMIC:  commonv1.HazardType_HAZARD_TYPE_SEISMIC,

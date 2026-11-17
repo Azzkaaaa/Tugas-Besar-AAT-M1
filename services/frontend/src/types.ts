@@ -1,5 +1,5 @@
 export type Role = 'MEDIA' | 'FIELD_TEAM' | 'BNPB_INTERNAL';
-export type Source = 'BMKG' | 'PVMBG' | 'SATELITE' | 'COAST_SENSOR';
+export type Source = 'BMKG' | 'PVMBG' | 'SATELIT' | 'SENSOR_PANTAI';
 export type HazardType = 'SEISMIC' | 'VOLCANIC' | 'WILDFIRE' | 'COASTAL';
 export type Severity = 'NORMAL' | 'WASPADA' | 'SIAGA' | 'AWAS';
 export type HazardView = 'summary' | 'full';

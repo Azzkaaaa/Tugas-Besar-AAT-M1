@@ -921,7 +921,7 @@ components:
   schemas:
     Source:
       type: string
-      enum: [BMKG, PVMBG, SATELITE, COAST_SENSOR]
+      enum: [BMKG, PVMBG, SATELIT, SENSOR_PANTAI]
     HazardType:
       type: string
       enum: [SEISMIC, VOLCANIC, WILDFIRE, COASTAL]
@@ -1032,7 +1032,7 @@ components:
         freshness:
           type: array
           minItems: 1
-          maxItems: 2
+          maxItems: 4
           items:
             $ref: '#/components/schemas/Freshness'
         partial:
@@ -1133,7 +1133,7 @@ components:
         freshness:
           type: array
           minItems: 1
-          maxItems: 2
+          maxItems: 4
           items:
             $ref: '#/components/schemas/Freshness'
         partial:
