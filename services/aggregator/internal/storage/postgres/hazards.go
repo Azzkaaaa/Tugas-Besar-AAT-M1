@@ -17,6 +17,8 @@ import (
 
 type hazards struct{ db *DB }
 
+func (s hazards) CheckReadiness(ctx context.Context) error { return s.db.Pool.Ping(ctx) }
+
 type PageCursor struct {
 	OccurredAt time.Time `json:"o"`
 	HazardID   string    `json:"h"`

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"time"
 
 	aggregatorv1 "github.com/Azzkaaaa/Tugas-Besar-AAT-M1/packages/bnpb-aggregator-go/bnpb/aggregator/v1"
 	commonv1 "github.com/Azzkaaaa/Tugas-Besar-AAT-M1/packages/bnpb-aggregator-go/bnpb/common/v1"
@@ -54,13 +55,21 @@ func (s *Server) Start(ctx context.Context) error {
 	aggregatorv1.RegisterFieldReportServiceServer(grpcSrv, fieldReportService{store: s.reports})
 	healthSrv := health.NewServer()
 	healthSrv.SetServingStatus("", healthpb.HealthCheckResponse_SERVING)
+	healthSrv.SetServingStatus("readiness", healthpb.HealthCheckResponse_NOT_SERVING)
 	healthpb.RegisterHealthServer(grpcSrv, healthSrv)
+	readinessDone := make(chan struct{})
+	go func() {
+		defer close(readinessDone)
+		monitorReadiness(ctx, healthSrv, s.hazards, 2*time.Second, 800*time.Millisecond)
+	}()
 	go func() {
 		if err := grpcSrv.Serve(lis); err != nil {
 			fmt.Printf("gRPC server stopped: %v\n", err)
 		}
 	}()
 	<-ctx.Done()
+	<-readinessDone
+	healthSrv.Shutdown()
 	grpcSrv.GracefulStop()
 	return nil
 }

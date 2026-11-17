@@ -17,6 +17,12 @@ import (
 
 type hazards struct{ db *DB }
 
+func (s hazards) CheckReadiness(ctx context.Context) error {
+	var version string
+	return s.db.session.Query(`SELECT release_version FROM system.local`).WithContext(ctx).
+		Consistency(gocql.One).Scan(&version)
+}
+
 // scopeAll is the hazard_buckets scope that indexes buckets of every source.
 const scopeAll = "*"
 

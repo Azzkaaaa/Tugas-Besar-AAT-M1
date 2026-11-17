@@ -72,6 +72,13 @@ type HazardPage struct {
 	NextToken string
 }
 
+// ReadinessChecker tests this instance's ability to reach its storage. It must
+// not require every replica/range: partial reads remain useful during node loss.
+// Implementations must respect the caller's deadline.
+type ReadinessChecker interface {
+	CheckReadiness(context.Context) error
+}
+
 // SourceState is what the store remembers about one ingest stream.
 type SourceState struct {
 	// Watermark is the newest OccurredAt ingested successfully (zero before the first success).
