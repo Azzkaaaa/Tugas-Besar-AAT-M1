@@ -11,7 +11,14 @@ import (
 
 // ServiceConfig balances calls over every address the resolver returns, instead of the default
 // pick_first, which sends every call of a channel to one replica.
-const ServiceConfig = `{"loadBalancingConfig":[{"round_robin":{}}]}`
+// Aggregator methods are reads, so a transport failure while a pod drains can be
+// retried safely within the caller's deadline. Do not apply retries to unrelated
+// services, whose write methods may not have an idempotency contract.
+const ServiceConfig = `{"loadBalancingConfig":[{"round_robin":{}}],"methodConfig":[{
+  "name":[{"service":"bnpb.aggregator.v1.AggregatorService"}],
+  "retryPolicy":{"maxAttempts":3,"initialBackoff":"0.05s","maxBackoff":"0.5s",
+    "backoffMultiplier":2,"retryableStatusCodes":["UNAVAILABLE"]}
+}]}`
 
 // Dial connects to address (host:port). The name is resolved through DNS and looked up again
 // every refresh, so replicas that start or stop are picked up without waiting for a connection

@@ -2,6 +2,7 @@ package backend
 
 import (
 	"context"
+	aggregatorv1 "github.com/Azzkaaaa/Tugas-Besar-AAT-M1/packages/bnpb-aggregator-go/bnpb/aggregator/v1"
 	"net"
 	"sync"
 	"sync/atomic"
@@ -9,11 +10,49 @@ import (
 	"time"
 
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/health"
 	healthpb "google.golang.org/grpc/health/grpc_health_v1"
 	"google.golang.org/grpc/resolver"
+	"google.golang.org/grpc/status"
 )
+
+type drainingAggregator struct {
+	aggregatorv1.UnimplementedAggregatorServiceServer
+	calls atomic.Int32
+}
+
+func (s *drainingAggregator) ListHazards(context.Context, *aggregatorv1.ListHazardsRequest) (*aggregatorv1.ListHazardsResponse, error) {
+	if s.calls.Add(1) == 1 {
+		return nil, status.Error(codes.Unavailable, "pod draining")
+	}
+	return &aggregatorv1.ListHazardsResponse{}, nil
+}
+
+func TestReadRetriesTransientDrainWithinDeadline(t *testing.T) {
+	lis, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := grpc.NewServer()
+	service := &drainingAggregator{}
+	aggregatorv1.RegisterAggregatorServiceServer(server, service)
+	go func() { _ = server.Serve(lis) }()
+	t.Cleanup(server.Stop)
+	dns := &fakeDNS{}
+	dns.set(lis.Addr().String())
+	conn := dialFake(t, dns, time.Hour)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	_, err = aggregatorv1.NewAggregatorServiceClient(conn).ListHazards(ctx, &aggregatorv1.ListHazardsRequest{})
+	if err != nil {
+		t.Fatalf("read failed during transient drain: %v", err)
+	}
+	if service.calls.Load() != 2 {
+		t.Fatalf("attempts=%d, want 2", service.calls.Load())
+	}
+}
 
 // replica is an in-process gRPC server that counts the calls it serves.
 type replica struct {
