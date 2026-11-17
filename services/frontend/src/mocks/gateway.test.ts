@@ -20,6 +20,7 @@ describe('Gateway fixture contract', () => {
     const page = await client.listHazards();
     expect(Object.keys(page.items[0]).sort()).toEqual(summaryKeys);
     const detail = await client.getHazard(page.items[0].hazard_id);
+    if (!detail.item) throw new Error('Healthy fixture unexpectedly returned an incomplete detail');
     expect(Object.keys(detail.item).sort()).toEqual(summaryKeys);
     const notifications = await client.listNotifications();
     expect(Object.keys(notifications.items[0].hazard).sort()).toEqual(summaryKeys);

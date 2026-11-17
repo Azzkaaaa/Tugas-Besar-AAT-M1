@@ -85,17 +85,17 @@ func (x *ListHazardsRequest) GetPage() *v1.PageRequest {
 
 type ListHazardsResponse struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// Frozen snapshot ordered by occurred_at descending, hazard_id ascending.
+	// Ordered by occurred_at descending, hazard_id ascending.
 	Items         []*v1.HazardProjection `protobuf:"bytes,1,rep,name=items,proto3" json:"items,omitempty"`
 	NextPageToken string                 `protobuf:"bytes,2,opt,name=next_page_token,json=nextPageToken,proto3" json:"next_page_token,omitempty"`
 	// All sources relevant to the filter, including sources with no matches.
 	Freshness []*v1.SourceFreshness `protobuf:"bytes,3,rep,name=freshness,proto3" json:"freshness,omitempty"`
-	// True iff at least one relevant source is STALE or UNAVAILABLE. Return cached
-	// records when usable; if every relevant source is UNAVAILABLE, fail the RPC
-	// with UNAVAILABLE rather than returning a misleading empty success.
-	Partial       bool `protobuf:"varint,4,opt,name=partial,proto3" json:"partial,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	// True if source data is stale or some storage units could not be read.
+	// A partial page's cursor must be retried before advancing past missing data.
+	Partial          bool     `protobuf:"varint,4,opt,name=partial,proto3" json:"partial,omitempty"`
+	UnavailableUnits []string `protobuf:"bytes,5,rep,name=unavailable_units,json=unavailableUnits,proto3" json:"unavailable_units,omitempty"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
 }
 
 func (x *ListHazardsResponse) Reset() {
@@ -156,6 +156,13 @@ func (x *ListHazardsResponse) GetPartial() bool {
 	return false
 }
 
+func (x *ListHazardsResponse) GetUnavailableUnits() []string {
+	if x != nil {
+		return x.UnavailableUnits
+	}
+	return nil
+}
+
 type GetHazardRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	HazardId      string                 `protobuf:"bytes,1,opt,name=hazard_id,json=hazardId,proto3" json:"hazard_id,omitempty"`
@@ -210,12 +217,15 @@ func (x *GetHazardRequest) GetView() v1.View {
 
 type GetHazardResponse struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	Item  *v1.HazardProjection   `protobuf:"bytes,1,opt,name=item,proto3" json:"item,omitempty"`
+	// Absent when the record's storage is unavailable (partial=true), which is
+	// distinct from an authoritative NOT_FOUND response.
+	Item *v1.HazardProjection `protobuf:"bytes,1,opt,name=item,proto3" json:"item,omitempty"`
 	// Exactly one entry: the returned hazard's source.
-	Freshness     []*v1.SourceFreshness `protobuf:"bytes,2,rep,name=freshness,proto3" json:"freshness,omitempty"`
-	Partial       bool                  `protobuf:"varint,3,opt,name=partial,proto3" json:"partial,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	Freshness        []*v1.SourceFreshness `protobuf:"bytes,2,rep,name=freshness,proto3" json:"freshness,omitempty"`
+	Partial          bool                  `protobuf:"varint,3,opt,name=partial,proto3" json:"partial,omitempty"`
+	UnavailableUnits []string              `protobuf:"bytes,4,rep,name=unavailable_units,json=unavailableUnits,proto3" json:"unavailable_units,omitempty"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
 }
 
 func (x *GetHazardResponse) Reset() {
@@ -267,6 +277,13 @@ func (x *GetHazardResponse) GetPartial() bool {
 		return x.Partial
 	}
 	return false
+}
+
+func (x *GetHazardResponse) GetUnavailableUnits() []string {
+	if x != nil {
+		return x.UnavailableUnits
+	}
+	return nil
 }
 
 type GetSourceStatusesRequest struct {
@@ -357,19 +374,21 @@ const file_bnpb_aggregator_v1_aggregator_proto_rawDesc = "" +
 	"\x12ListHazardsRequest\x124\n" +
 	"\x06filter\x18\x01 \x01(\v2\x1c.bnpb.common.v1.HazardFilterR\x06filter\x12(\n" +
 	"\x04view\x18\x02 \x01(\x0e2\x14.bnpb.common.v1.ViewR\x04view\x12/\n" +
-	"\x04page\x18\x03 \x01(\v2\x1b.bnpb.common.v1.PageRequestR\x04page\"\xce\x01\n" +
+	"\x04page\x18\x03 \x01(\v2\x1b.bnpb.common.v1.PageRequestR\x04page\"\xfb\x01\n" +
 	"\x13ListHazardsResponse\x126\n" +
 	"\x05items\x18\x01 \x03(\v2 .bnpb.common.v1.HazardProjectionR\x05items\x12&\n" +
 	"\x0fnext_page_token\x18\x02 \x01(\tR\rnextPageToken\x12=\n" +
 	"\tfreshness\x18\x03 \x03(\v2\x1f.bnpb.common.v1.SourceFreshnessR\tfreshness\x12\x18\n" +
-	"\apartial\x18\x04 \x01(\bR\apartial\"Y\n" +
+	"\apartial\x18\x04 \x01(\bR\apartial\x12+\n" +
+	"\x11unavailable_units\x18\x05 \x03(\tR\x10unavailableUnits\"Y\n" +
 	"\x10GetHazardRequest\x12\x1b\n" +
 	"\thazard_id\x18\x01 \x01(\tR\bhazardId\x12(\n" +
-	"\x04view\x18\x02 \x01(\x0e2\x14.bnpb.common.v1.ViewR\x04view\"\xa2\x01\n" +
+	"\x04view\x18\x02 \x01(\x0e2\x14.bnpb.common.v1.ViewR\x04view\"\xcf\x01\n" +
 	"\x11GetHazardResponse\x124\n" +
 	"\x04item\x18\x01 \x01(\v2 .bnpb.common.v1.HazardProjectionR\x04item\x12=\n" +
 	"\tfreshness\x18\x02 \x03(\v2\x1f.bnpb.common.v1.SourceFreshnessR\tfreshness\x12\x18\n" +
-	"\apartial\x18\x03 \x01(\bR\apartial\"\x1a\n" +
+	"\apartial\x18\x03 \x01(\bR\apartial\x12+\n" +
+	"\x11unavailable_units\x18\x04 \x03(\tR\x10unavailableUnits\"\x1a\n" +
 	"\x18GetSourceStatusesRequest\"Z\n" +
 	"\x19GetSourceStatusesResponse\x12=\n" +
 	"\tfreshness\x18\x01 \x03(\v2\x1f.bnpb.common.v1.SourceFreshnessR\tfreshness2\xa8\x03\n" +

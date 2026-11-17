@@ -7,6 +7,15 @@ vi.mock('../auth/session', () => ({ refreshSession: vi.fn(), getCsrfToken: vi.fn
 afterEach(() => vi.unstubAllGlobals());
 
 describe('Gateway HTTP adapter', () => {
+  it('preserves a partial storage result without inventing a missing hazard', async () => {
+    const partial = { partial: true, freshness: [], unavailable_units: ['canonical'] };
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify(partial), {
+      status: 200, headers: { 'Content-Type': 'application/json' },
+    })));
+    const result = await createHttpGatewayClient('/api/v1').getHazard('unreachable');
+    expect(result).toEqual(partial);
+    expect(result.item).toBeUndefined();
+  });
   it('rejects cross-origin cookie API configuration before a request', () => {
     const fetchMock = vi.fn();
     vi.stubGlobal('fetch', fetchMock);

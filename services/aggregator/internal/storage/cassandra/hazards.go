@@ -339,6 +339,7 @@ func (s hazards) HasData(ctx context.Context, source string) (bool, error) {
 type pageCursor struct {
 	OccurredAt time.Time `json:"o"`
 	HazardID   string    `json:"h"`
+	Restart    bool      `json:"r,omitempty"`
 }
 
 func encodeCursor(h *domain.HazardRecord) string {
@@ -357,6 +358,9 @@ func decodeCursor(s string) (*pageCursor, error) {
 	var c pageCursor
 	if err := json.Unmarshal(b, &c); err != nil {
 		return nil, err
+	}
+	if c.Restart && c.OccurredAt.IsZero() && c.HazardID == "" {
+		return nil, nil
 	}
 	if c.OccurredAt.IsZero() || c.HazardID == "" {
 		return nil, errors.New("incomplete cursor")
@@ -397,25 +401,49 @@ func (s hazards) List(ctx context.Context, q storage.HazardQuery, page storage.P
 	}
 	buckets := s.db.session.Query(stmt, args...).WithContext(ctx).PageSize(200).Iter()
 
-	var out storage.HazardPage
-	var bucket time.Time
-	for len(out.Items) <= page.Size && buckets.Scan(&bucket) {
-		items, err := s.readBucket(ctx, bucket, q, since, until, cursor, page.Size+1-len(out.Items))
-		if err != nil {
-			_ = buckets.Close()
-			return storage.HazardPage{}, err
-		}
-		out.Items = append(out.Items, items...)
-	}
-	if err := buckets.Close(); err != nil {
-		return storage.HazardPage{}, fmt.Errorf("failed listing hazard buckets: %w", err)
-	}
+	return collectBuckets(ctx, buckets, scope, page, func(bucket time.Time, want int) ([]*domain.HazardRecord, error) {
+		unitCtx, cancel := context.WithTimeout(ctx, 250*time.Millisecond)
+		defer cancel()
+		return s.readBucket(unitCtx, bucket, q, since, until, cursor, want)
+	}), nil
+}
 
+type bucketIterator interface {
+	Scan(...any) bool
+	Close() error
+}
+
+// Preserve successful ranges even when a different range fails. A partial page
+// deliberately retries its incoming cursor: advancing it could permanently hide
+// records in an unavailable newer bucket once that bucket recovers.
+func collectBuckets(ctx context.Context, buckets bucketIterator, scope string, page storage.PageRequest,
+	read func(time.Time, int) ([]*domain.HazardRecord, error),
+) storage.HazardPage {
+	out := storage.HazardPage{}
+	var bucket time.Time
+	for len(out.Items) <= page.Size && ctx.Err() == nil && buckets.Scan(&bucket) {
+		items, err := read(bucket, page.Size+1-len(out.Items))
+		out.Items = append(out.Items, items...)
+		if err != nil {
+			out.UnavailableUnits = append(out.UnavailableUnits, "hazard-bucket:"+bucket.UTC().Format(time.RFC3339Nano))
+		}
+	}
+	if err := buckets.Close(); err != nil || ctx.Err() != nil {
+		out.UnavailableUnits = append(out.UnavailableUnits, "hazard-index:"+scope)
+	}
+	out.Partial = len(out.UnavailableUnits) > 0
 	if len(out.Items) > page.Size {
 		out.NextToken = encodeCursor(out.Items[page.Size-1])
 		out.Items = out.Items[:page.Size]
 	}
-	return out, nil
+	if out.Partial {
+		out.NextToken = page.Token
+		if out.NextToken == "" {
+			b, _ := json.Marshal(pageCursor{Restart: true})
+			out.NextToken = base64.RawURLEncoding.EncodeToString(b)
+		}
+	}
+	return out
 }
 
 // readBucket returns up to want matching rows of one bucket, in List order.
@@ -461,7 +489,7 @@ func (s hazards) readBucket(ctx context.Context, bucket time.Time, q storage.Haz
 		}
 	}
 	if err := scanner.Err(); err != nil {
-		return nil, fmt.Errorf("failed reading hazard bucket: %w", err)
+		return out, fmt.Errorf("failed reading hazard bucket: %w", err)
 	}
 	return out, nil
 }

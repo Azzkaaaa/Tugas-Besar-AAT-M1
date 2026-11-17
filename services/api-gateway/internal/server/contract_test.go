@@ -415,6 +415,27 @@ func TestM2AllFourSourcesFitThePublicContract(t *testing.T) {
 	}
 }
 
+func TestPartialStorageResultsRemainUsableThroughREST(t *testing.T) {
+	h := newHarness(t)
+	h.backend.reply("ListHazards", reply(&aggregatorv1.ListHazardsResponse{
+		Items: []*commonv1.HazardProjection{summary("available")}, Freshness: freshness(),
+		Partial: true, UnavailableUnits: []string{"bucket-2"}, NextPageToken: "retry-interval",
+	}))
+	page := h.do("GET", "/api/v1/hazards", nil, nil)
+	body := page.json(t)
+	if page.status != 200 || body["partial"] != true || len(body["items"].([]any)) != 1 || body["unavailable_units"].([]any)[0] != "bucket-2" {
+		t.Fatalf("%s", page.body)
+	}
+	h.backend.reply("GetHazard", reply(&aggregatorv1.GetHazardResponse{Partial: true, UnavailableUnits: []string{"canonical"}}))
+	item := h.do("GET", "/api/v1/hazards/unreachable", nil, nil)
+	if item.status != 200 || item.json(t)["partial"] != true {
+		t.Fatalf("%s", item.body)
+	}
+	if _, present := item.json(t)["item"]; present {
+		t.Fatal("invented record during storage failure")
+	}
+}
+
 func TestContract(t *testing.T) {
 	h := newHarness(t)
 	b := h.backend

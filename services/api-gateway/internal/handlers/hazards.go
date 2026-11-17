@@ -2,11 +2,13 @@ package handlers
 
 import (
 	"context"
+	"errors"
 
 	aggregatorv1 "github.com/Azzkaaaa/Tugas-Besar-AAT-M1/packages/bnpb-aggregator-go/bnpb/aggregator/v1"
 	gw "github.com/Azzkaaaa/Tugas-Besar-AAT-M1/packages/bnpb-gateway-go/gatewayapi"
 
 	"github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/api-gateway/internal/mapping"
+	"github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/api-gateway/internal/problem"
 )
 
 func (h *Handlers) ListHazards(ctx context.Context, request gw.ListHazardsRequestObject) (gw.ListHazardsResponseObject, error) {
@@ -34,10 +36,11 @@ func (h *Handlers) ListHazards(ctx context.Context, request gw.ListHazardsReques
 		return nil, err
 	}
 	return gw.ListHazards200JSONResponse{Body: gw.HazardPage{
-		Items:         items,
-		NextPageToken: mapping.Optional(resp.GetNextPageToken()),
-		Freshness:     freshness,
-		Partial:       resp.GetPartial(),
+		Items:            items,
+		NextPageToken:    mapping.Optional(resp.GetNextPageToken()),
+		Freshness:        freshness,
+		Partial:          resp.GetPartial(),
+		UnavailableUnits: mapping.OptionalSlice(resp.GetUnavailableUnits()),
 	}}, nil
 }
 
@@ -52,15 +55,21 @@ func (h *Handlers) GetHazard(ctx context.Context, request gw.GetHazardRequestObj
 	if err != nil {
 		return nil, upstream(err)
 	}
-	item, err := mapping.Hazard(resp.GetItem(), view)
-	if err != nil {
-		return nil, err
+	var item *gw.Hazard
+	if resp.GetItem() != nil {
+		mapped, err := mapping.Hazard(resp.GetItem(), view)
+		if err != nil {
+			return nil, err
+		}
+		item = &mapped
+	} else if !resp.GetPartial() {
+		return nil, problem.InvalidUpstream(errors.New("complete response omitted hazard"))
 	}
 	freshness, err := mapping.Freshness(resp.GetFreshness())
 	if err != nil {
 		return nil, err
 	}
-	return gw.GetHazard200JSONResponse{Body: gw.HazardResult{Item: item, Freshness: freshness, Partial: resp.GetPartial()}}, nil
+	return gw.GetHazard200JSONResponse{Body: gw.HazardResult{Item: item, Freshness: freshness, Partial: resp.GetPartial(), UnavailableUnits: mapping.OptionalSlice(resp.GetUnavailableUnits())}}, nil
 }
 
 func (h *Handlers) GetSourceStatuses(ctx context.Context, _ gw.GetSourceStatusesRequestObject) (gw.GetSourceStatusesResponseObject, error) {

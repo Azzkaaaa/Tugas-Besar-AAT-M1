@@ -79,3 +79,11 @@ func Optional[T comparable](value T) *T {
 	}
 	return &value
 }
+
+// OptionalSlice omits an empty array instead of emitting JSON null.
+func OptionalSlice[T any](values []T) *[]T {
+	if len(values) == 0 {
+		return nil
+	}
+	return &values
+}

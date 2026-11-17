@@ -46,12 +46,14 @@ export interface HazardPage {
   next_page_token?: string;
   freshness: Freshness[];
   partial: boolean;
+  unavailable_units?: string[];
 }
 
 export interface HazardResult {
-  item: Hazard;
+  item?: Hazard;
   freshness: Freshness[];
   partial: boolean;
+  unavailable_units?: string[];
 }
 
 export interface Notification {

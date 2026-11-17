@@ -43,15 +43,15 @@ message ListHazardsRequest {
 }
 
 message ListHazardsResponse {
-  // Frozen snapshot ordered by occurred_at descending, hazard_id ascending.
+  // Ordered by occurred_at descending, hazard_id ascending.
   repeated bnpb.common.v1.HazardProjection items = 1;
   string next_page_token = 2;
   // All sources relevant to the filter, including sources with no matches.
   repeated bnpb.common.v1.SourceFreshness freshness = 3;
-  // True iff at least one relevant source is STALE or UNAVAILABLE. Return cached
-  // records when usable; if every relevant source is UNAVAILABLE, fail the RPC
-  // with UNAVAILABLE rather than returning a misleading empty success.
+  // True if source data is stale or some storage units could not be read.
+  // A partial page's cursor must be retried before advancing past missing data.
   bool partial = 4;
+  repeated string unavailable_units = 5;
 }
 
 message GetHazardRequest {
@@ -60,10 +60,13 @@ message GetHazardRequest {
 }
 
 message GetHazardResponse {
+  // Absent when the record's storage is unavailable (partial=true), which is
+  // distinct from an authoritative NOT_FOUND response.
   bnpb.common.v1.HazardProjection item = 1;
   // Exactly one entry: the returned hazard's source.
   repeated bnpb.common.v1.SourceFreshness freshness = 2;
   bool partial = 3;
+  repeated string unavailable_units = 4;
 }
 
 message GetSourceStatusesRequest {}

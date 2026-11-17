@@ -97,6 +97,9 @@ func (r *Runner) all(ctx context.Context, source string) ([]*domain.HazardRecord
 				out = append(out, h)
 			}
 		}
+		if page.Partial {
+			return out, true
+		}
 		if page.NextToken == "" {
 			break
 		}

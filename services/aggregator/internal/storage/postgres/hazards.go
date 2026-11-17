@@ -231,7 +231,7 @@ func (s hazards) List(ctx context.Context, q storage.HazardQuery, page storage.P
 		out.Items = append(out.Items, h)
 	}
 	if err := rows.Err(); err != nil {
-		return storage.HazardPage{}, err
+		return out, err
 	}
 	if len(out.Items) > page.Size {
 		last := out.Items[page.Size-1]

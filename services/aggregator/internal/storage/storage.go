@@ -70,6 +70,10 @@ type PageRequest struct {
 type HazardPage struct {
 	Items     []*domain.HazardRecord
 	NextToken string
+	// Partial pages retain successful reads. Their cursor retries the incomplete
+	// interval, rather than permanently skipping units which may recover later.
+	Partial          bool
+	UnavailableUnits []string
 }
 
 // ReadinessChecker tests this instance's ability to reach its storage. It must

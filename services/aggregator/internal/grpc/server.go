@@ -99,9 +99,11 @@ func hazardQuery(f *commonv1.HazardFilter) storage.HazardQuery {
 
 // sourceFreshness reports the freshness of one source's ingest stream.
 func (s *Server) sourceFreshness(ctx context.Context, source string) (*domain.SourceStatusInfo, error) {
+	ctx, cancel := context.WithTimeout(ctx, 100*time.Millisecond)
+	defer cancel()
 	state, err := s.sources.Get(ctx, domain.SourceKeyFor(source))
 	if err != nil {
-		return nil, err
+		return &domain.SourceStatusInfo{Source: source, Status: domain.StatusUnavailable}, err
 	}
 	info := &domain.SourceStatusInfo{
 		Source:        source,
@@ -110,12 +112,17 @@ func (s *Server) sourceFreshness(ctx context.Context, source string) (*domain.So
 		LastAttemptAt: state.LastAttemptAt,
 		ErrorMessage:  state.ErrorMessage,
 	}
-	hasCached, _ := s.hazards.HasData(ctx, source)
+	hasCached, cacheErr := s.hazards.HasData(ctx, source)
 	info.CalculateFreshness(s.cfg.SourceStaleThreshold, hasCached)
-	return info, nil
+	if cacheErr != nil {
+		info.Status = domain.StatusUnavailable
+	}
+	return info, cacheErr
 }
 
 func (s *Server) ListHazards(ctx context.Context, req *aggregatorv1.ListHazardsRequest) (*aggregatorv1.ListHazardsResponse, error) {
+	ctx, cancel := context.WithTimeout(ctx, 1500*time.Millisecond)
+	defer cancel()
 	caller := auth.GetCallerContext(ctx)
 	if caller == nil {
 		return nil, status.Error(codes.Unauthenticated, "missing caller context")
@@ -133,7 +140,9 @@ func (s *Server) ListHazards(ctx context.Context, req *aggregatorv1.ListHazardsR
 		return nil, status.Errorf(codes.InvalidArgument, "list hazards failed: %v", err)
 	}
 	if err != nil {
-		return nil, status.Errorf(codes.Internal, "list hazards failed: %v", err)
+		page.Partial = true
+		page.UnavailableUnits = append(page.UnavailableUnits, "canonical")
+		page.NextToken = req.Page.GetPageToken()
 	}
 	items := make([]*commonv1.HazardProjection, 0, len(page.Items))
 	for _, r := range page.Items {
@@ -144,24 +153,27 @@ func (s *Server) ListHazards(ctx context.Context, req *aggregatorv1.ListHazardsR
 		items = append(items, proj)
 	}
 	freshness := []*commonv1.SourceFreshness{}
-	partial := false
+	partial := page.Partial
 	for _, src := range domain.AllSources {
 		if q.Source != "" && q.Source != src.Source {
 			continue
 		}
 		info, err := s.sourceFreshness(ctx, src.Source)
 		if err != nil {
-			return nil, status.Errorf(codes.Internal, "watermark error: %v", err)
+			partial = true
+			page.UnavailableUnits = append(page.UnavailableUnits, "source-state:"+string(src.Key))
 		}
 		if info.Status != domain.StatusFresh {
 			partial = true
 		}
 		freshness = append(freshness, info.ToProto())
 	}
-	return &aggregatorv1.ListHazardsResponse{Items: items, NextPageToken: page.NextToken, Freshness: freshness, Partial: partial}, nil
+	return &aggregatorv1.ListHazardsResponse{Items: items, NextPageToken: page.NextToken, Freshness: freshness, Partial: partial, UnavailableUnits: page.UnavailableUnits}, nil
 }
 
 func (s *Server) GetHazard(ctx context.Context, req *aggregatorv1.GetHazardRequest) (*aggregatorv1.GetHazardResponse, error) {
+	ctx, cancel := context.WithTimeout(ctx, 1500*time.Millisecond)
+	defer cancel()
 	caller := auth.GetCallerContext(ctx)
 	if caller == nil {
 		return nil, status.Error(codes.Unauthenticated, "missing caller context")
@@ -171,7 +183,7 @@ func (s *Server) GetHazard(ctx context.Context, req *aggregatorv1.GetHazardReque
 	}
 	rec, err := s.hazards.Get(ctx, req.HazardId)
 	if err != nil {
-		return nil, status.Errorf(codes.Internal, "get hazard failed: %v", err)
+		return &aggregatorv1.GetHazardResponse{Partial: true, UnavailableUnits: []string{"canonical"}}, nil
 	}
 	if rec == nil || domain.Withdrawn(rec) {
 		return nil, status.Errorf(codes.NotFound, "hazard %s not found", req.HazardId)
@@ -181,23 +193,22 @@ func (s *Server) GetHazard(ctx context.Context, req *aggregatorv1.GetHazardReque
 		return nil, status.Errorf(codes.Internal, "projection error: %v", err)
 	}
 	info, err := s.sourceFreshness(ctx, rec.Source)
+	units := []string{}
 	if err != nil {
-		return nil, status.Errorf(codes.Internal, "watermark error: %v", err)
+		units = append(units, "source-state:"+string(domain.SourceKeyFor(rec.Source)))
 	}
 	return &aggregatorv1.GetHazardResponse{
-		Item:      proj,
-		Freshness: []*commonv1.SourceFreshness{info.ToProto()},
-		Partial:   info.Status != domain.StatusFresh,
+		Item:             proj,
+		Freshness:        []*commonv1.SourceFreshness{info.ToProto()},
+		Partial:          len(units) > 0 || info.Status != domain.StatusFresh,
+		UnavailableUnits: units,
 	}, nil
 }
 
 func (s *Server) GetSourceStatuses(ctx context.Context, req *aggregatorv1.GetSourceStatusesRequest) (*aggregatorv1.GetSourceStatusesResponse, error) {
 	freshness := []*commonv1.SourceFreshness{}
 	for _, src := range domain.AllSources {
-		info, err := s.sourceFreshness(ctx, src.Source)
-		if err != nil {
-			return nil, status.Errorf(codes.Internal, "watermark fetch error: %v", err)
-		}
+		info, _ := s.sourceFreshness(ctx, src.Source)
 		freshness = append(freshness, info.ToProto())
 	}
 	return &aggregatorv1.GetSourceStatusesResponse{Freshness: freshness}, nil

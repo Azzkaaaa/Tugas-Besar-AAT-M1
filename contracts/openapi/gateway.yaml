@@ -1037,23 +1037,30 @@ components:
             $ref: '#/components/schemas/Freshness'
         partial:
           type: boolean
-          description: True if any requested source is STALE or UNAVAILABLE.
+          description: True if a requested source is stale or storage could not be read completely. Retry an incomplete page before advancing.
+        unavailable_units:
+          type: array
+          items: {type: string}
     HazardResult:
       type: object
       additionalProperties: false
-      required: [item, freshness, partial]
+      required: [freshness, partial]
       properties:
         item:
           $ref: '#/components/schemas/Hazard'
+          description: Absent only when partial is true and the record cannot be read from storage.
         freshness:
           type: array
-          minItems: 1
+          minItems: 0
           maxItems: 1
           items:
             $ref: '#/components/schemas/Freshness'
         partial:
           type: boolean
-          description: True when the source's cached record is stale.
+          description: True when the source is stale or the record's storage is unavailable. Absence during partial availability is not an authoritative not-found result.
+        unavailable_units:
+          type: array
+          items: {type: string}
     HazardFeedEvent:
       type: object
       additionalProperties: false
