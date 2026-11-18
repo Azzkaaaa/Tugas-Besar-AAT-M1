@@ -32,7 +32,7 @@ func TestCassandraProductionWritesFenceExpiredAndReleasedTerms(t *testing.T) {
 		t.Fatal(err)
 	}
 	old := leader.WithAuthority(ctx, a, l)
-	h := &domain.HazardRecord{Source: domain.SourceCoastal, SourceRefID: "known", HazardType: domain.HazardTypeCoastal, Severity: domain.SeverityWaspada, OccurredAt: time.Now()}
+	h := &domain.HazardRecord{Source: domain.SourceCoastal, SourceRefID: "known", HazardType: domain.HazardTypeCoastal, Severity: domain.SeverityWaspada, OccurredAt: time.Now(), Attributes: map[string]any{"critical": true}}
 	if _, _, err := (hazards{db}).ApplyRevision(old, h, revEvent); err != nil {
 		t.Fatal(err)
 	}
@@ -148,5 +148,9 @@ func TestCassandraProductionWritesFenceExpiredAndReleasedTerms(t *testing.T) {
 	}
 	if p, err := stream.Checkpoint(ctx, "coastal"); err != nil || p.Sequence != 1 {
 		t.Fatal("stale checkpoint committed", p, err)
+	}
+	critical, err := db.Backend().Critical.Pending(ctx, storage.CriticalCursor{}, 100)
+	if err != nil || len(critical.Events) != 2 {
+		t.Fatal("fenced writer created/lost critical history", critical, err)
 	}
 }

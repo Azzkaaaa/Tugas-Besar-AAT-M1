@@ -155,6 +155,7 @@ func Open(ctx context.Context, cfg Config) (*DB, error) {
 // Backend returns the storage ports served by db.
 func (db *DB) Backend() *storage.Backend {
 	return &storage.Backend{
+		Critical:             criticalJournal{db},
 		Analytics:            audit{db},
 		Name:                 "cassandra",
 		Hazards:              hazards{db},

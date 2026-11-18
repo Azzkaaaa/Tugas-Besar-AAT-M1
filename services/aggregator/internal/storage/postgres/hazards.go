@@ -93,6 +93,9 @@ func (s hazards) ApplyRevision(ctx context.Context, rev *domain.HazardRecord,
 	if err := enqueueOutbox(ctx, tx, ev); err != nil {
 		return nil, false, fmt.Errorf("enqueue outbox event: %w", err)
 	}
+	if err := enqueueCritical(ctx, tx, saved, ev.TraceContext); err != nil {
+		return nil, false, fmt.Errorf("enqueue critical event: %w", err)
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return nil, false, err
 	}

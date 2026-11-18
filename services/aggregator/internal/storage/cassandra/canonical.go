@@ -8,11 +8,20 @@ import (
 	"github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/aggregator/internal/domain"
 )
 
-func (s hazards) insertStored(ctx context.Context, h *domain.HazardRecord, bucket time.Time, hash string, previous, occurred time.Time, sequence any) (bool, error) {
+func (s hazards) insertStored(ctx context.Context, h *domain.HazardRecord, bucket time.Time, hash string, previous, occurred time.Time, sequence any, traces ...map[string]string) (bool, error) {
 	values := append([]any{auditShard(h.HazardID)}, storedValues(h, bucket, hash, previous, occurred)...)
 	values = append(values, sequence)
 	b := s.db.guardBatch(ctx, canonicalGuard(h.HazardID))
 	b.Query(`INSERT INTO canonical_events (shard,`+storedColumns+`,ingest_sequence) VALUES (`+strings.TrimSuffix(strings.Repeat("?,", len(values)), ",")+`) IF NOT EXISTS`, values...)
+	var trace map[string]string
+	if len(traces) > 0 {
+		trace = traces[0]
+	}
+	if s.db.fencedSchema {
+		if err := s.db.addCriticalEvent(ctx, b, h, trace); err != nil {
+			return false, err
+		}
+	}
 	return s.db.guardedCAS(ctx, canonicalGuard(h.HazardID), b)
 }
 

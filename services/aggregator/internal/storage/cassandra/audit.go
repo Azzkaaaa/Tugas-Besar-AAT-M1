@@ -18,7 +18,7 @@ import (
 )
 
 const auditShards = 16
-const auditReadyKey = "audit_indexes_v3"
+const auditReadyKey = "audit_indexes_v4"
 
 type audit struct{ db *DB }
 type auditEntry struct {
@@ -339,8 +339,12 @@ func (db *DB) backfillAudit(ctx context.Context) error {
 			_ = scanner.Err()
 			return err
 		}
-		if h.HazardID == "" {
+		if h.HazardID == "" || criticalInternalKey(h.HazardID) {
 			continue
+		}
+		if err := db.ensureCritical(ctx, h); err != nil {
+			_ = scanner.Err()
+			return err
 		}
 		b := db.session.Batch(gocql.LoggedBatch).WithContext(ctx)
 		addAuditProjection(b, h)

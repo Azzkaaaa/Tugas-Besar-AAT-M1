@@ -123,7 +123,7 @@ func (s hazards) applyRevision(ctx context.Context, rev *domain.HazardRecord, se
 				return nil, false, err
 			}
 			bucket := s.db.bucketOf(h.OccurredAt)
-			applied, err := s.insertStored(ctx, &h, bucket, hash, time.Time{}, time.Time{}, sequence)
+			applied, err := s.insertStored(ctx, &h, bucket, hash, time.Time{}, time.Time{}, sequence, ev.TraceContext)
 			if err != nil {
 				return nil, false, fmt.Errorf("claim hazard failed: %w", err)
 			}
@@ -161,6 +161,9 @@ func (s hazards) applyRevision(ctx context.Context, rev *domain.HazardRecord, se
 			}
 		}
 		if st.hash == hash || (sequence > 0 && priorSequence == sequence) {
+			if err := s.db.ensureCritical(ctx, st.rec); err != nil {
+				return nil, false, err
+			}
 			if sequence > priorSequence {
 				b := s.db.guardBatch(ctx, canonicalGuard(h.HazardID))
 				b.Query(`UPDATE canonical_events SET ingest_sequence=? WHERE shard=? AND hazard_id=? IF revision=? AND ingest_sequence=?`, sequence, auditShard(h.HazardID), h.HazardID, st.rec.Revision, st.sequence)
@@ -189,6 +192,9 @@ func (s hazards) applyRevision(ctx context.Context, rev *domain.HazardRecord, se
 			h.HazardType, h.Severity, h.AreaName, h.Latitude, h.Longitude, h.OccurredAt,
 			mustJSON(h.Attributes), h.Revision, bucket, hash, st.bucket, st.rec.OccurredAt, max(sequence, priorSequence),
 			auditShard(h.HazardID), h.HazardID, st.rec.Revision, st.sequence)
+		if err := s.db.addCriticalEvent(ctx, b, &h, ev.TraceContext); err != nil {
+			return nil, false, err
+		}
 		applied, err := s.db.guardedCAS(ctx, canonicalGuard(h.HazardID), b)
 		if err != nil {
 			return nil, false, fmt.Errorf("claim hazard revision failed: %w", err)
@@ -231,6 +237,9 @@ func mustJSON(attrs map[string]any) string {
 // readStored reads the current canonical row, falling back to the legacy layout. Serial
 // consistency observes committed lightweight transactions. Absence returns nil.
 func (s hazards) readStored(ctx context.Context, hazardID string, serial bool) (*stored, error) {
+	if criticalInternalKey(hazardID) {
+		return nil, nil
+	}
 	if s.db.fencedSchema {
 		st, err := s.readStoredTable(ctx, hazardID, serial, false)
 		if st != nil || err != nil {

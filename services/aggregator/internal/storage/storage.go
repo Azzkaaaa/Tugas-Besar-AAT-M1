@@ -145,6 +145,7 @@ type Outbox interface {
 
 // Backend is one opened store.
 type Backend struct {
+	Critical  CriticalJournal
 	Analytics AnalyticsReader
 	Name      string
 	Hazards   HazardStore

@@ -15,6 +15,7 @@ import (
 	"github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/aggregator/internal/auth"
 	"github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/aggregator/internal/broker"
 	"github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/aggregator/internal/config"
+	"github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/aggregator/internal/criticaldelivery"
 	"github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/aggregator/internal/grpc"
 	"github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/aggregator/internal/ingest"
 	"github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/aggregator/internal/leader/elect"
@@ -26,6 +27,12 @@ import (
 
 func main() {
 	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, nil)))
+	if os.Getenv("AGGREGATOR_MODE") == "critical-delivery-worker" {
+		if err := criticaldelivery.RunWorkerMain(); err != nil {
+			log.Fatal(err)
+		}
+		return
+	}
 	log.Println("[Aggregator] Starting BNPB Aggregator Service...")
 
 	workerMode := os.Getenv("AGGREGATOR_MODE") == "field-report-worker"
@@ -176,6 +183,12 @@ func main() {
 		// One listener serves P3 operations and P4/P5 audit. Cassandra adapters
 		// park into P3's inbox; PostgreSQL keeps the standalone M2 fallback.
 		handler := problem3.Handler(store.Backend, verifier, m2cfg.AuditToken, m2runner.AuditHandler(verifier))
+		criticalAPI, err := criticaldelivery.LoadAPI()
+		if err != nil {
+			log.Fatal(err)
+		}
+		criticalAPI.Journal = store.Critical
+		handler = criticalAPI.Handler(handler)
 		httpServer := &http.Server{Addr: address, Handler: handler, ReadHeaderTimeout: 3 * time.Second, ReadTimeout: 10 * time.Second, WriteTimeout: 30 * time.Second, IdleTimeout: 30 * time.Second}
 		go func() {
 			if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {

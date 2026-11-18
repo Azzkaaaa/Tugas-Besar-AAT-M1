@@ -1,0 +1,31 @@
+# Development-only critical delivery overlay. Receiver runs as the Field Team client.
+services:
+  aggregator-service:
+    environment:
+      CRITICAL_DELIVERY_TOKEN: ${CRITICAL_DELIVERY_TOKEN:?set CRITICAL_DELIVERY_TOKEN}
+      CRITICAL_RECEIVER_ID: ${CRITICAL_RECEIVER_ID:?set CRITICAL_RECEIVER_ID}
+      CRITICAL_RECEIVER_PUBLIC_KEY: ${CRITICAL_RECEIVER_PUBLIC_KEY:?set CRITICAL_RECEIVER_PUBLIC_KEY}
+      AGGREGATOR_M2_HTTP_ADDRESS: :9092
+  critical-notifier:
+    build:
+      context: .
+      dockerfile: services/aggregator/Dockerfile
+    environment:
+      AGGREGATOR_MODE: critical-delivery-worker
+      CRITICAL_DELIVERY_API_URL: http://aggregator-service:9092
+      CRITICAL_DELIVERY_TOKEN: ${CRITICAL_DELIVERY_TOKEN:?set CRITICAL_DELIVERY_TOKEN}
+      CRITICAL_RECEIVER_ID: ${CRITICAL_RECEIVER_ID:?set CRITICAL_RECEIVER_ID}
+      CRITICAL_RECEIVER_PUBLIC_KEY: ${CRITICAL_RECEIVER_PUBLIC_KEY:?set CRITICAL_RECEIVER_PUBLIC_KEY}
+      CRITICAL_RECEIVER_SECRET: ${CRITICAL_RECEIVER_SECRET:?set CRITICAL_RECEIVER_SECRET}
+      CRITICAL_RECEIVER_URL: ${CRITICAL_RECEIVER_URL:?set CRITICAL_RECEIVER_URL}
+      CRITICAL_DELIVERY_CONCURRENCY: "4"
+      GOMAXPROCS: "2"
+      GOMEMLIMIT: 192MiB
+    extra_hosts: ["host.docker.internal:host-gateway"]
+    networks: [bnpb_net]
+    mem_limit: 256m
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    restart: unless-stopped
+    stop_grace_period: 15s

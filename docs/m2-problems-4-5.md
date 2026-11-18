@@ -251,7 +251,12 @@ Log verifikasi terakhir (15 November 2026): `go-tests.txt`,
 ## Rencana game day dan bahan laporan
 
 SLO jalur kritis: 100% observation valid bertanda critical pada window pengujian
-memiliki receipt Tim Lapangan; ≥95% tiba dalam 5 s sejak input diterima BNPB.
+memiliki receipt Tim Lapangan; ≥95% tiba dalam 5 s sejak emisi sumber dengan
+timestamp wall-clock yang diukur independen. `observed_at`/`virtual_now` pada
+feed dipercepat bukan timestamp emisi. Journal kanonik, receiver dengan receipt
+Ed25519, export snapshot lengkap, dan CLI laporan tersedia dalam
+[panduan critical delivery](m2-critical-delivery.md). Setiap revisi critical
+kanonik juga wajib memiliki receipt yang cocok; provider/FCM ACK tidak cukup.
 Budget kehilangan = 0. Budget keterlambatan = 5% × jumlah critical yang diharapkan.
 Laporkan jumlah missing, p95, jumlah lebih dari 5 s, dan budget terpakai. Catat
 excluded-invalid secara terpisah, jangan menyembunyikannya dari denominator.

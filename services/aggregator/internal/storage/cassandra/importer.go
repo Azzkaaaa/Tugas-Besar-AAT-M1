@@ -59,6 +59,16 @@ func (db *DB) ImportHazard(ctx context.Context, rec *domain.HazardRecord) error 
 	if st.rec.Revision > h.Revision {
 		return nil
 	}
+	if st.rec.Revision == h.Revision {
+		if st.hash != hash {
+			return fmt.Errorf("hazard %s changes content without a new revision", h.HazardID)
+		}
+		if err := db.ensureCritical(ctx, st.rec); err != nil {
+			return err
+		}
+		_, _, err = s.writeOut(ctx, st.rec, st.bucket, st.prevBucket, st.prevOccurredAt, nil)
+		return err
+	}
 	// Re-run of the copy: bring the row to the copied revision, moving its List row if needed.
 	b := db.guardBatch(ctx, canonicalGuard(h.HazardID))
 	b.Query(`UPDATE canonical_events SET
@@ -68,6 +78,9 @@ func (db *DB) ImportHazard(ctx context.Context, rec *domain.HazardRecord) error 
 		h.HazardType, h.Severity, h.AreaName, h.Latitude, h.Longitude, h.OccurredAt,
 		h.IngestedAt, mustJSON(h.Attributes), h.Revision, bucket, hash, st.bucket, st.rec.OccurredAt,
 		auditShard(h.HazardID), h.HazardID, st.rec.Revision)
+	if err := db.addCriticalEvent(ctx, b, &h, nil); err != nil {
+		return err
+	}
 	if applied, err := db.guardedCAS(ctx, canonicalGuard(h.HazardID), b); err != nil {
 		return err
 	} else if !applied {
