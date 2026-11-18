@@ -28,10 +28,11 @@ const (
 )
 
 type OutboxPublisher struct {
-	cfg    *config.Config
-	outbox storage.Outbox
-	conn   *amqp.Connection
-	ch     *amqp.Channel
+	cfg     *config.Config
+	outbox  storage.Outbox
+	conn    *amqp.Connection
+	ch      *amqp.Channel
+	returns <-chan amqp.Return
 	// yielded is set when the loop handed its lease over (leader.MaybeYield), so Run returns.
 	yielded bool
 }
@@ -72,7 +73,10 @@ func (p *OutboxPublisher) Run(ctx context.Context) {
 }
 
 func (p *OutboxPublisher) connect() error {
-	conn, err := amqp.Dial(p.cfg.AMQPURL)
+	conn, err := amqp.DialConfig(p.cfg.AMQPURL, amqp.Config{
+		Heartbeat: 10 * time.Second,
+		Dial:      amqp.DefaultDial(3 * time.Second),
+	})
 	if err != nil {
 		return fmt.Errorf("failed connecting to RabbitMQ: %w", err)
 	}
@@ -108,19 +112,18 @@ func (p *OutboxPublisher) connect() error {
 
 	p.conn = conn
 	p.ch = ch
-	log.Printf("[OutboxPublisher] Connected to RabbitMQ at %s. Exchange %q declared.", p.cfg.AMQPURL, p.cfg.RabbitMQExchange)
+	p.returns = ch.NotifyReturn(make(chan amqp.Return, 1))
+	log.Printf("[OutboxPublisher] Connected to RabbitMQ. Exchange %q declared.", p.cfg.RabbitMQExchange)
 	return nil
 }
 
 func (p *OutboxPublisher) close() {
-	if p.ch != nil {
-		_ = p.ch.Close()
-		p.ch = nil
-	}
 	if p.conn != nil {
-		_ = p.conn.Close()
-		p.conn = nil
+		_ = p.conn.CloseDeadline(time.Now().Add(time.Second))
 	}
+	p.ch = nil
+	p.conn = nil
+	p.returns = nil
 }
 
 func (p *OutboxPublisher) processOutboxLoop(ctx context.Context) {
@@ -221,6 +224,11 @@ func outboxBackoff(attempt int) time.Duration {
 }
 
 func (p *OutboxPublisher) publishOne(ctx context.Context, rec *storage.ClaimedEvent) error {
+	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	pubStart := time.Now()
 
 	var ctxPub context.Context
@@ -247,22 +255,29 @@ func (p *OutboxPublisher) publishOne(ctx context.Context, rec *storage.ClaimedEv
 
 	headers := telemetry.InjectAMQPHeaders(ctxPub, make(amqp.Table))
 
-	confirmation, err := p.ch.PublishWithDeferredConfirmWithContext(
-		ctxPub,
-		p.cfg.RabbitMQExchange, // exchange
-		"",                     // routing key
-		false,                  // mandatory
-		false,                  // immediate
-		amqp.Publishing{
-			Headers:      headers,
-			DeliveryMode: amqp.Persistent,
-			ContentType:  "application/protobuf",
-			Body:         rec.Payload,
-			Timestamp:    time.Now().UTC(),
-			MessageId:    rec.EventID,
-		},
-	)
+	message := amqp.Publishing{
+		Headers:      headers,
+		DeliveryMode: amqp.Persistent,
+		ContentType:  "application/protobuf",
+		Body:         rec.Payload,
+		Timestamp:    time.Now().UTC(),
+		MessageId:    rec.EventID,
+	}
+	// A fanout confirmation can succeed while the notification queue is absent
+	// (another subscriber is enough). A mandatory direct copy proves routing to
+	// the required queue itself. Its consumer deduplicates the deterministic
+	// event ID if it also receives the fanout copy or a publisher retry.
+	var err error
+	if p.cfg.RequiredNotificationQueue != "" {
+		err = p.publishConfirmed(ctxPub, "", p.cfg.RequiredNotificationQueue, message)
+	}
+	if err == nil {
+		err = p.publishConfirmed(ctxPub, p.cfg.RabbitMQExchange, "", message)
+	}
 	if err != nil {
+		// A timed-out confirmation has an unknown outcome. Closing prevents its
+		// delayed return/confirmation from being attributed to a later record.
+		_ = p.conn.CloseDeadline(time.Now().Add(time.Second))
 		if span != nil {
 			span.RecordError(err)
 			span.SetStatus(codes.Error, err.Error())
@@ -271,21 +286,6 @@ func (p *OutboxPublisher) publishOne(ctx context.Context, rec *storage.ClaimedEv
 			telemetry.OutboxErrorsCounter.Add(ctxPub, 1, metric.WithAttributes(attribute.String("source", rec.Source)))
 		}
 		return err
-	}
-
-	if confirmation != nil {
-		ok, err := confirmation.WaitContext(ctxPub)
-		if err != nil || !ok {
-			nackErr := fmt.Errorf("publisher confirmation nack or error: %w", err)
-			if span != nil {
-				span.RecordError(nackErr)
-				span.SetStatus(codes.Error, nackErr.Error())
-			}
-			if telemetry.OutboxErrorsCounter != nil {
-				telemetry.OutboxErrorsCounter.Add(ctxPub, 1, metric.WithAttributes(attribute.String("source", rec.Source)))
-			}
-			return nackErr
-		}
 	}
 
 	durationSec := time.Since(pubStart).Seconds()
@@ -297,4 +297,32 @@ func (p *OutboxPublisher) publishOne(ctx context.Context, rec *storage.ClaimedEv
 	}
 
 	return nil
+}
+
+func (p *OutboxPublisher) publishConfirmed(ctx context.Context, exchange, key string, message amqp.Publishing) error {
+	confirmation, err := p.ch.PublishWithDeferredConfirmWithContext(ctx, exchange, key, true, false, message)
+	if err != nil {
+		return err
+	}
+	if confirmation == nil {
+		return fmt.Errorf("publisher confirmation mode is unavailable")
+	}
+	accepted, err := confirmation.WaitContext(ctx)
+	if err != nil {
+		return fmt.Errorf("publisher confirmation: %w", err)
+	}
+	if !accepted {
+		return fmt.Errorf("broker rejected publication")
+	}
+	// RabbitMQ sends basic.return before basic.ack for an unroutable mandatory
+	// publication. The buffered listener is filled before confirmation resolves.
+	select {
+	case returned, open := <-p.returns:
+		if !open {
+			return fmt.Errorf("publisher return channel closed")
+		}
+		return fmt.Errorf("publication was not routed (code=%d)", returned.ReplyCode)
+	default:
+		return nil
+	}
 }

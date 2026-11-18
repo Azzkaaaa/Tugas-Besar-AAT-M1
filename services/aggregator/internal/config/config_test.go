@@ -83,6 +83,23 @@ func TestLeaderConfig(t *testing.T) {
 	}
 }
 
+func TestRequiredNotificationQueue(t *testing.T) {
+	setBaseEnv(t)
+	t.Setenv("SATELLITE_BASE_URL", "")
+	t.Setenv("PANTAI_BASE_URL", "")
+	t.Setenv("AGGREGATOR_REQUIRE_WRITE_AUTHORITY", "true")
+	t.Setenv("AGGREGATOR_REQUIRED_NOTIFICATION_QUEUE", "")
+	cfg, err := Load()
+	if err != nil || cfg.RequiredNotificationQueue != "bnpb.danger-notification.v1" {
+		t.Fatal("M2 lacks required notification route", cfg, err)
+	}
+	t.Setenv("AGGREGATOR_REQUIRED_NOTIFICATION_QUEUE", " custom.notifications ")
+	cfg, err = Load()
+	if err != nil || cfg.RequiredNotificationQueue != "custom.notifications" {
+		t.Fatal("configured consumer queue was not used", cfg, err)
+	}
+}
+
 func TestYieldConfig(t *testing.T) {
 	setBaseEnv(t)
 	cfg, err := Load()

@@ -27,13 +27,14 @@ type Config struct {
 	PVMBGRequestTimeout    time.Duration
 	SourceStaleThreshold   time.Duration
 	// CanonicalStoreBackend is "postgres" or "cassandra".
-	CanonicalStoreBackend string
-	CanonicalStoreDSN     string
-	Cassandra             CassandraConfig
-	Leader                LeaderConfig
-	RequireWriteAuthority bool
-	AMQPURL               string
-	RabbitMQExchange      string
+	CanonicalStoreBackend     string
+	CanonicalStoreDSN         string
+	Cassandra                 CassandraConfig
+	Leader                    LeaderConfig
+	RequireWriteAuthority     bool
+	RequiredNotificationQueue string
+	AMQPURL                   string
+	RabbitMQExchange          string
 	// OutboxMaxRetries is the max publish attempts before a record is dead-lettered.
 	OutboxMaxRetries int
 	// OutboxRetention is how long published and dead-lettered records stay in outbox_events.
@@ -203,28 +204,32 @@ func Load() (*Config, error) {
 	insecureSkip := strings.EqualFold(os.Getenv("AUTH_INSECURE_SKIP_VERIFY"), "true")
 
 	cfg := &Config{
-		AppEnv:                 requireEnv("APP_ENV"),
-		LogLevel:               requireEnv("LOG_LEVEL"),
-		GRPCPort:               requireEnv("AGGREGATOR_GRPC_PORT"),
-		BMKGBaseURL:            requireEnv("BMKG_BASE_URL"),
-		PVMBGBaseURL:           requireEnv("PVMBG_BASE_URL"),
-		BMKGAPIKey:             requireEnv("BMKG_API_KEY"),
-		PVMBGBearerToken:       requireEnv("PVMBG_BEARER_TOKEN"),
-		ServiceToken:           requireEnv("AGGREGATOR_SERVICE_TOKEN"),
-		AuthAuthority:          os.Getenv("AUTH_AUTHORITY"),
-		AuthAudience:           os.Getenv("AUTH_AUDIENCE"),
-		AuthInsecureSkipVerify: insecureSkip,
-		BMKGPollInterval:       requireDurationMS("BMKG_POLL_INTERVAL_MS"),
-		PVMBGPollInterval:      requireDurationMS("PVMBG_POLL_INTERVAL_MS"),
-		BMKGRequestTimeout:     requireDurationMS("BMKG_REQUEST_TIMEOUT_MS"),
-		PVMBGRequestTimeout:    requireDurationMS("PVMBG_REQUEST_TIMEOUT_MS"),
-		SourceStaleThreshold:   requireDurationMS("SOURCE_STALE_AFTER_MS"),
-		CanonicalStoreBackend:  strings.ToLower(strings.TrimSpace(os.Getenv("CANONICAL_STORE_BACKEND"))),
-		RequireWriteAuthority:  strings.EqualFold(os.Getenv("AGGREGATOR_REQUIRE_WRITE_AUTHORITY"), "true") || os.Getenv("SATELLITE_BASE_URL") != "" || os.Getenv("PANTAI_BASE_URL") != "",
-		AMQPURL:                requireEnv("AGGREGATOR_AMQP_URL"),
-		RabbitMQExchange:       requireEnv("RABBITMQ_EXCHANGE"),
-		OutboxMaxRetries:       requireInt("OUTBOX_MAX_RETRIES"),
-		OutboxRetention:        time.Duration(optionalInt("OUTBOX_RETENTION_HOURS", 168)) * time.Hour,
+		AppEnv:                    requireEnv("APP_ENV"),
+		LogLevel:                  requireEnv("LOG_LEVEL"),
+		GRPCPort:                  requireEnv("AGGREGATOR_GRPC_PORT"),
+		BMKGBaseURL:               requireEnv("BMKG_BASE_URL"),
+		PVMBGBaseURL:              requireEnv("PVMBG_BASE_URL"),
+		BMKGAPIKey:                requireEnv("BMKG_API_KEY"),
+		PVMBGBearerToken:          requireEnv("PVMBG_BEARER_TOKEN"),
+		ServiceToken:              requireEnv("AGGREGATOR_SERVICE_TOKEN"),
+		AuthAuthority:             os.Getenv("AUTH_AUTHORITY"),
+		AuthAudience:              os.Getenv("AUTH_AUDIENCE"),
+		AuthInsecureSkipVerify:    insecureSkip,
+		BMKGPollInterval:          requireDurationMS("BMKG_POLL_INTERVAL_MS"),
+		PVMBGPollInterval:         requireDurationMS("PVMBG_POLL_INTERVAL_MS"),
+		BMKGRequestTimeout:        requireDurationMS("BMKG_REQUEST_TIMEOUT_MS"),
+		PVMBGRequestTimeout:       requireDurationMS("PVMBG_REQUEST_TIMEOUT_MS"),
+		SourceStaleThreshold:      requireDurationMS("SOURCE_STALE_AFTER_MS"),
+		CanonicalStoreBackend:     strings.ToLower(strings.TrimSpace(os.Getenv("CANONICAL_STORE_BACKEND"))),
+		RequireWriteAuthority:     strings.EqualFold(os.Getenv("AGGREGATOR_REQUIRE_WRITE_AUTHORITY"), "true") || os.Getenv("SATELLITE_BASE_URL") != "" || os.Getenv("PANTAI_BASE_URL") != "",
+		RequiredNotificationQueue: strings.TrimSpace(os.Getenv("AGGREGATOR_REQUIRED_NOTIFICATION_QUEUE")),
+		AMQPURL:                   requireEnv("AGGREGATOR_AMQP_URL"),
+		RabbitMQExchange:          requireEnv("RABBITMQ_EXCHANGE"),
+		OutboxMaxRetries:          requireInt("OUTBOX_MAX_RETRIES"),
+		OutboxRetention:           time.Duration(optionalInt("OUTBOX_RETENTION_HOURS", 168)) * time.Hour,
+	}
+	if cfg.RequiredNotificationQueue == "" && cfg.RequireWriteAuthority {
+		cfg.RequiredNotificationQueue = "bnpb.danger-notification.v1"
 	}
 
 	switch cfg.CanonicalStoreBackend {

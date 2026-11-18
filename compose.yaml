@@ -363,6 +363,7 @@ services:
       # cassandra, kubernetes or single. Empty follows CANONICAL_STORE_BACKEND.
       LEADER_ELECTION: ${AGGREGATOR_LEADER_ELECTION:-}
       AGGREGATOR_REQUIRE_WRITE_AUTHORITY: ${AGGREGATOR_REQUIRE_WRITE_AUTHORITY:-false}
+      AGGREGATOR_REQUIRED_NOTIFICATION_QUEUE: ${AGGREGATOR_REQUIRED_NOTIFICATION_QUEUE:-bnpb.danger-notification.v1}
       # Cooperative lease release: yield rate per hour (0 = off) and how many unreachable polls
       # in a row hand a poller to another replica (0 = off).
       LEADER_YIELD_PER_HOUR: ${AGGREGATOR_LEADER_YIELD_PER_HOUR:-1}
