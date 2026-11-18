@@ -206,8 +206,13 @@ cluster.
   tenggat lokal (waktu kirim renew terakhir yang sukses + TTL − margin), sebelum
   lease bisa diambil replika lain. Saat shutdown normal lease dilepas setelah
   pekerjaan leader berhenti.
-- **Overlap ditangani dengan idempotensi, bukan fencing.** Jeda proses lebih lama
-  dari margin masih bisa membuat dua leader berjalan sebentar. Karena itu
+- **Otoritas per term dan idempotensi.** Setiap akuisisi memakai holder unik;
+  PostgreSQL mengikat epoch ke context pekerjaan dan memeriksanya di trigger
+  transaksi saat hazard, jurnal/checkpoint, karantina, atau status sumber ditulis.
+  Context lama tetap ditolak walaupun goroutine pembatalan belum berjalan.
+  Lihat [write authority](../../docs/m2-write-authority.md) untuk bukti dan batas
+  backend; implementasi fencing Cassandra masih dilacak di checklist F05.
+  Idempotensi tetap diperlukan untuk retry yang sah. Karena itu
   `event_id` deterministik: `pub-` + UUIDv5(`hazard_id`, revisi). Revisi = 1 saat
   hazard pertama disimpan, +1 per perubahan konten. Revisi yang sama selalu
   menghasilkan `event_id` yang sama; consumer sudah men-dedup `event_id`.
@@ -219,7 +224,7 @@ cluster.
     outbox adalah proyeksinya. Revisi yang sudah di-commit tetapi belum tertulis
     ke proyeksi (crash di antara keduanya) ditulis oleh poll berikutnya dengan
     `event_id` yang sama; revisi baris List menjadi penanda.
-- **Yang masih bisa terjadi saat overlap:** status sumber sempat berkedip
+- **Pada backend/elector yang belum melakukan fencing**, status sumber bisa berkedip
   (STALE/FRESH), watermark mundur sesaat (poll berikutnya mengulang, tanpa
   duplikat), atau konten mundur bila upstream berubah tepat di antara dua poll.
 - **Rolling upgrade dari build advisory lock:** pod lama dan baru memakai lock

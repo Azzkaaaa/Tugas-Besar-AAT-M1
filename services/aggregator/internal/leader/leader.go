@@ -2,11 +2,10 @@
 // outbox pruner, and the outbox publisher on single-consumer stores). It imports no database
 // driver: lease-based electors run on any LeaseStore, which storage backends implement.
 //
-// Election is best effort by design. A lease elector holds leadership until the lease expires and
-// stops its leader at a local deadline before that (self-fencing), so a new leader normally starts
-// only after the old one stopped. A process pause longer than the margin can still let the two
-// overlap briefly; event IDs are deterministic per hazard revision, so work repeated during an
-// overlap publishes the same event_id, which consumers deduplicate.
+// Each acquisition has a unique holder and, for FencingStore implementations,
+// a storage-issued authority context. Those backends enforce authority at their
+// mutation boundary; local cancellation and deterministic IDs are not fencing.
+// Electors without FencingStore retain timer-based best-effort exclusion.
 package leader
 
 import (
@@ -120,4 +119,12 @@ func Identity() string {
 	b := make([]byte, 4)
 	_, _ = rand.Read(b)
 	return fmt.Sprintf("%s-%d-%s", host, os.Getpid(), hex.EncodeToString(b))
+}
+
+func newTermIdentity() string {
+	b := make([]byte, 16)
+	if _, err := rand.Read(b); err != nil {
+		panic("leader term entropy unavailable")
+	}
+	return hex.EncodeToString(b)
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/aggregator/internal/leader"
 	"io"
 	"net"
 	"net/http"
@@ -25,7 +26,7 @@ func client(timeout time.Duration) *http.Client {
 	t.MaxIdleConnsPerHost = 2
 	t.ResponseHeaderTimeout = timeout
 	t.DialContext = (&net.Dialer{Timeout: timeout, KeepAlive: 30 * time.Second}).DialContext
-	return &http.Client{Transport: otelhttp.NewTransport(t), CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	return &http.Client{Transport: otelhttp.NewTransport(leader.GuardTransport(t)), CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 }
 func get(ctx context.Context, c *http.Client, url, token string, max int) ([]byte, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)

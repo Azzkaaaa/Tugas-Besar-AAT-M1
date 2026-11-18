@@ -22,10 +22,13 @@ func (db *DB) Leases() leader.LeaseStore { return leases{db} }
 func (l leases) Acquire(ctx context.Context, name, holder string, ttl time.Duration) (bool, error) {
 	var got string
 	err := l.db.Pool.QueryRow(ctx, `
-		INSERT INTO leader_leases (name, holder, expires_at)
-		VALUES ($1, $2, now() + $3 * INTERVAL '1 millisecond')
-		ON CONFLICT (name) DO UPDATE SET holder = EXCLUDED.holder, expires_at = EXCLUDED.expires_at
-		WHERE leader_leases.expires_at < now() OR leader_leases.holder = EXCLUDED.holder
+		INSERT INTO leader_leases (name, holder, expires_at, epoch)
+		VALUES ($1, $2, clock_timestamp() + $3 * INTERVAL '1 millisecond', 1)
+		ON CONFLICT (name) DO UPDATE SET holder = EXCLUDED.holder,
+		    expires_at = clock_timestamp() + $3 * INTERVAL '1 millisecond',
+		    epoch = CASE WHEN leader_leases.holder = EXCLUDED.holder AND leader_leases.expires_at > clock_timestamp()
+		        THEN leader_leases.epoch ELSE leader_leases.epoch + 1 END
+		WHERE leader_leases.expires_at < clock_timestamp() OR leader_leases.holder = EXCLUDED.holder
 		RETURNING holder
 	`, name, holder, ttl.Milliseconds()).Scan(&got)
 	if err != nil {
@@ -39,8 +42,8 @@ func (l leases) Acquire(ctx context.Context, name, holder string, ttl time.Durat
 
 func (l leases) Renew(ctx context.Context, name, holder string, ttl time.Duration) (bool, error) {
 	tag, err := l.db.Pool.Exec(ctx, `
-		UPDATE leader_leases SET expires_at = now() + $3 * INTERVAL '1 millisecond'
-		WHERE name = $1 AND holder = $2 AND expires_at > now()
+		UPDATE leader_leases SET expires_at = clock_timestamp() + $3 * INTERVAL '1 millisecond'
+		WHERE name = $1 AND holder = $2 AND expires_at > clock_timestamp()
 	`, name, holder, ttl.Milliseconds())
 	if err != nil {
 		return false, err
@@ -49,7 +52,7 @@ func (l leases) Renew(ctx context.Context, name, holder string, ttl time.Duratio
 }
 
 func (l leases) Release(ctx context.Context, name, holder string) error {
-	_, err := l.db.Pool.Exec(ctx, `DELETE FROM leader_leases WHERE name = $1 AND holder = $2`, name, holder)
+	_, err := l.db.Pool.Exec(ctx, `UPDATE leader_leases SET holder='', expires_at='-infinity' WHERE name=$1 AND holder=$2`, name, holder)
 	return err
 }
 

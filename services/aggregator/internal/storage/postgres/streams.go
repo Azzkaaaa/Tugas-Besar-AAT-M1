@@ -20,13 +20,15 @@ func (s streams) Checkpoint(ctx context.Context, stream string) (storage.StreamC
 }
 
 func (s streams) Append(ctx context.Context, stream string, e storage.StreamEntry) (storage.StreamEntry, error) {
-	_, err := s.db.Pool.Exec(ctx, `INSERT INTO m2_stream_journal (stream,sequence,kind,cursor,payload,received_at)
+	err := s.db.write(ctx, func(tx pgx.Tx) error {
+		_, err := tx.Exec(ctx, `INSERT INTO m2_stream_journal (stream,sequence,kind,cursor,payload,received_at)
 		VALUES ($1,$2,$3,$4,$5,$6) ON CONFLICT DO NOTHING`, stream, e.Sequence, e.Kind, e.Cursor, e.Payload, e.ReceivedAt)
-	if err != nil {
-		return e, err
-	}
-	err = s.db.Pool.QueryRow(ctx, `SELECT sequence,kind,cursor,payload,received_at FROM m2_stream_journal WHERE stream=$1 AND sequence=$2`, stream, e.Sequence).
-		Scan(&e.Sequence, &e.Kind, &e.Cursor, &e.Payload, &e.ReceivedAt)
+		if err != nil {
+			return err
+		}
+		return tx.QueryRow(ctx, `SELECT sequence,kind,cursor,payload,received_at FROM m2_stream_journal WHERE stream=$1 AND sequence=$2`, stream, e.Sequence).
+			Scan(&e.Sequence, &e.Kind, &e.Cursor, &e.Payload, &e.ReceivedAt)
+	})
 	return e, err
 }
 
@@ -48,29 +50,33 @@ func (s streams) Read(ctx context.Context, stream string, after int64, limit int
 }
 
 func (s streams) Commit(ctx context.Context, stream string, before int64, p storage.StreamCheckpoint) error {
-	var err error
-	var changed int64
-	if before == 0 {
-		tag, e := s.db.Pool.Exec(ctx, `INSERT INTO m2_stream_checkpoints (stream,sequence,cursor) VALUES ($1,$2,$3) ON CONFLICT DO NOTHING`, stream, p.Sequence, p.Cursor)
-		err = e
-		changed = tag.RowsAffected()
-	} else {
-		tag, e := s.db.Pool.Exec(ctx, `UPDATE m2_stream_checkpoints SET sequence=$1,cursor=$2 WHERE stream=$3 AND sequence=$4`, p.Sequence, p.Cursor, stream, before)
-		err = e
-		changed = tag.RowsAffected()
-	}
-	if err != nil {
-		return err
-	}
-	if changed != 1 {
-		return storage.ErrCheckpointConflict
-	}
-	return nil
+	return s.db.write(ctx, func(tx pgx.Tx) error {
+		var err error
+		var changed int64
+		if before == 0 {
+			tag, e := tx.Exec(ctx, `INSERT INTO m2_stream_checkpoints (stream,sequence,cursor) VALUES ($1,$2,$3) ON CONFLICT DO NOTHING`, stream, p.Sequence, p.Cursor)
+			err = e
+			changed = tag.RowsAffected()
+		} else {
+			tag, e := tx.Exec(ctx, `UPDATE m2_stream_checkpoints SET sequence=$1,cursor=$2 WHERE stream=$3 AND sequence=$4`, p.Sequence, p.Cursor, stream, before)
+			err = e
+			changed = tag.RowsAffected()
+		}
+		if err != nil {
+			return err
+		}
+		if changed != 1 {
+			return storage.ErrCheckpointConflict
+		}
+		return nil
+	})
 }
 
 func (s streams) Park(ctx context.Context, p storage.ParkedInput) error {
-	_, err := s.db.Pool.Exec(ctx, `INSERT INTO m2_parked_inputs (source,message_id,received_at,reason,payload) VALUES ($1,$2,$3,$4,$5) ON CONFLICT DO NOTHING`, p.Source, p.MessageID, p.ReceivedAt, p.Reason, p.Payload)
-	return err
+	return s.db.write(ctx, func(tx pgx.Tx) error {
+		_, err := tx.Exec(ctx, `INSERT INTO m2_parked_inputs (source,message_id,received_at,reason,payload) VALUES ($1,$2,$3,$4,$5) ON CONFLICT DO NOTHING`, p.Source, p.MessageID, p.ReceivedAt, p.Reason, p.Payload)
+		return err
+	})
 }
 
 func (s streams) Parked(ctx context.Context, source, after string, limit int) ([]storage.ParkedInput, error) {

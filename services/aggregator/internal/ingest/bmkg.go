@@ -8,6 +8,7 @@ import (
 
 	"github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/aggregator/internal/config"
 	"github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/aggregator/internal/domain"
+	"github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/aggregator/internal/leader"
 	"github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/aggregator/internal/storage"
 	"github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/aggregator/internal/telemetry"
 	"github.com/google/uuid"
@@ -32,7 +33,7 @@ func NewBMKGPoller(cfg *config.Config, hazards storage.HazardStore, sources stor
 		hazards: hazards,
 		sources: sources,
 		client: &http.Client{
-			Transport: telemetry.ExternalTransport(http.DefaultTransport),
+			Transport: telemetry.ExternalTransport(leader.GuardTransport(http.DefaultTransport)),
 			Timeout:   cfg.BMKGRequestTimeout,
 		},
 	}

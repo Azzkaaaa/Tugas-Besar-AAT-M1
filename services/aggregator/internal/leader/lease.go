@@ -12,12 +12,11 @@ import (
 
 // Lease elects through a LeaseStore.
 //
-// Before each Acquire or Renew it notes the local time; when the store grants the lease, the
-// leader may run until that time + TTL - Margin. It renews every RenewEvery, and stops its leader
-// when a renewal is refused or that deadline passes without a successful renewal (self-fencing):
-// the store cannot have expired the lease before the deadline, because the grant happened after
-// the time noted. Margin covers clock-rate differences and writes still in flight when the leader
-// is cancelled, so it should exceed the store's client timeout.
+// An elapsed-time deadline stops ordinary terms promptly. It does not authorize
+// writes: a suspended goroutine may resume before cancellation is delivered.
+// FencingStore activation binds storage authority to the job context before it
+// starts, and storage must validate that authority atomically with mutations.
+// Margin also leaves room for bounded requests and orderly handoff.
 type Lease struct {
 	Store      LeaseStore
 	Name       string
@@ -93,13 +92,16 @@ func (l *Lease) Run(ctx context.Context, fn func(ctx context.Context)) {
 			return
 		}
 		sent := time.Now()
-		ok, err := l.Store.Acquire(ctx, l.Name, l.Holder, l.TTL)
+		// A resumed context from an older term must never become valid merely
+		// because the same process/pod reacquires the lease.
+		holder := l.Holder + "/" + newTermIdentity()
+		ok, err := l.Store.Acquire(ctx, l.Name, holder, l.TTL)
 		if err != nil && ctx.Err() == nil {
 			l.logf("[Leader] Acquiring lease %s failed: %v", l.Name, err)
 		}
 		if ok && err == nil {
 			l.state().Observed(false)
-			t := l.lead(ctx, sent, fn)
+			t := l.lead(ctx, sent, holder, fn)
 			// After a yield or release, wait so another replica can take the lease; otherwise
 			// (lost, or the job returned) ask again at once.
 			wait = l.state().End(t)
@@ -137,12 +139,24 @@ func jitter(d time.Duration) time.Duration {
 
 // lead runs fn until the lease is lost, the deadline passes, fn returns or ctx is done, then
 // releases the lease. It returns the term, which says whether fn yielded or released.
-func (l *Lease) lead(ctx context.Context, granted time.Time, fn func(ctx context.Context)) *Term {
+func (l *Lease) lead(ctx context.Context, granted time.Time, holder string, fn func(ctx context.Context)) *Term {
 	l.Pool.Add(1)
 	defer l.Pool.Add(-1)
 	l.logf("[Leader] %s acquired lease %s", l.Holder, l.Name)
 	termCtx, term := l.state().Begin(ctx, l.Pool)
 	leaderCtx, cancel := context.WithCancel(termCtx)
+	if store, ok := l.Store.(FencingStore); ok {
+		token, err := store.Fence(ctx, l.Name, holder)
+		if err != nil {
+			cancel()
+			l.logf("[Leader] Cannot activate fenced term %s: %v", l.Name, err)
+			releaseCtx, stop := context.WithTimeout(context.Background(), 2*time.Second)
+			_ = l.Store.Release(releaseCtx, l.Name, holder)
+			stop()
+			return term
+		}
+		leaderCtx = WithAuthority(leaderCtx, token, store)
+	}
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
@@ -166,7 +180,12 @@ func (l *Lease) lead(ctx context.Context, granted time.Time, fn func(ctx context
 		case <-renew.C:
 			sent := time.Now()
 			renewCtx, renewCancel := context.WithDeadline(ctx, granted.Add(l.TTL-l.Margin))
-			ok, err := l.Store.Renew(renewCtx, l.Name, l.Holder, l.TTL)
+			ok, err := l.Store.Renew(renewCtx, l.Name, holder, l.TTL)
+			if err == nil && ok {
+				if store, supported := l.Store.(FencingStore); supported {
+					_, err = store.Fence(renewCtx, l.Name, holder)
+				}
+			}
 			renewCancel()
 			switch {
 			case err == nil && ok:
@@ -187,7 +206,7 @@ func (l *Lease) lead(ctx context.Context, granted time.Time, fn func(ctx context
 
 	releaseCtx, releaseCancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer releaseCancel()
-	if err := l.Store.Release(releaseCtx, l.Name, l.Holder); err != nil {
+	if err := l.Store.Release(releaseCtx, l.Name, holder); err != nil {
 		l.logf("[Leader] Releasing lease %s failed (it expires on its own): %v", l.Name, err)
 	}
 	if outcome := term.Outcome(); outcome != "" {

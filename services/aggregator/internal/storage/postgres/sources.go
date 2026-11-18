@@ -42,7 +42,8 @@ func (s sources) Get(ctx context.Context, key domain.SourceKey) (storage.SourceS
 }
 
 func (s sources) RecordSuccess(ctx context.Context, key domain.SourceKey, watermark time.Time) error {
-	_, err := s.db.Pool.Exec(ctx, `
+	return s.db.write(ctx, func(tx pgx.Tx) error {
+		_, err := tx.Exec(ctx, `
 		INSERT INTO ingest_watermarks (source_key, watermark_time, last_success_at, last_attempt_at, status, error_message)
 		VALUES ($1, $2, $3, $3, $4, NULL)
 		ON CONFLICT (source_key) DO UPDATE SET
@@ -52,13 +53,15 @@ func (s sources) RecordSuccess(ctx context.Context, key domain.SourceKey, waterm
 			status = EXCLUDED.status,
 			error_message = NULL
 	`, string(key), watermark.UTC(), time.Now().UTC(), domain.StatusFresh)
-	return err
+		return err
+	})
 }
 
 // RecordFailure keeps the previous watermark_time and last_success_at. A first failure stores the
 // zero watermark (0001-01-01, which reads back as time.Time{}), as older builds did.
 func (s sources) RecordFailure(ctx context.Context, key domain.SourceKey, cause string) error {
-	_, err := s.db.Pool.Exec(ctx, `
+	return s.db.write(ctx, func(tx pgx.Tx) error {
+		_, err := tx.Exec(ctx, `
 		INSERT INTO ingest_watermarks (source_key, watermark_time, last_success_at, last_attempt_at, status, error_message)
 		VALUES ($1, $5, NULL, $2, $3, $4)
 		ON CONFLICT (source_key) DO UPDATE SET
@@ -66,5 +69,6 @@ func (s sources) RecordFailure(ctx context.Context, key domain.SourceKey, cause 
 			status = EXCLUDED.status,
 			error_message = EXCLUDED.error_message
 	`, string(key), time.Now().UTC(), domain.StatusStale, cause, time.Time{})
-	return err
+		return err
+	})
 }

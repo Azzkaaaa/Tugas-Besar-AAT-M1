@@ -78,10 +78,13 @@ func (s hazards) ApplyRevision(ctx context.Context, rev *domain.HazardRecord,
 		return nil, false, err
 	}
 	defer tx.Rollback(ctx)
+	if err := setWriteAuthority(ctx, tx); err != nil {
+		return nil, false, err
+	}
 
 	saved, changed, err := applyRevision(ctx, tx, rev)
 	if err != nil || !changed {
-		return saved, false, err
+		return saved, false, authorityError(err)
 	}
 	ev, err := newEvent(saved)
 	if err != nil {
