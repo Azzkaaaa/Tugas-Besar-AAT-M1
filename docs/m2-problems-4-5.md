@@ -49,13 +49,15 @@ selesai pada cluster.
 Batas keterlambatan awal **24 jam** terhadap maksimum event time yang telah
 terlihat, termasuk `virtual_now` heartbeat yang tersimpan. Titik baru di luar
 batas diparkir dengan alasan, tidak dibuang diam-diam. Koreksi atas titik yang
-sudah dikenal tetap diterima. Fire dapat dianggap tertutup secara event time
-setelah `max_detection_time + 6h` melewati watermark; kode tetap menyimpan graf
-dan journal sehingga koreksi lama masih dapat diterapkan. Belum ada garbage
-collection/snapshot graf: startup memutar ulang seluruh journal. Batas
-`SATELLITE_MAX_DETECTIONS` menghentikan kemajuan dengan error eksplisit bila
-kapasitas terlampaui; input tetap tersimpan. Pemakaian memori pada dataset penuh
-harus diukur, terutama komponen sangat rapat dengan banyak edge.
+sudah dikenal tetap diterima selama fire masih dalam horizon koreksi
+`SATELLITE_STATE_RETENTION` (bawaan 48 jam, minimal batas keterlambatan + 6 jam).
+Fire yang deteksi terbarunya lebih tua dari horizon itu menjadi final dan keluar
+dari memori secara deterministik; koreksi/retraksi atas fire final diparkir dan
+dihitung di `bnpb.satellite.expired_corrections`. `SATELLITE_MAX_DETECTIONS`
+adalah batas lunak: pemadatan dini, lalu `bnpb.satellite.over_capacity`, tanpa
+menghentikan pemrosesan. Snapshot mesin tersimpan tiap
+`SATELLITE_SNAPSHOT_EVERY` input sehingga pemulihan hanya memutar ulang ekor
+journal. Rincian dan pengukuran: [m2-satellite-state.md](m2-satellite-state.md).
 
 SSE menggunakan `from` dan `Last-Event-ID`. Offset duplikat diabaikan, celah
 offset menutup koneksi dan memicu reconnect, frame yang terpotong belum

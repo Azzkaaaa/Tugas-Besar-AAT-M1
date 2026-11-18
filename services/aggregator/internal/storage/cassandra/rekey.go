@@ -3,7 +3,7 @@ package cassandra
 import (
 	"context"
 	"fmt"
-	"log"
+	"log/slog"
 	"time"
 
 	"github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/aggregator/internal/domain"
@@ -50,7 +50,7 @@ func (db *DB) rekeyHazardIDs(ctx context.Context) error {
 		return err
 	}
 	if len(moves)+pending+dead > 0 {
-		log.Printf("[Cassandra] Re-keyed %d hazards, %d pending outbox events, %d dead letters to derived IDs", len(moves), pending, dead)
+		slog.InfoContext(ctx, "re-keyed hazards to derived IDs", "hazards", len(moves), "pending_events", pending, "dead_letters", dead)
 	}
 	return nil
 }
@@ -67,10 +67,25 @@ func (s hazards) rekeyHazard(ctx context.Context, oldID string) error {
 		storedValues(&rec, st.bucket, st.hash, time.Time{}, time.Time{})...).WithContext(ctx).MapScanCAS(map[string]any{}); err != nil {
 		return err
 	}
+	sharded, err := s.db.hasTable(ctx, "hazards_by_bucket_shard")
+	if err != nil {
+		return err
+	}
 	b := s.db.session.Batch(gocql.LoggedBatch).WithContext(ctx)
 	b.Query(`DELETE FROM hazards_by_bucket WHERE bucket = ? AND occurred_at = ? AND hazard_id = ?`,
 		st.bucket, st.rec.OccurredAt, oldID)
-	s.addProjection(b, &rec, st.bucket, time.Time{}, time.Time{})
+	if sharded {
+		// Migration 5 normally runs before 0014; when it runs on a newer schema the
+		// sharded projection is the live one and must move as well.
+		b.Query(`DELETE FROM hazards_by_bucket_shard WHERE bucket = ? AND shard = ? AND occurred_at = ? AND hazard_id = ?`,
+			st.bucket, projectionShard(oldID), st.rec.OccurredAt, oldID)
+		s.addProjection(b, &rec, st.bucket, time.Time{}, time.Time{})
+	} else {
+		if s.db.fencedSchema {
+			addAuditProjection(b, &rec)
+		}
+		addLegacyProjection(b, &rec, st.bucket)
+	}
 	if s.db.fencedSchema {
 		retired := *st.rec
 		retired.Revision++

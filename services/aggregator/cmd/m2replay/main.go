@@ -17,13 +17,18 @@ import (
 func main() {
 	input := flag.String("input", "", "captured journal JSONL")
 	output := flag.String("output", "", "write report JSON")
+	lateness := flag.Duration("lateness", 24*time.Hour, "allowed event-time lateness (SATELLITE_ALLOWED_LATENESS)")
+	retention := flag.Duration("retention", m2.DefaultRetention, "correction horizon (SATELLITE_STATE_RETENTION)")
+	maxPoints := flag.Int("max-detections", 200000, "soft in-memory bound (SATELLITE_MAX_DETECTIONS)")
 	flag.Parse()
 	f, err := os.Open(*input)
 	if err != nil {
 		panic(err)
 	}
 	defer f.Close()
-	e := m2.NewFireEngine(24*time.Hour, 200000)
+	e := m2.NewFireEngineRetention(*lateness, *retention, *maxPoints)
+	e.KeepFinal = true
+	peak := 0
 	s := bufio.NewScanner(f)
 	s.Buffer(make([]byte, 4096), 4<<20)
 	errors := map[string]int{}
@@ -38,6 +43,7 @@ func main() {
 		t := time.Now()
 		_, err := e.Apply(row.Kind, row.Payload, row.Sequence, row.ReceivedAt)
 		durations = append(durations, time.Since(t).Seconds())
+		peak = max(peak, e.Active())
 		if err != nil {
 			errors[err.Error()]++
 		}
@@ -52,7 +58,7 @@ func main() {
 		p95 = durations[(len(durations)-1)*95/100]
 	}
 	fires, singletons := e.Counts()
-	report := map[string]any{"input_events": count, "active_fires": fires, "singletons": singletons, "excluded_low": e.Low, "late": e.Late, "parked_reasons": errors, "processing_seconds": time.Since(started).Seconds(), "p95_compute_seconds": p95, "items": e.Snapshot(), "measurement": "offline CPU processing only; not ingest-to-storage or notification latency"}
+	report := map[string]any{"input_events": count, "active_fires": fires, "singletons": singletons, "excluded_low": e.Low, "late": e.Late, "expired_corrections": e.Expired, "over_capacity": e.OverCapacity, "peak_active_detections": peak, "retention": e.Retention.String(), "parked_reasons": errors, "processing_seconds": time.Since(started).Seconds(), "p95_compute_seconds": p95, "items": e.Snapshot(), "measurement": "offline CPU processing only; not ingest-to-storage or notification latency"}
 	b, _ := json.MarshalIndent(report, "", "  ")
 	if *output != "" {
 		if err := os.WriteFile(*output, b, 0600); err != nil {

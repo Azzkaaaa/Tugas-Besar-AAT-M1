@@ -27,7 +27,7 @@ import (
 
 // Tables emptied between contract cases (store_meta and schema tables are kept).
 var dataTables = []string{
-	"hazards_by_id", "canonical_events", "stream_inputs_by_shard", "hazards_by_bucket", "hazard_buckets", "source_state",
+	"hazards_by_id", "canonical_events", "stream_inputs_by_shard", "hazards_by_bucket", "hazards_by_bucket_shard", "hazard_buckets", "source_state",
 	"outbox_events", "outbox_pending", "outbox_dead_letters", "leader_leases",
 	"audit_events_by_shard", "audit_refs_by_shard", "analytics_by_shard",
 }
@@ -203,7 +203,7 @@ func TestMoveAfterScheduleChange(t *testing.T) {
 		t.Fatalf("after move listed %+v, %v", page.Items, err)
 	}
 	var n int
-	if err := db.session.Query(`SELECT count(*) FROM hazards_by_bucket WHERE bucket = ?`, at).Scan(&n); err != nil || n != 0 {
+	if err := db.session.Query(`SELECT count(*) FROM hazards_by_bucket_shard WHERE bucket = ? AND shard = ?`, at, projectionShard(saved.HazardID)).Scan(&n); err != nil || n != 0 {
 		t.Fatalf("old List row left in its bucket: %d, %v", n, err)
 	}
 }

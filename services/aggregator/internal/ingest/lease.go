@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
+	"log/slog"
 	"net"
 	"net/url"
 
@@ -38,7 +38,7 @@ func (g *leaseGuard) after(ctx context.Context, fetchErr error) bool {
 		reason := fmt.Sprintf("%s unreachable from this replica (%d attempts in a row): %v", g.source, g.failures, fetchErr)
 		g.failures = 0
 		if leader.Release(ctx, reason) {
-			log.Printf("[%sPoller] Handing the poller to another replica: %s", g.source, reason)
+			slog.WarnContext(ctx, "handing poller to another replica", "source", g.source, "reason", reason)
 			return true
 		}
 	}

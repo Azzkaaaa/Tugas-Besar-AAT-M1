@@ -4,7 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
+	sdklog "go.opentelemetry.io/otel/sdk/log"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"os"
@@ -57,7 +58,7 @@ func Init(ctx context.Context, defaultServiceName string) (func(context.Context)
 
 	endpoint := strings.TrimSpace(os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT"))
 	if endpoint == "" {
-		log.Printf("[Telemetry] OTEL_EXPORTER_OTLP_ENDPOINT not set — telemetry running in no-op mode.")
+		slog.Warn("OTEL_EXPORTER_OTLP_ENDPOINT not set; telemetry is a no-op")
 		initNoop(serviceName)
 		return func(context.Context) error { return nil }, nil
 	}
@@ -74,7 +75,12 @@ func Init(ctx context.Context, defaultServiceName string) (func(context.Context)
 			semconv.ServiceVersionKey.String("1.0.0"),
 			attribute.String("deployment.environment", appEnv),
 		),
-		resource.WithProcess(),
+		// Not resource.WithProcess(): its owner detector needs cgo or $USER, which the
+		// static, non-root container images lack, and then the whole SDK init fails.
+		resource.WithProcessPID(),
+		resource.WithProcessExecutableName(),
+		resource.WithProcessRuntimeName(),
+		resource.WithProcessRuntimeVersion(),
 		resource.WithOS(),
 		resource.WithHost(),
 	)
@@ -85,6 +91,7 @@ func Init(ctx context.Context, defaultServiceName string) (func(context.Context)
 	var (
 		traceExp  sdktrace.SpanExporter
 		metricExp sdkmetric.Exporter
+		logExp    sdklog.Exporter
 	)
 
 	// Determine if gRPC or HTTP should be used based on protocol or endpoint
@@ -114,7 +121,7 @@ func Init(ctx context.Context, defaultServiceName string) (func(context.Context)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create otlp metric grpc exporter: %w", err)
 		}
-		log.Printf("[Telemetry] Initialized OTLP gRPC exporters targeting %s (service=%s)", grpcEndpoint, serviceName)
+		slog.Info("OTLP gRPC exporters initialized", "endpoint", grpcEndpoint, "service", serviceName)
 	} else {
 		// HTTP exporter (default http/protobuf)
 		optsTrace := []otlptracehttp.Option{}
@@ -138,7 +145,10 @@ func Init(ctx context.Context, defaultServiceName string) (func(context.Context)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create otlp metric http exporter: %w", err)
 		}
-		log.Printf("[Telemetry] Initialized OTLP HTTP exporters targeting %s (service=%s)", endpoint, serviceName)
+		if logExp, err = newLogExporter(ctx, endpoint); err != nil {
+			return nil, fmt.Errorf("failed to create otlp log http exporter: %w", err)
+		}
+		slog.Info("OTLP HTTP exporters initialized", "endpoint", endpoint, "service", serviceName)
 	}
 
 	// TracerProvider
@@ -168,11 +178,24 @@ func Init(ctx context.Context, defaultServiceName string) (func(context.Context)
 	Meter = mp.Meter(serviceName)
 
 	if err := initInstruments(Meter); err != nil {
-		log.Printf("[Telemetry] Warning: failed initializing metric instruments: %v", err)
+		slog.Warn("initializing metric instruments failed", "error", err)
+	}
+
+	// Logs: with an HTTP endpoint every slog record is also exported over OTLP,
+	// carrying the trace context of the context it was logged with.
+	var lp *sdklog.LoggerProvider
+	if logExp != nil {
+		lp = sdklog.NewLoggerProvider(sdklog.WithProcessor(sdklog.NewBatchProcessor(logExp)), sdklog.WithResource(res))
+		ExportLogs(lp, serviceName)
 	}
 
 	shutdown := func(shutdownCtx context.Context) error {
 		var errs []error
+		if lp != nil {
+			if err := lp.Shutdown(shutdownCtx); err != nil {
+				errs = append(errs, fmt.Errorf("logger shutdown: %w", err))
+			}
+		}
 		if err := tp.Shutdown(shutdownCtx); err != nil {
 			errs = append(errs, fmt.Errorf("tracer shutdown: %w", err))
 		}

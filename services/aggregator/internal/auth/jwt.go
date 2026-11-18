@@ -7,7 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
+	"log/slog"
 	"net/http"
 	"strings"
 	"sync/atomic"
@@ -113,7 +113,7 @@ func NewJWTVerifier(ctx context.Context, cfg JWTVerifierConfig) (*JWTVerifier, e
 	}
 
 	if cfg.InsecureSkipVerify {
-		log.Println("[Auth] ⚠️  WARNING: AUTH_INSECURE_SKIP_VERIFY=true — JWT signatures are NOT verified. Do NOT use in production!")
+		slog.Warn("AUTH_INSECURE_SKIP_VERIFY=true: JWT signatures are NOT verified; never use in production")
 		return v, nil
 	}
 
@@ -141,13 +141,13 @@ func (v *JWTVerifier) connect() {
 	for {
 		_, err := v.keys(v.jwksCtx)
 		if err == nil {
-			log.Printf("[Auth] JWKS loaded from %s", v.authority)
+			slog.Info("JWKS loaded", "authority", v.authority)
 			return
 		}
 		if v.jwksCtx.Err() != nil {
 			return
 		}
-		log.Printf("[Auth] Issuer %s not reachable yet, retrying in %s: %v", v.authority, delay, err)
+		slog.Warn("issuer not reachable yet", "authority", v.authority, "retry_in", delay.String(), "error", err)
 		select {
 		case <-v.jwksCtx.Done():
 			return

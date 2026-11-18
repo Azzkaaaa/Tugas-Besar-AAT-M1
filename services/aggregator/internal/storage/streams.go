@@ -48,3 +48,17 @@ type StreamStore interface {
 }
 
 const StreamBlockSize int64 = 1000
+
+// StreamSnapshots keeps derived processing state at a committed journal
+// sequence, so a new leadership term restores it and replays only the tail.
+// A snapshot is a pure function of the committed journal prefix, so writes
+// are idempotent and need no leader fencing: any writer saving sequence N
+// saves the same bytes. LatestSnapshot returns sequence 0 and nil state when
+// no usable snapshot exists at or below atMost; integrity is verified.
+type StreamSnapshots interface {
+	SaveSnapshot(ctx context.Context, stream string, sequence int64, state []byte) error
+	LatestSnapshot(ctx context.Context, stream string, atMost int64) (int64, []byte, error)
+}
+
+// SnapshotsRetained is how many verified snapshots each backend keeps per stream.
+const SnapshotsRetained = 2

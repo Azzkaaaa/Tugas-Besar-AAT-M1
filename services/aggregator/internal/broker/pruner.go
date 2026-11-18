@@ -2,7 +2,7 @@ package broker
 
 import (
 	"context"
-	"log"
+	"log/slog"
 	"time"
 
 	"github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/aggregator/internal/leader"
@@ -26,7 +26,7 @@ func RunOutboxPruner(ctx context.Context, outbox storage.Outbox, retention time.
 			deleted, err := outbox.Prune(ctx, retention, pruneBatchSize)
 			if err != nil {
 				if ctx.Err() == nil {
-					log.Printf("[OutboxPruner] Failed pruning outbox: %v", err)
+					slog.ErrorContext(ctx, "pruning outbox failed", "error", err)
 				}
 				break
 			}
@@ -36,7 +36,7 @@ func RunOutboxPruner(ctx context.Context, outbox storage.Outbox, retention time.
 			}
 		}
 		if total > 0 {
-			log.Printf("[OutboxPruner] Deleted %d outbox records older than %s", total, retention)
+			slog.InfoContext(ctx, "outbox pruned", "deleted", total, "retention", retention.String())
 		}
 		// Safe point between passes: as a leader job it may hand its lease over.
 		if leader.MaybeYield(ctx) {

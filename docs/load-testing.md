@@ -192,3 +192,20 @@ konfigurasi.
 - Latensi tetap mencakup token exchange Envoy dan api-gateway (lihat catatan di
   atas). Jumlah VU default sengaja sedang agar angka mencerminkan isolasi, bukan
   kejenuhan edge.
+
+## Profil M2 (P2.6)
+
+`LOAD_PROFILE=m2` menjalankan 10.000 VU selama 120 detik dan menilai hasil
+dengan **uncontrolled errors < 1 %**. Respons 429 yang membawa `Retry-After`
+(rate limit atau admission kapasitas cadangan) dihitung sebagai
+`controlled_rejections` dan dilaporkan terpisah; semua non-200 lainnya,
+termasuk 503 "dependency unavailable", timeout dan reset koneksi, dihitung
+sebagai `uncontrolled_errors`. Metrik `errors` lama tetap dilaporkan.
+
+```bash
+k6 run -e LOAD_PROFILE=m2 tests/load/aggregator.js &
+python ../infrastructure/m2/scale.py ...   # urutan replika 3 -> 5 -> 2 bersamaan
+```
+
+Generator 10.000 VU membutuhkan mesin beban sendiri (bukan laptop yang sama
+dengan cluster); hasil dari cluster Kind lokal bukan bukti penerimaan.

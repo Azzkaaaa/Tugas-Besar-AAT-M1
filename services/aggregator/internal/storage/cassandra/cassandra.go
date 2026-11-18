@@ -10,7 +10,7 @@ import (
 	"embed"
 	"fmt"
 	"io/fs"
-	"log"
+	"log/slog"
 	"os"
 	"sort"
 	"strconv"
@@ -162,6 +162,7 @@ func (db *DB) Backend() *storage.Backend {
 		Sources:              sources{db},
 		Outbox:               &outbox{db: db},
 		Streams:              streams{db},
+		Snapshots:            snapshots{db},
 		Reports:              fieldReports{db},
 		Inbox:                ingestInbox{db},
 		Audit:                audit{db},
@@ -181,9 +182,8 @@ func prepareKeyspace(ctx context.Context, session *gocql.Session, keyspace strin
 	}
 	if actual != nil {
 		if diff := replicationMismatch(actual, replication); diff != "" && !existingOnly {
-			log.Printf("[Cassandra] Warning: %s. Existing keyspaces are not changed automatically; to apply it run "+
-				"ALTER KEYSPACE %s WITH replication = %s; then nodetool repair -full %s on every node.",
-				diff, keyspace, replication.cql(), keyspace)
+			slog.Warn("keyspace replication differs from configuration; existing keyspaces are not changed automatically",
+				"difference", diff, "keyspace", keyspace, "apply", fmt.Sprintf("ALTER KEYSPACE %s WITH replication = %s; then nodetool repair -full %s on every node", keyspace, replication.cql(), keyspace))
 		}
 		return nil
 	}
@@ -198,7 +198,7 @@ func prepareKeyspace(ctx context.Context, session *gocql.Session, keyspace strin
 	if err != nil {
 		return fmt.Errorf("unable to create keyspace %s: %w", keyspace, err)
 	}
-	log.Printf("[Cassandra] Created keyspace %s with replication %s", keyspace, replication.cql())
+	slog.Info("created keyspace", "keyspace", keyspace, "replication", replication.cql())
 	return nil
 }
 
@@ -313,7 +313,7 @@ func (db *DB) migrate(ctx context.Context) error {
 			m.version, m.name, time.Now().UTC()).WithContext(ctx).Exec(); err != nil {
 			return err
 		}
-		log.Printf("[Cassandra] Applied migration %s", m.name)
+		slog.Info("applied migration", "migration", m.name)
 	}
 	return nil
 }
@@ -353,7 +353,7 @@ func (db *DB) renewMigrationLock(ctx context.Context, holder string) {
 				` SET holder = ? WHERE name = 'migrate' IF holder = ?`, holder, holder).
 				WithContext(ctx).MapScanCAS(map[string]any{})
 			if err != nil && ctx.Err() == nil {
-				log.Printf("[Cassandra] Renewing the migration lock failed: %v", err)
+				slog.Warn("renewing the migration lock failed", "error", err)
 			}
 		}
 	}
@@ -371,6 +371,7 @@ type migration struct {
 // goMigrations are the Go steps, by version.
 var goMigrations = []migration{
 	{version: 5, name: "0005_rekey_hazard_ids (go)", run: (*DB).rekeyHazardIDs},
+	{version: 15, name: "0015_backfill_sharded_projection (go)", run: (*DB).backfillShardedProjection},
 }
 
 // loadMigrations returns the NNNN_name.cql files and the Go steps, in version order.

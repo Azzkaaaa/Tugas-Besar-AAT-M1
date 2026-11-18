@@ -3,7 +3,7 @@ package broker
 import (
 	"context"
 	"fmt"
-	"log"
+	"log/slog"
 	"time"
 
 	"github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/aggregator/internal/config"
@@ -57,7 +57,7 @@ func (p *OutboxPublisher) Run(ctx context.Context) {
 	for ctx.Err() == nil {
 		p.close() // the previous connection, if it dropped
 		if err := p.connect(); err != nil {
-			log.Printf("[OutboxPublisher] Connection error: %v, retrying in 2s...", err)
+			slog.WarnContext(ctx, "RabbitMQ connection failed; retrying in 2s", "error", err)
 			select {
 			case <-ctx.Done():
 			case <-time.After(2 * time.Second):
@@ -113,7 +113,7 @@ func (p *OutboxPublisher) connect() error {
 	p.conn = conn
 	p.ch = ch
 	p.returns = ch.NotifyReturn(make(chan amqp.Return, 1))
-	log.Printf("[OutboxPublisher] Connected to RabbitMQ. Exchange %q declared.", p.cfg.RabbitMQExchange)
+	slog.Info("connected to RabbitMQ", "exchange", p.cfg.RabbitMQExchange)
 	return nil
 }
 
@@ -143,13 +143,13 @@ func (p *OutboxPublisher) processOutboxLoop(ctx context.Context) {
 			return
 		case err, ok := <-closeChan:
 			if ok && err != nil {
-				log.Printf("[OutboxPublisher] RabbitMQ connection closed: %v", err)
+				slog.WarnContext(ctx, "RabbitMQ connection closed", "error", err)
 			}
 			return
 		case <-ticker.C:
 			records, err := p.outbox.ClaimDue(ctx, outboxBatchSize, outboxLease)
 			if err != nil {
-				log.Printf("[OutboxPublisher] Failed claiming outbox events: %v", err)
+				slog.ErrorContext(ctx, "claiming outbox events failed", "error", err)
 				continue
 			}
 
@@ -161,11 +161,11 @@ func (p *OutboxPublisher) processOutboxLoop(ctx context.Context) {
 						p.release(records[i:])
 						return
 					}
-					log.Printf("[OutboxPublisher] Failed to publish outbox event %s (hazard=%s, retry=%d): %v",
-						rec.EventID, rec.HazardID, rec.RetryCount, pubErr)
+					slog.WarnContext(telemetry.ContextFromCarrier(ctx, rec.TraceContext), "publishing outbox event failed",
+						"event_id", rec.EventID, "hazard_id", rec.HazardID, "correlation_id", rec.EventID, "retry", rec.RetryCount, "error", pubErr)
 
 					if rec.RetryCount+1 >= maxRetries && rec.Source != domain.SourceCoastal {
-						log.Printf("[OutboxPublisher] Outbox event %s reached max retries (%d), marking as failed", rec.EventID, maxRetries)
+						slog.ErrorContext(telemetry.ContextFromCarrier(ctx, rec.TraceContext), "outbox event dead-lettered after max retries", "event_id", rec.EventID, "hazard_id", rec.HazardID, "correlation_id", rec.EventID, "max_retries", maxRetries)
 						_ = p.outbox.DeadLetter(ctx, rec, pubErr.Error())
 					} else {
 						_ = p.outbox.RetryLater(ctx, rec.EventID, pubErr.Error(), outboxBackoff(rec.RetryCount+1))
@@ -180,10 +180,10 @@ func (p *OutboxPublisher) processOutboxLoop(ctx context.Context) {
 				}
 
 				if err := p.outbox.Ack(ctx, rec.EventID); err != nil {
-					log.Printf("[OutboxPublisher] Error marking event %s published: %v", rec.EventID, err)
+					slog.ErrorContext(telemetry.ContextFromCarrier(ctx, rec.TraceContext), "acknowledging published event failed", "event_id", rec.EventID, "correlation_id", rec.EventID, "error", err)
 				} else {
-					log.Printf("[OutboxPublisher] Successfully published event %s (hazard=%s, source=%s)",
-						rec.EventID, rec.HazardID, rec.Source)
+					slog.InfoContext(telemetry.ContextFromCarrier(ctx, rec.TraceContext), "outbox event published",
+						"event_id", rec.EventID, "hazard_id", rec.HazardID, "source", rec.Source, "correlation_id", rec.EventID)
 				}
 			}
 			// Safe point: every claimed event was acked, retried or released. When the publisher
@@ -208,7 +208,7 @@ func (p *OutboxPublisher) release(records []*storage.ClaimedEvent) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	if err := p.outbox.Release(ctx, ids); err != nil {
-		log.Printf("[OutboxPublisher] Failed releasing %d claimed events (they are due again when the lease ends): %v", len(ids), err)
+		slog.Warn("releasing claimed events failed; they are due again when the lease ends", "events", len(ids), "error", err)
 	}
 }
 

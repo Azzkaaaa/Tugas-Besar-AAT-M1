@@ -6,8 +6,12 @@ import {
   outPath, pct, randomItem, request, row, seconds, statusLine, table, waitForIds,
 } from './lib.js';
 
-const VUS = Number(env('LOAD_VUS', '50'));
-const DURATION = env('LOAD_DURATION', '60s');
+// LOAD_PROFILE=m2 applies P2.6: 10,000 VUs sustained for 120 s, judged on
+// uncontrolled errors (<1 %); controlled 429 shedding is reported separately.
+// Pair it with infrastructure m2/scale.py for the 3->5->2 replica sequence.
+const M2 = env('LOAD_PROFILE', '') === 'm2';
+const VUS = Number(env('LOAD_VUS', M2 ? '10000' : '50'));
+const DURATION = env('LOAD_DURATION', M2 ? '120s' : '60s');
 const RAMP = env('LOAD_RAMP', '10s');
 const OUT = outPath('aggregator');
 
@@ -18,8 +22,9 @@ const LOAD = 'scenario:load,kind:api';
 const thresholds = {
   [`http_req_duration{${LOAD}}`]: ['p(95)<2000'],
   [`http_reqs{${LOAD}}`]: ['count>0'],
-  [`http_req_failed{${LOAD}}`]: ['rate<0.01'],
-  [`errors{${LOAD}}`]: ['rate<0.01'],
+  ...(M2
+    ? { [`uncontrolled_errors{${LOAD}}`]: ['rate<0.01'], [`errors{${LOAD}}`]: ['rate>=0'] }
+    : { [`http_req_failed{${LOAD}}`]: ['rate<0.01'], [`errors{${LOAD}}`]: ['rate<0.01'] }),
   'token_failures{scenario:load}': ['count==0'],
 };
 for (const name of ENDPOINTS) declare(thresholds, `${LOAD},name:${name}`);
@@ -79,6 +84,8 @@ export function handleSummary(data) {
     statusLine(data, LOAD),
     `  token failures: ${metric(data, 'token_failures{scenario:load}').count || 0} (iterations skipped, not counted above)`,
     `  http_req_failed: ${pct(metric(data, `http_req_failed{${LOAD}}`).rate)} (status >= 400 or network error)`,
+    `  controlled rejections (429 + Retry-After): ${pct(metric(data, `controlled_rejections{${LOAD}}`).rate)}`,
+    `  uncontrolled errors: ${pct(metric(data, `uncontrolled_errors{${LOAD}}`).rate)}${M2 ? ' (P2.6 target < 1 %)' : ''}`,
     `  thresholds: ${failed.length ? `FAILED ${failed.join(', ')}` : 'ok'}`,
     `  full summary: ${OUT}`,
     '',

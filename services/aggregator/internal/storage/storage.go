@@ -152,6 +152,8 @@ type Backend struct {
 	Sources   SourceStateStore
 	Outbox    Outbox
 	Streams   StreamStore
+	// Snapshots is optional; nil means stream state is rebuilt from sequence zero.
+	Snapshots StreamSnapshots
 	Reports   FieldReports
 	Inbox     IngestInbox
 	Audit     AuditReader

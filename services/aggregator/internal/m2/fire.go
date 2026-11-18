@@ -23,24 +23,59 @@ type keyset map[string]bool
 // cells. An update/retraction only traverses the affected connected components.
 // Durable input replay recreates the same graph AND identifier lineage.
 type FireEngine struct {
-	points        map[string]Detection
-	seen          keyset
-	grid          map[cell]keyset
-	edges         map[string]keyset
-	owner         map[string]string
-	groups        map[string]keyset
-	published     map[string]bool
-	latest        map[string]*domain.HazardRecord
-	MaxTime       time.Time
-	Lateness      time.Duration
+	points    map[string]Detection
+	seen      map[string]time.Time
+	grid      map[cell]keyset
+	edges     map[string]keyset
+	owner     map[string]string
+	groups    map[string]keyset
+	published map[string]bool
+	latest    map[string]*domain.HazardRecord
+	MaxTime   time.Time
+	Lateness  time.Duration
+	// Retention is the declared correction horizon: once a component's newest
+	// detection is older than MaxTime-Retention it is final and leaves memory.
+	// It is never shorter than Lateness+linkWindow, so no accepted detection can
+	// still connect to an evicted point.
+	Retention time.Duration
+	// MaxDetections is a soft bound: reaching it compacts at the minimum safe
+	// horizon (Lateness+linkWindow). It never stops processing.
 	MaxDetections int
-	Late, Low     int64
+	// Late counts detections beyond Lateness; Expired counts corrections or
+	// retractions of state already finalized; OverCapacity counts inputs that
+	// were accepted while the soft bound could not be restored.
+	Late, Low, Expired, OverCapacity int64
+	// compacted is the last finalization cutoff (aligned to compactStep).
+	compacted time.Time
+	// KeepFinal retains finalized fire records for offline reference comparison.
+	KeepFinal bool
+	final     map[string]*domain.HazardRecord
 }
 
+// linkWindow is the maximum time distance of a graph edge.
+const linkWindow = 6 * time.Hour
+
+// compactStep aligns finalization cutoffs so replay from any snapshot or from
+// sequence zero evicts exactly the same state at the same input.
+const compactStep = time.Hour
+
+// DefaultRetention is the declared correction horizon used when none is set.
+const DefaultRetention = 48 * time.Hour
+
 func NewFireEngine(lateness time.Duration, maxPoints int) *FireEngine {
+	return NewFireEngineRetention(lateness, DefaultRetention, maxPoints)
+}
+
+// NewFireEngineRetention clamps retention to the smallest horizon that keeps
+// finalization invisible to every detection the lateness policy still accepts.
+func NewFireEngineRetention(lateness, retention time.Duration, maxPoints int) *FireEngine {
+	if retention < lateness+linkWindow {
+		retention = lateness + linkWindow
+	}
 	return &FireEngine{
-		points: map[string]Detection{}, seen: keyset{}, grid: map[cell]keyset{}, edges: map[string]keyset{}, owner: map[string]string{},
-		groups: map[string]keyset{}, published: map[string]bool{}, latest: map[string]*domain.HazardRecord{}, Lateness: lateness, MaxDetections: maxPoints,
+		points: map[string]Detection{}, seen: map[string]time.Time{}, grid: map[cell]keyset{}, edges: map[string]keyset{}, owner: map[string]string{},
+		groups: map[string]keyset{}, published: map[string]bool{}, latest: map[string]*domain.HazardRecord{}, Lateness: lateness, Retention: retention,
+		MaxDetections: maxPoints, final: map[string]*domain.HazardRecord{},
 	}
 }
 func stableID(prefix, key string) string {
@@ -130,6 +165,7 @@ func (e *FireEngine) Apply(kind string, raw []byte, sequence int64, received tim
 	if kind == "heartbeat" {
 		if t, err := timestamp(o, "virtual_now"); err == nil && t.After(e.MaxTime) {
 			e.MaxTime = t
+			e.maybeCompact()
 		}
 		return nil, nil
 	}
@@ -150,6 +186,10 @@ func (e *FireEngine) Apply(kind string, raw []byte, sequence int64, received tim
 		if b := o["changes"]; kind == "update" && len(b) > 0 {
 			prev, ok := e.points[key]
 			if !ok {
+				if _, seen := e.seen[key]; !seen && !e.compacted.IsZero() {
+					e.Expired++
+					return nil, errors.New("correction_beyond_state_retention")
+				}
 				return nil, errors.New("update_unknown_key")
 			}
 			changes, err := decodeObject(b)
@@ -175,19 +215,25 @@ func (e *FireEngine) Apply(kind string, raw []byte, sequence int64, received tim
 			return nil, errors.New("detection_key_mismatch")
 		}
 		_, known := e.points[key]
-		if kind == "detection" && e.seen[key] {
+		if _, dup := e.seen[key]; kind == "detection" && dup {
 			return nil, nil
 		}
 		if !known && d.Time.Before(e.MaxTime.Add(-e.Lateness)) {
 			e.Late++
 			return nil, errors.New("late_beyond_allowed_lateness")
 		}
-		if !known && len(e.points) >= e.MaxDetections {
-			return nil, errCapacity
+		if !known && e.MaxDetections > 0 && len(e.points) >= e.MaxDetections {
+			e.compactTo(e.MaxTime.Add(-e.Lateness - linkWindow))
+			if len(e.points) >= e.MaxDetections {
+				e.OverCapacity++
+			}
 		}
-		e.seen[key] = true
+		if d.Time.After(e.seen[key]) {
+			e.seen[key] = d.Time
+		}
 		if d.Time.After(e.MaxTime) {
 			e.MaxTime = d.Time
+			defer e.maybeCompact()
 		}
 		if old, ok := e.points[key]; ok && d.Key == key && reflect.DeepEqual(old, d) {
 			return nil, nil
@@ -197,6 +243,10 @@ func (e *FireEngine) Apply(kind string, raw []byte, sequence int64, received tim
 			return nil, errors.New("retract_missing_key")
 		}
 		if _, ok := e.points[key]; !ok {
+			if _, seen := e.seen[key]; !seen && !e.compacted.IsZero() {
+				e.Expired++
+				return nil, errors.New("retract_beyond_state_retention")
+			}
 			return nil, nil
 		}
 	default:
@@ -332,23 +382,25 @@ func (e *FireEngine) Apply(kind string, raw []byte, sequence int64, received tim
 	return out, nil
 }
 
-var errCapacity = errors.New("satellite capacity reached; input retained, increase SATELLITE_MAX_DETECTIONS")
-
+// sameFire compares canonical JSON, so a record restored from a snapshot
+// (whose attribute numbers/slices decode to generic types) equals the record a
+// full replay would hold and never triggers a spurious revision.
 func sameFire(a, b *domain.HazardRecord) bool {
-	x, y := *a, *b
+	return reflect.DeepEqual(fireFingerprint(a), fireFingerprint(b))
+}
+func fireFingerprint(h *domain.HazardRecord) []byte {
+	x := *h
 	x.Attributes = map[string]any{}
-	y.Attributes = map[string]any{}
-	for k, v := range a.Attributes {
+	for k, v := range h.Attributes {
 		if k != "stream_sequence" {
 			x.Attributes[k] = v
 		}
 	}
-	for k, v := range b.Attributes {
-		if k != "stream_sequence" {
-			y.Attributes[k] = v
-		}
+	b, err := json.Marshal(x)
+	if err != nil {
+		return []byte(err.Error())
 	}
-	return reflect.DeepEqual(x, y)
+	return b
 }
 func (e *FireEngine) record(id string, members keyset, received time.Time) *domain.HazardRecord {
 	keys := sortedKeys(members)
@@ -391,13 +443,82 @@ func (e *FireEngine) Counts() (fires, singletons int) {
 	return
 }
 
-// Snapshot returns active fires in a stable order for offline comparison.
+// Snapshot returns active fires in a stable order for offline comparison,
+// including finalized fires when KeepFinal is set.
 func (e *FireEngine) Snapshot() []*domain.HazardRecord {
+	all := map[string]*domain.HazardRecord{}
+	for id, h := range e.final {
+		all[id] = h
+	}
+	for id, h := range e.latest {
+		all[id] = h
+	}
 	out := []*domain.HazardRecord{}
-	for _, id := range sortedKeys(e.latest) {
-		if h := e.latest[id]; !domain.Withdrawn(h) {
+	for _, id := range sortedKeys(all) {
+		if h := all[id]; !domain.Withdrawn(h) {
 			out = append(out, h)
 		}
 	}
 	return out
+}
+
+// Active is the number of detections currently held in memory.
+func (e *FireEngine) Active() int { return len(e.points) }
+
+func (e *FireEngine) maybeCompact() {
+	cutoff := e.MaxTime.Add(-e.Retention).Truncate(compactStep)
+	if cutoff.After(e.compacted) {
+		e.compactTo(cutoff)
+	}
+}
+
+// compactTo finalizes every component whose newest detection is before cutoff.
+// cutoff never exceeds MaxTime-Lateness-linkWindow, so later accepted
+// detections cannot connect to anything evicted here.
+func (e *FireEngine) compactTo(cutoff time.Time) {
+	if limit := e.MaxTime.Add(-e.Lateness - linkWindow); cutoff.After(limit) {
+		cutoff = limit
+	}
+	if !cutoff.After(e.compacted) {
+		return
+	}
+	e.compacted = cutoff
+	for _, id := range sortedKeys(e.groups) {
+		members := e.groups[id]
+		newest := time.Time{}
+		for k := range members {
+			if t := e.points[k].Time; t.After(newest) {
+				newest = t
+			}
+		}
+		if !newest.Before(cutoff) {
+			continue
+		}
+		for k := range members {
+			e.remove(k)
+			delete(e.owner, k)
+		}
+		delete(e.groups, id)
+		if h := e.latest[id]; h != nil && e.KeepFinal {
+			e.final[id] = h
+		}
+		delete(e.latest, id)
+		delete(e.published, id)
+	}
+	for k, d := range e.points {
+		if d.Confidence == "l" && d.Time.Before(cutoff) {
+			e.remove(k)
+		}
+	}
+	for id, h := range e.latest {
+		if _, live := e.groups[id]; !live && domain.Withdrawn(h) && h.OccurredAt.Before(cutoff) {
+			delete(e.latest, id)
+			delete(e.published, id)
+		}
+	}
+	for k, t := range e.seen {
+		if t.Before(cutoff) {
+			delete(e.seen, k)
+		}
+	}
 }

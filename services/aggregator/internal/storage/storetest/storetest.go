@@ -43,6 +43,7 @@ func Run(t *testing.T, newBackend func(t *testing.T) *storage.Backend) {
 		{"Outbox/RetryAndRelease", testOutboxRetryRelease},
 		{"Outbox/DeadLetter", testOutboxDeadLetter},
 		{"Outbox/ConcurrentClaimers", testOutboxConcurrent},
+		{"Snapshots/LatestAndRetention", testSnapshots},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) { tc.fn(t, newBackend(t)) })
@@ -692,5 +693,42 @@ func testRevisionConcurrentNew(t *testing.T, b *storage.Backend) {
 	ids := claimedIDs(t, b)
 	if len(ids) != 1 {
 		t.Fatalf("racing inserts enqueued event IDs %v, want one", ids)
+	}
+}
+
+func testSnapshots(t *testing.T, b *storage.Backend) {
+	if b.Snapshots == nil {
+		t.Skip("backend has no stream snapshots")
+	}
+	c := ctx(t)
+	stream := "snap-" + uuid.NewString()
+	if seq, state, err := b.Snapshots.LatestSnapshot(c, stream, 1<<62); err != nil || seq != 0 || state != nil {
+		t.Fatalf("empty stream: %d %v %v", seq, state, err)
+	}
+	big := make([]byte, 700<<10)
+	for i := range big {
+		big[i] = byte(i * 7)
+	}
+	for _, s := range []struct {
+		seq   int64
+		state []byte
+	}{{10, []byte("ten")}, {20, big}, {30, []byte("thirty")}} {
+		if err := b.Snapshots.SaveSnapshot(c, stream, s.seq, s.state); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Idempotent rewrite of the same sequence.
+	if err := b.Snapshots.SaveSnapshot(c, stream, 30, []byte("thirty")); err != nil {
+		t.Fatal(err)
+	}
+	if seq, state, err := b.Snapshots.LatestSnapshot(c, stream, 1<<62); err != nil || seq != 30 || string(state) != "thirty" {
+		t.Fatalf("latest: %d %q %v", seq, state, err)
+	}
+	if seq, state, err := b.Snapshots.LatestSnapshot(c, stream, 29); err != nil || seq != 20 || len(state) != len(big) || state[len(big)-1] != big[len(big)-1] {
+		t.Fatalf("at most 29: %d %d %v", seq, len(state), err)
+	}
+	// Only SnapshotsRetained remain: sequence 10 is gone.
+	if seq, state, err := b.Snapshots.LatestSnapshot(c, stream, 15); err != nil || seq != 0 || state != nil {
+		t.Fatalf("pruned snapshot still returned: %d %v", seq, err)
 	}
 }

@@ -5,8 +5,10 @@ package cassandra
 import (
 	"context"
 	"fmt"
+	"os"
 	"reflect"
 	"sort"
+	"strings"
 	"testing"
 	"time"
 
@@ -147,7 +149,16 @@ func TestAuditIndexedPaginationChecksumWithdrawalAndLocation(t *testing.T) {
 		t.Fatal("time series does not reconcile")
 	}
 	location, err := reader.Locate(ctx, want[0].HazardID)
-	if err != nil || !location.Exists || len(location.Locations) != 1 || location.Locations[0].Role != "primary" || location.Locations[0].Node != "integration-node" {
+	// The single-container fixture's rack is "integration-node"; on a real ring set
+	// AGG_TEST_CASSANDRA_NODES to the comma-separated Kubernetes node names.
+	nodes := map[string]bool{"integration-node": true}
+	if v := os.Getenv("AGG_TEST_CASSANDRA_NODES"); v != "" {
+		nodes = map[string]bool{}
+		for _, n := range strings.Split(v, ",") {
+			nodes[strings.TrimSpace(n)] = true
+		}
+	}
+	if err != nil || !location.Exists || len(location.Locations) != 1 || location.Locations[0].Role != "primary" || !nodes[location.Locations[0].Node] {
 		t.Fatalf("location: %+v %v", location, err)
 	}
 }

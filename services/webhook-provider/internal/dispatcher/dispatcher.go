@@ -8,7 +8,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"io"
-	"log"
+	"log/slog"
 	"net/http"
 	"time"
 
@@ -54,8 +54,8 @@ func (d *Dispatcher) Dispatch(ctx context.Context, url, secret string, payload [
 		if last.Err == nil && last.StatusCode >= 200 && last.StatusCode < 300 {
 			return last
 		}
-		log.Printf("[Dispatcher] Attempt %d/%d to %s failed (status=%d, err=%v)",
-			attempt, d.maxRetries, url, last.StatusCode, last.Err)
+		slog.WarnContext(ctx, "webhook delivery attempt failed", "attempt", attempt, "max_attempts", d.maxRetries,
+			"url", url, "status", last.StatusCode, "error", fmt.Sprint(last.Err))
 
 		if attempt < d.maxRetries {
 			backoff := time.Duration(1<<uint(attempt-1)) * time.Second // 1s, 2s, 4s, 8s, 16s

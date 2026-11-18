@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"log"
+	"log/slog"
 	"os"
 	"os/signal"
 	"syscall"
@@ -19,6 +20,7 @@ import (
 )
 
 func main() {
+	slog.SetDefault(telemetry.NewLogger(os.Stdout, "webhook-provider"))
 	log.Println("[WebhookProvider] Starting BNPB Webhook Provider Service...")
 
 	cfg, err := config.Load()

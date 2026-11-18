@@ -31,6 +31,8 @@ type metrics struct {
 	inputs, parked                             metric.Int64Counter
 	latency                                    metric.Float64Histogram
 	offset, lag, fires, singles, late, breaker metric.Int64Gauge
+	active, expired, overCapacity              metric.Int64Gauge
+	recovery                                   metric.Float64Histogram
 }
 
 func NewRunner(c Config, s *storage.Backend) *Runner {
@@ -45,6 +47,10 @@ func NewRunner(c Config, s *storage.Backend) *Runner {
 	v.singles, _ = m.Int64Gauge("bnpb.satellite.singletons")
 	v.late, _ = m.Int64Gauge("bnpb.satellite.late")
 	v.breaker, _ = m.Int64Gauge("bnpb.coastal.breaker.open")
+	v.active, _ = m.Int64Gauge("bnpb.satellite.active_detections")
+	v.expired, _ = m.Int64Gauge("bnpb.satellite.expired_corrections")
+	v.overCapacity, _ = m.Int64Gauge("bnpb.satellite.over_capacity")
+	v.recovery, _ = m.Float64Histogram("bnpb.satellite.recovery.duration", metric.WithUnit("s"))
 	return &Runner{c, s, v}
 }
 func (r *Runner) save(ctx context.Context, h *domain.HazardRecord, corr string) error {
@@ -115,8 +121,9 @@ func (r *Runner) satellite(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	e := NewFireEngine(r.Config.Lateness, r.Config.MaxDetections)
-	for seq := int64(0); seq < p.Sequence; {
+	e, seq := r.restoreSatellite(ctx, stream, p.Sequence)
+	replayStarted, replayed := time.Now(), 0
+	for seq < p.Sequence {
 		rows, err := r.Store.Streams.Read(ctx, stream, seq, 200)
 		if err != nil {
 			return err
@@ -132,14 +139,15 @@ func (r *Runner) satellite(ctx context.Context) error {
 				return errors.New("journal_gap")
 			}
 			if row.Kind != "quarantined" {
-				_, err = e.Apply(row.Kind, row.Payload, row.Sequence, row.ReceivedAt)
-			}
-			if errors.Is(err, errCapacity) {
-				return err
+				_, _ = e.Apply(row.Kind, row.Payload, row.Sequence, row.ReceivedAt)
 			}
 			seq = row.Sequence
+			replayed++
 		}
 	}
+	r.metrics.recovery.Record(ctx, time.Since(replayStarted).Seconds())
+	slog.InfoContext(ctx, "satellite state recovered", "sequence", p.Sequence, "replayed", replayed, "active_detections", e.Active(), "seconds", time.Since(replayStarted).Seconds(), "correlation_id", "satellite-recovery")
+	snapshotAt := seq
 	apply := func(row storage.StreamEntry) error {
 		corr := fmt.Sprintf("satellite-%d", row.Sequence)
 		work, span := otel.Tracer("bnpb.m2").Start(ctx, "satellite.process")
@@ -149,9 +157,6 @@ func (r *Runner) satellite(ctx context.Context) error {
 		var err error
 		if row.Kind != "quarantined" {
 			records, err = e.Apply(row.Kind, row.Payload, row.Sequence, row.ReceivedAt)
-		}
-		if errors.Is(err, errCapacity) {
-			return err
 		}
 		if err != nil {
 			if err = r.park(work, domain.SourceSatellite, row.Payload, err.Error(), row.ReceivedAt); err != nil {
@@ -174,6 +179,13 @@ func (r *Runner) satellite(ctx context.Context) error {
 		r.metrics.fires.Record(work, int64(fires))
 		r.metrics.singles.Record(work, int64(singles))
 		r.metrics.late.Record(work, e.Late)
+		r.metrics.active.Record(work, int64(e.Active()))
+		r.metrics.expired.Record(work, e.Expired)
+		r.metrics.overCapacity.Record(work, e.OverCapacity)
+		if every := int64(r.Config.SnapshotEvery); every > 0 && r.Store.Snapshots != nil && p.Sequence-snapshotAt >= every {
+			r.saveSatellite(work, stream, p.Sequence, e)
+			snapshotAt = p.Sequence
+		}
 		if n, err := strconv.ParseInt(p.Cursor, 10, 64); err == nil {
 			r.metrics.offset.Record(work, n)
 		}
@@ -252,6 +264,44 @@ func (r *Runner) satellite(ctx context.Context) error {
 		backoff = min(30*time.Second, backoff*2)
 	}
 	return ctx.Err()
+}
+
+// restoreSatellite loads the newest verified snapshot at or below the
+// committed checkpoint. Any failure falls back to a full journal replay, which
+// yields the same state, only slower.
+func (r *Runner) restoreSatellite(ctx context.Context, stream string, committed int64) (*FireEngine, int64) {
+	fresh := func() *FireEngine {
+		return NewFireEngineRetention(r.Config.Lateness, r.Config.Retention, r.Config.MaxDetections)
+	}
+	if r.Store.Snapshots == nil || r.Config.SnapshotEvery == 0 || committed == 0 {
+		return fresh(), 0
+	}
+	seq, state, err := r.Store.Snapshots.LatestSnapshot(ctx, stream, committed)
+	if err != nil || state == nil {
+		if err != nil {
+			slog.WarnContext(ctx, "satellite snapshot unavailable; replaying journal", "error", err, "correlation_id", "satellite-recovery")
+		}
+		return fresh(), 0
+	}
+	e, err := RestoreFireEngine(state, r.Config.Lateness, r.Config.Retention, r.Config.MaxDetections)
+	if err != nil {
+		slog.WarnContext(ctx, "satellite snapshot rejected; replaying journal", "sequence", seq, "error", err, "correlation_id", "satellite-recovery")
+		return fresh(), 0
+	}
+	return e, seq
+}
+
+// saveSatellite is best effort: a failed snapshot only lengthens the next recovery.
+func (r *Runner) saveSatellite(ctx context.Context, stream string, sequence int64, e *FireEngine) {
+	state, err := e.EncodeState()
+	if err == nil {
+		err = r.Store.Snapshots.SaveSnapshot(ctx, stream, sequence, state)
+	}
+	if err != nil {
+		slog.WarnContext(ctx, "satellite snapshot failed", "sequence", sequence, "error", err, "correlation_id", fmt.Sprintf("satellite-%d", sequence))
+		return
+	}
+	slog.DebugContext(ctx, "satellite snapshot saved", "sequence", sequence, "bytes", len(state), "correlation_id", fmt.Sprintf("satellite-%d", sequence))
 }
 
 type processingError struct{ error }

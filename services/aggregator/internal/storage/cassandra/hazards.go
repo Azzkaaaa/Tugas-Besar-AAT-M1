@@ -295,8 +295,8 @@ func (s hazards) readStoredTable(ctx context.Context, hazardID string, serial, l
 // writtenOut reports whether the List row of st's revision exists.
 func (s hazards) writtenOut(ctx context.Context, st *stored) (bool, error) {
 	var revision int
-	err := s.db.session.Query(`SELECT revision FROM hazards_by_bucket WHERE bucket = ? AND occurred_at = ? AND hazard_id = ?`,
-		st.bucket, st.rec.OccurredAt, st.rec.HazardID).WithContext(ctx).Scan(&revision)
+	err := s.db.session.Query(`SELECT revision FROM hazards_by_bucket_shard WHERE bucket = ? AND shard = ? AND occurred_at = ? AND hazard_id = ?`,
+		st.bucket, projectionShard(st.rec.HazardID), st.rec.OccurredAt, st.rec.HazardID).WithContext(ctx).Scan(&revision)
 	if errors.Is(err, gocql.ErrNotFound) {
 		return false, nil
 	}
@@ -329,13 +329,13 @@ func (s hazards) addProjection(b *gocql.Batch, h *domain.HazardRecord, bucket, p
 		addAuditProjection(b, h)
 	}
 	if !prevBucket.IsZero() && (!prevBucket.Equal(bucket) || !prevOccurredAt.Equal(h.OccurredAt)) {
-		b.Query(`DELETE FROM hazards_by_bucket WHERE bucket = ? AND occurred_at = ? AND hazard_id = ?`,
-			prevBucket, prevOccurredAt, h.HazardID)
+		b.Query(`DELETE FROM hazards_by_bucket_shard WHERE bucket = ? AND shard = ? AND occurred_at = ? AND hazard_id = ?`,
+			prevBucket, projectionShard(h.HazardID), prevOccurredAt, h.HazardID)
 	}
-	b.Query(`INSERT INTO hazards_by_bucket (bucket, occurred_at, hazard_id, source, source_ref_id, hazard_type,
+	b.Query(`INSERT INTO hazards_by_bucket_shard (bucket, shard, occurred_at, hazard_id, source, source_ref_id, hazard_type,
 			severity, area_name, latitude, longitude, ingested_at, attributes, revision)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		bucket, h.OccurredAt, h.HazardID, h.Source, h.SourceRefID, h.HazardType,
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		bucket, projectionShard(h.HazardID), h.OccurredAt, h.HazardID, h.Source, h.SourceRefID, h.HazardType,
 		h.Severity, h.AreaName, h.Latitude, h.Longitude, h.IngestedAt, mustJSON(h.Attributes), h.Revision)
 	b.Query(`INSERT INTO hazard_buckets (scope, bucket) VALUES (?, ?)`, scopeAll, bucket)
 	b.Query(`INSERT INTO hazard_buckets (scope, bucket) VALUES (?, ?)`, h.Source, bucket)
@@ -467,7 +467,7 @@ func collectBuckets(ctx context.Context, buckets bucketIterator, scope string, p
 		items, err := read(bucket, page.Size+1-len(out.Items))
 		out.Items = append(out.Items, items...)
 		if err != nil {
-			out.UnavailableUnits = append(out.UnavailableUnits, "hazard-bucket:"+bucket.UTC().Format(time.RFC3339Nano))
+			out.UnavailableUnits = append(out.UnavailableUnits, bucketUnits(bucket, err)...)
 		}
 	}
 	if err := buckets.Close(); err != nil || ctx.Err() != nil {
@@ -488,12 +488,22 @@ func collectBuckets(ctx context.Context, buckets bucketIterator, scope string, p
 	return out
 }
 
-// readBucket returns up to want matching rows of one bucket, in List order.
+// readBucket returns up to want matching rows of one bucket, in List order,
+// merged from every shard partition of the bucket.
 func (s hazards) readBucket(ctx context.Context, bucket time.Time, q storage.HazardQuery, since, until time.Time,
 	cursor *pageCursor, want int,
 ) ([]*domain.HazardRecord, error) {
-	stmt := `SELECT ` + hazardColumns + ` FROM hazards_by_bucket WHERE bucket = ?`
-	args := []any{bucket}
+	return readBucketShards(ctx, want, func(ctx context.Context, shard int) ([]*domain.HazardRecord, error) {
+		return s.readShard(ctx, bucket, shard, q, since, until, cursor, want)
+	})
+}
+
+// readShard returns up to want matching rows of one bucket shard, in List order.
+func (s hazards) readShard(ctx context.Context, bucket time.Time, shard int, q storage.HazardQuery, since, until time.Time,
+	cursor *pageCursor, want int,
+) ([]*domain.HazardRecord, error) {
+	stmt := `SELECT ` + hazardColumns + ` FROM hazards_by_bucket_shard WHERE bucket = ? AND shard = ?`
+	args := []any{bucket, shard}
 	// CQL allows one upper bound: the cursor's (inclusive; rows at exactly its time are filtered
 	// by hazard_id below) or Until's (exclusive), whichever is tighter.
 	switch {

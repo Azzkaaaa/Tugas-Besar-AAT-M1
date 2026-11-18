@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"os"
@@ -72,7 +73,12 @@ func Init(ctx context.Context, defaultServiceName string) (func(context.Context)
 			semconv.ServiceVersionKey.String("1.0.0"),
 			attribute.String("deployment.environment", appEnv),
 		),
-		resource.WithProcess(),
+		// Not resource.WithProcess(): its owner detector needs cgo or $USER, which the
+		// static, non-root container images lack, and then the whole SDK init fails.
+		resource.WithProcessPID(),
+		resource.WithProcessExecutableName(),
+		resource.WithProcessRuntimeName(),
+		resource.WithProcessRuntimeVersion(),
 		resource.WithOS(),
 		resource.WithHost(),
 	)
@@ -219,15 +225,11 @@ func initInstruments(m metric.Meter) error {
 	return err
 }
 
-// Logf returns log.Printf, prefixed with ctx's trace id when there is one, so log lines can be
-// matched to their trace.
+// Logf returns a printf-style logger whose structured records carry ctx's
+// trace_id/span_id (added by the correlated default handler), so log lines can
+// be matched to their trace.
 func Logf(ctx context.Context) func(format string, args ...any) {
-	sc := trace.SpanContextFromContext(ctx)
-	if !sc.IsValid() {
-		return log.Printf
-	}
-	prefix := "trace_id=" + sc.TraceID().String() + " "
-	return func(format string, args ...any) { log.Printf(prefix+format, args...) }
+	return func(format string, args ...any) { slog.InfoContext(ctx, fmt.Sprintf(format, args...)) }
 }
 
 // ExternalTransport records client spans for requests that leave the system but injects no

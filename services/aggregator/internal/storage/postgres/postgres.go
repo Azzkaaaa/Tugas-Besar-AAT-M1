@@ -32,6 +32,7 @@ func (db *DB) Backend() *storage.Backend {
 		Sources:   sources{db},
 		Outbox:    outbox{db},
 		Streams:   streams{db},
+		Snapshots: snapshots{db},
 		Audit:     audit{db},
 		Placement: audit{db},
 		Close:     db.Pool.Close,

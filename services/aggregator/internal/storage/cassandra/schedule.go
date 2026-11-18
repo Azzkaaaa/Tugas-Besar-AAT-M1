@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
+	"log/slog"
 	"sort"
 	"sync/atomic"
 	"time"
@@ -157,8 +157,8 @@ func (db *DB) initSchedule(ctx context.Context, initial time.Duration) error {
 	db.sched.set(s)
 
 	if cur, next := s.current(time.Now()); initial > 0 && initial != cur.Period && (next == nil || next.Period != initial) {
-		log.Printf("[Cassandra] Configured bucket period %s is not in effect (store uses %s); it only applies to a new keyspace. Change the period with storeadmin.",
-			initial, cur.Period)
+		slog.Warn("configured bucket period is not in effect; it only applies to a new keyspace (change it with storeadmin)",
+			"configured", initial.String(), "in_effect", cur.Period.String())
 	}
 	return nil
 }
@@ -176,13 +176,13 @@ func (db *DB) refreshSchedule(ctx context.Context) {
 			s, err := db.loadSchedule(ctx)
 			if err != nil || len(s) == 0 {
 				if ctx.Err() == nil {
-					log.Printf("[Cassandra] Failed refreshing bucket schedule (keeping the last one): %v", err)
+					slog.WarnContext(ctx, "refreshing bucket schedule failed; keeping the last one", "error", err)
 				}
 				continue
 			}
 			if len(s) != len(db.schedule()) {
 				cur, _ := s.current(time.Now())
-				log.Printf("[Cassandra] Bucket schedule changed: %d segments, current period %s", len(s), cur.Period)
+				slog.InfoContext(ctx, "bucket schedule changed", "segments", len(s), "period", cur.Period.String())
 			}
 			db.sched.set(s)
 		}

@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
+	"log/slog"
 	"math/rand/v2"
 	"sync"
 	"time"
@@ -74,7 +74,7 @@ func (l *Lease) logf(format string, args ...any) {
 		l.Logf(format, args...)
 		return
 	}
-	log.Printf(format, args...)
+	slog.Info(fmt.Sprintf(format, args...), "component", "leader")
 }
 
 // Run campaigns for the lease until ctx is done. Attempts are spread out so that jobs under

@@ -24,6 +24,12 @@ const STATUSES = ['0', '400', '401', '403', '404', '409', '429', '500', '502', '
 
 // A request counts as an error if it is not a 200 with the expected body.
 const errors = new Rate('errors');
+// M2 P2.6 distinguishes deliberate shedding from failures: a 429 carrying
+// Retry-After is controlled (rate limit / reserved-capacity admission); every
+// other non-200 (including 503 "dependency unavailable", timeouts, resets) is
+// uncontrolled.
+const controlled = new Rate('controlled_rejections');
+const uncontrolled = new Rate('uncontrolled_errors');
 const tokenFailures = new Counter('token_failures');
 
 export function seconds(duration) {
@@ -99,8 +105,15 @@ export function request(runId, name, path) {
   }
   const correlationId = `${runId}-${exec.vu.idInTest}-${exec.vu.iterationInInstance}`;
   const response = get(path, accessToken, name, correlationId);
-  errors.add(!valid(response, name), { name, kind: 'api' });
+  const ok = valid(response, name);
+  const shed = !ok && isControlled(response);
+  const tags = { name, kind: 'api' };
+  errors.add(!ok, tags);
+  controlled.add(shed, tags);
+  uncontrolled.add(!ok && !shed, tags);
 }
+
+export const isControlled = (response) => response.status === 429 && Boolean(response.headers['Retry-After']);
 
 export const randomItem = (items) => items[Math.floor(Math.random() * items.length)];
 
@@ -109,6 +122,8 @@ export function declare(thresholds, filter) {
   thresholds[`http_req_duration{${filter}}`] = thresholds[`http_req_duration{${filter}}`] || ['max>=0'];
   thresholds[`http_reqs{${filter}}`] = thresholds[`http_reqs{${filter}}`] || ['count>=0'];
   thresholds[`errors{${filter}}`] = thresholds[`errors{${filter}}`] || ['rate>=0'];
+  thresholds[`controlled_rejections{${filter}}`] = thresholds[`controlled_rejections{${filter}}`] || ['rate>=0'];
+  thresholds[`uncontrolled_errors{${filter}}`] = thresholds[`uncontrolled_errors{${filter}}`] || ['rate>=0'];
 }
 
 export function declareStatuses(thresholds, filter) {

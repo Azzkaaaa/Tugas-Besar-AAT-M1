@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"log/slog"
 	"net"
 	"strings"
 
@@ -144,7 +145,7 @@ func (s *Server) CreateWebhook(ctx context.Context, req *webhookv1.CreateWebhook
 	}
 
 	if err := s.db.CreateSubscription(ctx, sub); err != nil {
-		log.Printf("[WebhookProvider] CreateSubscription DB error: %v", err)
+		slog.ErrorContext(ctx, "CreateSubscription database error", "error", err)
 		return nil, status.Errorf(codes.Internal, "failed creating subscription")
 	}
 
@@ -173,7 +174,7 @@ func (s *Server) ListWebhooks(ctx context.Context, req *webhookv1.ListWebhooksRe
 
 	subs, nextToken, err := s.db.ListSubscriptions(ctx, caller.ClientID, req.GetPage().GetPageToken(), pageSize)
 	if err != nil {
-		log.Printf("[WebhookProvider] ListSubscriptions DB error: %v", err)
+		slog.ErrorContext(ctx, "ListSubscriptions database error", "error", err)
 		return nil, status.Errorf(codes.Internal, "failed listing subscriptions")
 	}
 
@@ -203,7 +204,7 @@ func (s *Server) GetWebhook(ctx context.Context, req *webhookv1.GetWebhookReques
 
 	sub, err := s.db.GetSubscription(ctx, req.GetWebhookId())
 	if err != nil {
-		log.Printf("[WebhookProvider] GetSubscription DB error: %v", err)
+		slog.ErrorContext(ctx, "GetSubscription database error", "error", err)
 		return nil, status.Errorf(codes.Internal, "failed fetching subscription")
 	}
 	if sub == nil || sub.OwnerClientID != caller.ClientID {
@@ -231,7 +232,7 @@ func (s *Server) DeleteWebhook(ctx context.Context, req *webhookv1.DeleteWebhook
 
 	sub, err := s.db.GetSubscription(ctx, req.GetWebhookId())
 	if err != nil {
-		log.Printf("[WebhookProvider] GetSubscription DB error: %v", err)
+		slog.ErrorContext(ctx, "GetSubscription database error", "error", err)
 		return nil, status.Errorf(codes.Internal, "failed fetching subscription")
 	}
 	if sub == nil || sub.OwnerClientID != caller.ClientID {
@@ -239,7 +240,7 @@ func (s *Server) DeleteWebhook(ctx context.Context, req *webhookv1.DeleteWebhook
 	}
 
 	if err := s.db.DeleteSubscription(ctx, req.GetWebhookId()); err != nil {
-		log.Printf("[WebhookProvider] DeleteSubscription DB error: %v", err)
+		slog.ErrorContext(ctx, "DeleteSubscription database error", "error", err)
 		return nil, status.Errorf(codes.Internal, "failed deleting subscription")
 	}
 
@@ -262,7 +263,7 @@ func (s *Server) ListDeliveries(ctx context.Context, req *webhookv1.ListDeliveri
 	// Verify ownership before listing.
 	sub, err := s.db.GetSubscription(ctx, req.GetWebhookId())
 	if err != nil {
-		log.Printf("[WebhookProvider] GetSubscription DB error: %v", err)
+		slog.ErrorContext(ctx, "GetSubscription database error", "error", err)
 		return nil, status.Errorf(codes.Internal, "failed fetching subscription")
 	}
 	if sub == nil || sub.OwnerClientID != caller.ClientID {
@@ -276,7 +277,7 @@ func (s *Server) ListDeliveries(ctx context.Context, req *webhookv1.ListDeliveri
 
 	deliveries, nextToken, err := s.db.ListDeliveries(ctx, req.GetWebhookId(), req.GetPage().GetPageToken(), pageSize)
 	if err != nil {
-		log.Printf("[WebhookProvider] ListDeliveries DB error: %v", err)
+		slog.ErrorContext(ctx, "ListDeliveries database error", "error", err)
 		return nil, status.Errorf(codes.Internal, "failed listing deliveries")
 	}
 
@@ -306,7 +307,7 @@ func (s *Server) PingWebhook(ctx context.Context, req *webhookv1.PingWebhookRequ
 
 	sub, err := s.db.GetSubscription(ctx, req.GetWebhookId())
 	if err != nil {
-		log.Printf("[WebhookProvider] GetSubscription DB error: %v", err)
+		slog.ErrorContext(ctx, "GetSubscription database error", "error", err)
 		return nil, status.Errorf(codes.Internal, "failed fetching subscription")
 	}
 	if sub == nil || sub.OwnerClientID != caller.ClientID {

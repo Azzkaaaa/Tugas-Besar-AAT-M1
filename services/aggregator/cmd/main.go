@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"log"
 	"log/slog"
 	"net/http"
 	"os"
@@ -26,14 +25,14 @@ import (
 )
 
 func main() {
-	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, nil)))
+	slog.SetDefault(telemetry.NewLogger(os.Stdout, "aggregator"))
 	if os.Getenv("AGGREGATOR_MODE") == "critical-delivery-worker" {
 		if err := criticaldelivery.RunWorkerMain(); err != nil {
-			log.Fatal(err)
+			telemetry.Fatal("startup failed", "error", err)
 		}
 		return
 	}
-	log.Println("[Aggregator] Starting BNPB Aggregator Service...")
+	slog.Info("starting aggregator")
 
 	workerMode := os.Getenv("AGGREGATOR_MODE") == "field-report-worker"
 	var cfg *config.Config
@@ -46,22 +45,22 @@ func main() {
 		cfg, err = config.Load()
 	}
 	if err != nil {
-		log.Fatalf("Fatal configuration error: %v", err)
+		telemetry.Fatal("invalid configuration", "error", err)
 	}
-	log.Printf("[Aggregator] Loaded configuration: GRPCPort=%s, BMKG=%s, PVMBG=%s", cfg.GRPCPort, cfg.BMKGBaseURL, cfg.PVMBGBaseURL)
+	slog.Info("configuration loaded", "grpc_port", cfg.GRPCPort, "bmkg_url", cfg.BMKGBaseURL, "pvmbg_url", cfg.PVMBGBaseURL)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
 	shutdownTele, err := telemetry.Init(ctx, "aggregator-service")
 	if err != nil {
-		log.Printf("[Aggregator] Warning: telemetry init failed: %v", err)
+		slog.Warn("telemetry init failed", "error", err)
 	} else {
 		defer func() {
 			shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer shutdownCancel()
 			if err := shutdownTele(shutdownCtx); err != nil {
-				log.Printf("[Aggregator] Error shutting down telemetry: %v", err)
+				slog.Warn("telemetry shutdown failed", "error", err)
 			}
 		}()
 	}
@@ -71,21 +70,21 @@ func main() {
 	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
 	go func() {
 		sig := <-sigChan
-		log.Printf("[Aggregator] Received signal %v, initiating graceful shutdown...", sig)
+		slog.Info("shutdown signal received", "signal", sig.String())
 		cancel()
 	}()
 
 	// 1. Open the canonical store (CANONICAL_STORE_BACKEND: postgres or cassandra).
-	log.Printf("[Aggregator] Connecting to canonical %s store...", cfg.CanonicalStoreBackend)
+	slog.Info("connecting to canonical store", "backend", cfg.CanonicalStoreBackend)
 	store, err := open.Open(ctx, cfg)
 	if err != nil {
-		log.Fatalf("[Aggregator] FATAL: Failed opening canonical store: %v", err)
+		telemetry.Fatal("opening canonical store failed", "error", err)
 	}
 	defer store.Close()
-	log.Println("[Aggregator] Canonical store connected and migrations applied successfully.")
+	slog.Info("canonical store ready")
 	if workerMode {
 		if store.Reports == nil {
-			log.Fatal("field-report-worker requires Cassandra")
+			telemetry.Fatal("field-report-worker requires Cassandra")
 		}
 		go serveProblem3HTTP(ctx, cancel, store, nil)
 		problem3.RunWorker(ctx, store.Reports)
@@ -93,7 +92,7 @@ func main() {
 	}
 	m2cfg, err := m2.LoadConfig()
 	if err != nil {
-		log.Fatalf("[Aggregator] M2 configuration: %v", err)
+		telemetry.Fatal("invalid M2 configuration", "error", err)
 	}
 	m2runner := m2.NewRunner(m2cfg, store.Backend)
 	var pipeline *ingest.Pipeline
@@ -103,7 +102,7 @@ func main() {
 		if value := os.Getenv("INGEST_MAX_RESPONSE_BYTES"); value != "" {
 			limit, err = strconv.ParseInt(value, 10, 32)
 			if err != nil || limit < 1 || limit > 64<<20 {
-				log.Fatal("INGEST_MAX_RESPONSE_BYTES must be between 1 and 67108864")
+				telemetry.Fatal("INGEST_MAX_RESPONSE_BYTES must be between 1 and 67108864")
 			}
 		}
 		pipeline = ingest.NewPipeline(store.Inbox, store.Hazards, os.Getenv("PVMBG_SCHEMA_ADAPTERS") == "true", limit)
@@ -114,9 +113,9 @@ func main() {
 	// serves gRPC.
 	electors, err := elect.Open(cfg, store)
 	if err != nil {
-		log.Fatalf("[Aggregator] FATAL: Invalid leader election configuration: %v", err)
+		telemetry.Fatal("invalid leader election configuration", "error", err)
 	}
-	log.Printf("[Aggregator] Leader election: %s (one lease per job, prefix %q)", cfg.Leader.Election, cfg.Leader.LeasePrefix)
+	slog.Info("leader election configured", "election", cfg.Leader.Election, "lease_prefix", cfg.Leader.LeasePrefix)
 
 	// 3. RabbitMQ transactional outbox publisher: on every replica, or as a leader job when the
 	// store allows a single outbox consumer.
@@ -137,7 +136,7 @@ func main() {
 	if store.OutboxSingleConsumer {
 		jobs[elect.JobOutboxPublisher] = pub.Run
 	} else {
-		log.Println("[Aggregator] Starting RabbitMQ Outbox Publisher...")
+		slog.Info("starting outbox publisher")
 		pub.Start(ctx)
 	}
 	if m2cfg.SatelliteURL != "" {
@@ -158,10 +157,10 @@ func main() {
 		select {
 		case <-done:
 		case <-time.After(5 * time.Second):
-			log.Println("[Aggregator] Leader jobs did not stop within 5s; their leases expire on their own")
+			slog.Warn("leader jobs did not stop within 5s; their leases expire on their own")
 		}
 	}()
-	log.Printf("[Aggregator] Campaigning for %d leader jobs...", len(jobs))
+	slog.Info("campaigning for leader jobs", "jobs", len(jobs))
 
 	// 4. Initialize Auth JWT Verifier. Discovery and JWKS load in the background (retried until the
 	// issuer behind Envoy answers), so ingestion never waits on auth; only bad config is fatal.
@@ -172,7 +171,7 @@ func main() {
 		InsecureSkipVerify: cfg.AuthInsecureSkipVerify,
 	})
 	if err != nil {
-		log.Fatalf("[Aggregator] FATAL: Invalid JWT verifier configuration: %v", err)
+		telemetry.Fatal("invalid JWT verifier configuration", "error", err)
 	}
 	defer verifier.Close()
 	address := m2cfg.HTTPAddress
@@ -185,7 +184,7 @@ func main() {
 		handler := problem3.Handler(store.Backend, verifier, m2cfg.AuditToken, m2runner.AuditHandler(verifier))
 		criticalAPI, err := criticaldelivery.LoadAPI()
 		if err != nil {
-			log.Fatal(err)
+			telemetry.Fatal("startup failed", "error", err)
 		}
 		criticalAPI.Journal = store.Critical
 		handler = criticalAPI.Handler(handler)
@@ -207,12 +206,12 @@ func main() {
 	srv := grpc.NewServer(cfg, store.Hazards, store.Sources, verifier)
 	srv.SetFieldReports(store.Reports)
 	srv.SetAnalytics(store.Analytics)
-	log.Printf("[Aggregator] Starting gRPC server on port %s...", cfg.GRPCPort)
+	slog.Info("starting gRPC server", "grpc_port", cfg.GRPCPort)
 	if err := srv.Start(ctx); err != nil {
-		log.Fatalf("[Aggregator] gRPC server error: %v", err)
+		telemetry.Fatal("gRPC server failed", "error", err)
 	}
 
-	log.Println("[Aggregator] Service stopped cleanly.")
+	slog.Info("aggregator stopped")
 }
 
 func serveProblem3HTTP(ctx context.Context, cancel context.CancelFunc, store *open.Store, verifier *auth.JWTVerifier) {
@@ -221,7 +220,7 @@ func serveProblem3HTTP(ctx context.Context, cancel context.CancelFunc, store *op
 		port = "9092"
 	}
 	if err := problem3.StartHTTP(ctx, port, store.Backend, verifier, os.Getenv("AUDIT_API_TOKEN")); err != nil {
-		log.Printf("[Aggregator] Internal HTTP failed: %v", err)
+		slog.Error("internal HTTP server failed", "error", err)
 		cancel()
 	}
 }
