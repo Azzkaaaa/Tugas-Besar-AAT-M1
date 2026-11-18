@@ -6,7 +6,7 @@
 |---|---|---|
 | `SATELLITE_ALLOWED_LATENESS` | `24h` | A *new* detection older than `max_event_time - lateness` is late: parked with `late_beyond_allowed_lateness` and counted. |
 | `SATELLITE_STATE_RETENTION` | `48h` | Correction horizon. A fire component whose newest detection is older than `max_event_time - retention` is **final** and leaves memory. Clamped to at least `lateness + 6h`. |
-| `SATELLITE_MAX_DETECTIONS` | `200000` | **Soft** bound. Reaching it compacts early, at the smallest safe horizon (`lateness + 6h`); if the window is still that dense the input is accepted and `bnpb.satellite.over_capacity` increases. Processing never stops. |
+| `SATELLITE_MAX_DETECTIONS` | `200000` | **Soft pressure threshold**, not a hard memory bound. Extra input is accepted and `bnpb.satellite.over_capacity` increases. It never shortens the configured correction horizon. A disk-backed bounded-state path is still required to close F15 for dense inputs. |
 | `SATELLITE_SNAPSHOT_EVERY` | `2000` | Committed inputs between durable engine snapshots (`0` disables). |
 
 Why finalization cannot change results: graph edges need |Δt| ≤ 6 h, and every
@@ -17,6 +17,10 @@ one-hour steps derived only from the journal, so replay from sequence zero, or
 from any snapshot, evicts identical state at identical inputs.
 
 Corrections are accepted while their fire is in memory (within retention).
+Capacity pressure does not finalize a component early: a 31-hour-old update or
+retraction is still accepted with a 48-hour correction horizon, regardless of
+the pressure threshold. Regression tests compare both kinds of correction with
+an unpressured engine and require identical canonical revisions.
 An update or retraction of an already finalized detection is **reported, not
 dropped**: it is parked as `correction_beyond_state_retention` /
 `retract_beyond_state_retention` and counted in

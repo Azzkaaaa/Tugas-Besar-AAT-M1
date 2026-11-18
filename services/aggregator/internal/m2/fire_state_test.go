@@ -174,3 +174,42 @@ func TestFireSoftCapacityNeverStopsProcessing(t *testing.T) {
 		t.Fatal("exceeding the soft bound was not reported")
 	}
 }
+
+func TestFireCapacityPressurePreservesCorrectionHorizon(t *testing.T) {
+	start := time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)
+	a := datedDetection("N20", start, 0, 0, "n", 5)
+	b := datedDetection("N21", start.Add(time.Minute), 0, 0.005, "n", 5)
+	o, _ := decodeObject(a)
+	d, _ := parseDetection(o)
+	for _, correction := range []streamInput{
+		{"update", []byte(fmt.Sprintf(`{"key":%q,"changes":{"frp":120}}`, d.Key))},
+		{"retract", []byte(fmt.Sprintf(`{"key":%q}`, d.Key))},
+	} {
+		t.Run(correction.kind, func(t *testing.T) {
+			pressured := NewFireEngineRetention(24*time.Hour, 48*time.Hour, 2)
+			reference := NewFireEngineRetention(24*time.Hour, 48*time.Hour, 100)
+			inputs := []streamInput{
+				{"detection", a}, {"detection", b},
+				{"heartbeat", []byte(`{"virtual_now":"2026-10-02T07:00:00Z"}`)},
+				{"detection", datedDetection("N20", start.Add(31*time.Hour), 5, 5, "n", 5)},
+				correction,
+			}
+			for i, input := range inputs {
+				got, err := pressured.Apply(input.kind, input.payload, int64(i+1), testNow)
+				if err != nil {
+					t.Fatalf("input %d rejected inside the 48h correction horizon: %v", i, err)
+				}
+				want, err := reference.Apply(input.kind, input.payload, int64(i+1), testNow)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if fmt.Sprint(outputs(t, got)) != fmt.Sprint(outputs(t, want)) {
+					t.Fatalf("input %d: capacity pressure changed canonical revisions", i)
+				}
+			}
+			if pressured.OverCapacity == 0 || pressured.Expired != 0 {
+				t.Fatalf("pressure=%d expired=%d", pressured.OverCapacity, pressured.Expired)
+			}
+		})
+	}
+}

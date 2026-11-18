@@ -38,8 +38,8 @@ type FireEngine struct {
 	// It is never shorter than Lateness+linkWindow, so no accepted detection can
 	// still connect to an evicted point.
 	Retention time.Duration
-	// MaxDetections is a soft bound: reaching it compacts at the minimum safe
-	// horizon (Lateness+linkWindow). It never stops processing.
+	// MaxDetections is a soft pressure threshold. It never changes the declared
+	// correction horizon: capacity pressure cannot make otherwise valid input late.
 	MaxDetections int
 	// Late counts detections beyond Lateness; Expired counts corrections or
 	// retractions of state already finalized; OverCapacity counts inputs that
@@ -223,10 +223,7 @@ func (e *FireEngine) Apply(kind string, raw []byte, sequence int64, received tim
 			return nil, errors.New("late_beyond_allowed_lateness")
 		}
 		if !known && e.MaxDetections > 0 && len(e.points) >= e.MaxDetections {
-			e.compactTo(e.MaxTime.Add(-e.Lateness - linkWindow))
-			if len(e.points) >= e.MaxDetections {
-				e.OverCapacity++
-			}
+			e.OverCapacity++
 		}
 		if d.Time.After(e.seen[key]) {
 			e.seen[key] = d.Time
