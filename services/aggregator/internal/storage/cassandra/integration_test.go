@@ -29,6 +29,7 @@ import (
 var dataTables = []string{
 	"hazards_by_id", "hazards_by_bucket", "hazard_buckets", "source_state",
 	"outbox_events", "outbox_pending", "outbox_dead_letters", "leader_leases",
+	"audit_events_by_shard", "audit_refs_by_shard",
 }
 
 func testHosts(t *testing.T) []string {

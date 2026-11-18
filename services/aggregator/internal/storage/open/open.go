@@ -27,6 +27,7 @@ func CassandraConfig(c config.CassandraConfig, outboxRetention time.Duration) ca
 		Keyspace:        c.Keyspace,
 		Username:        c.Username,
 		Password:        c.Password,
+		NodeFromRack:    c.NodeFromRack,
 		Consistency:     c.Consistency,
 		LocalDatacenter: c.LocalDatacenter,
 		Replication: cassandra.Replication{

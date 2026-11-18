@@ -68,11 +68,14 @@ type LeaderConfig struct {
 // CassandraConfig configures the cassandra canonical store backend. LoadCassandra reads it from
 // the CANONICAL_STORE_CASSANDRA_* environment; the aggregator, storecopy and storeadmin share it.
 type CassandraConfig struct {
-	Hosts       []string
-	Keyspace    string
-	Username    string
-	Password    string
-	Consistency string
+	Hosts    []string
+	Keyspace string
+	Username string
+	Password string
+	// NodeFromRack is enabled only when deployment assigns the Kubernetes node
+	// name to Cassandra's rack using the downward API.
+	NodeFromRack bool
+	Consistency  string
 	// LocalDatacenter routes queries to that datacenter first (LOCAL_* consistency).
 	LocalDatacenter string
 	// Replication of a keyspace the store creates: ReplicationStrategy is SimpleStrategy (with
@@ -96,6 +99,7 @@ func LoadCassandra() (CassandraConfig, error) {
 		Keyspace:            envOr("CANONICAL_STORE_CASSANDRA_KEYSPACE", "bnpb_canonical"),
 		Username:            os.Getenv("CANONICAL_STORE_CASSANDRA_USERNAME"),
 		Password:            os.Getenv("CANONICAL_STORE_CASSANDRA_PASSWORD"),
+		NodeFromRack:        os.Getenv("CANONICAL_STORE_CASSANDRA_NODE_FROM_RACK") == "true",
 		Consistency:         envOr("CANONICAL_STORE_CASSANDRA_CONSISTENCY", "LOCAL_QUORUM"),
 		LocalDatacenter:     strings.TrimSpace(os.Getenv("CANONICAL_STORE_CASSANDRA_LOCAL_DC")),
 		ReplicationStrategy: envOr("CANONICAL_STORE_CASSANDRA_REPLICATION_STRATEGY", "SimpleStrategy"),

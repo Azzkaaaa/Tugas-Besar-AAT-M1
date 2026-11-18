@@ -24,10 +24,10 @@ cannot be read. This is not a 404. An authoritative successful read which finds
 no record still returns 404. A healthy complete response is required to have an
 item; the gateway rejects inconsistent backend responses.
 
-Audit currently recognizes a partial storage page instead of claiming its scan
-was complete. Scalable audit pagination and exact unavailable-unit propagation
-are tracked under F13; full aggregation and analytics under F04. These remain
-open acceptance requirements.
+Audit uses ingestion-time indexes and streams byte-sorted references. It retains
+healthy shard results and the original cursor on an incomplete interval. See
+`m2-audit.md` for the index/backfill and node-identity contracts. Full aggregation
+and analytics remain tracked under F04.
 
 Verification uses Cassandra range/index fault fixtures, bounded gRPC source
 failure tests, real HTTP-to-gRPC response-contract tests, and a frontend adapter

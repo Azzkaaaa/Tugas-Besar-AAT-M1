@@ -285,6 +285,7 @@ func (s hazards) writeOut(ctx context.Context, h *domain.HazardRecord, bucket, p
 // addProjection adds the List row of h, the removal of the previous one if it moved, and the
 // bucket index entries to b.
 func (s hazards) addProjection(b *gocql.Batch, h *domain.HazardRecord, bucket, prevBucket, prevOccurredAt time.Time) {
+	addAuditProjection(b, h)
 	if !prevBucket.IsZero() && (!prevBucket.Equal(bucket) || !prevOccurredAt.Equal(h.OccurredAt)) {
 		b.Query(`DELETE FROM hazards_by_bucket WHERE bucket = ? AND occurred_at = ? AND hazard_id = ?`,
 			prevBucket, prevOccurredAt, h.HazardID)

@@ -12,13 +12,14 @@ func TestLoadCassandra(t *testing.T) {
 	t.Setenv("CANONICAL_STORE_CASSANDRA_DATACENTERS", "dc1:3, dc2:2")
 	t.Setenv("CANONICAL_STORE_CASSANDRA_LOCAL_DC", "dc1")
 	t.Setenv("CANONICAL_STORE_CASSANDRA_BUCKET_PERIOD", "5m")
+	t.Setenv("CANONICAL_STORE_CASSANDRA_NODE_FROM_RACK", "true")
 	c, err := LoadCassandra()
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(c.Hosts) != 2 || c.Hosts[1] != "b:9042" || c.ReplicationStrategy != "NetworkTopologyStrategy" ||
 		c.Datacenters["dc1"] != 3 || c.Datacenters["dc2"] != 2 || c.LocalDatacenter != "dc1" ||
-		c.BucketPeriod != 5*time.Minute || c.Consistency != "LOCAL_QUORUM" || c.Keyspace != "bnpb_canonical" {
+		c.BucketPeriod != 5*time.Minute || c.Consistency != "LOCAL_QUORUM" || c.Keyspace != "bnpb_canonical" || !c.NodeFromRack {
 		t.Fatalf("LoadCassandra = %+v", c)
 	}
 }

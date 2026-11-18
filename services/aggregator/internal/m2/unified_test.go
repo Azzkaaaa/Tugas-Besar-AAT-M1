@@ -45,10 +45,17 @@ func (combinedHazards) List(context.Context, storage.HazardQuery, storage.PageRe
 	return storage.HazardPage{Items: []*domain.HazardRecord{{HazardID: "fire-id", Source: domain.SourceSatellite, SourceRefID: "fire-ref", HazardType: domain.HazardTypeWildfire}}}, nil
 }
 
+func (combinedHazards) Events(context.Context, storage.AuditQuery) (storage.AuditPage, error) {
+	return storage.AuditPage{Items: []*domain.HazardRecord{{HazardID: "fire-id", Source: domain.SourceSatellite, SourceRefID: "fire-ref", HazardType: domain.HazardTypeWildfire}}}, nil
+}
+func (combinedHazards) References(_ context.Context, _ string, visit func(string) error) ([]string, error) {
+	return nil, visit("fire-ref")
+}
+
 func TestP3P5ShareInternalHTTPAndQuarantine(t *testing.T) {
 	inbox := &combinedInbox{items: []storage.IngestMessage{{ID: "p3-item", Source: "PVMBG", State: storage.IngestParked}}}
 	// No StreamStore: parking must use P3's durable inbox when available.
-	backend := &storage.Backend{Inbox: inbox, Hazards: combinedHazards{}}
+	backend := &storage.Backend{Inbox: inbox, Hazards: combinedHazards{}, Audit: combinedHazards{}}
 	r := NewRunner(Config{AuditToken: "integration-audit-token"}, backend)
 	for _, source := range []string{domain.SourceSatellite, domain.SourceCoastal} {
 		for range 2 {

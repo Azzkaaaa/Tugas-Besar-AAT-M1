@@ -1,0 +1,111 @@
+//go:build integration
+
+package cassandra
+
+import (
+	"context"
+	"fmt"
+	"reflect"
+	"sort"
+	"testing"
+	"time"
+
+	"github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/aggregator/internal/domain"
+	"github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/aggregator/internal/storage"
+	gocql "github.com/apache/cassandra-gocql-driver/v2"
+	"github.com/google/uuid"
+)
+
+func TestAuditIndexedPaginationChecksumWithdrawalAndLocation(t *testing.T) {
+	db, err := openTest(t, "agg_test_audit_"+uuid.NewString()[:8], time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { dropKeyspace(db) })
+	db.nodeFromRack = true
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+	base := time.Date(2026, 11, 18, 0, 0, 0, 0, time.UTC)
+	want := []*domain.HazardRecord{}
+	for i := range 1050 {
+		source := domain.SourceBMKG
+		kind := domain.HazardTypeSeismic
+		if i%2 == 0 {
+			source = domain.SourcePVMBG
+			kind = domain.HazardTypeVolcanic
+		}
+		h := &domain.HazardRecord{Source: source, SourceRefID: fmt.Sprintf("ref-%04d", 1049-i), HazardType: kind, Severity: domain.SeverityWaspada,
+			OccurredAt: base.Add(-time.Duration(i) * time.Hour), IngestedAt: base.Add(time.Duration(i/3) * time.Millisecond), Revision: 1}
+		h.HazardID = domain.HazardID(h.Source, h.SourceRefID)
+		if err := db.ImportHazard(ctx, h); err != nil {
+			t.Fatal(err)
+		}
+		want = append(want, h)
+	}
+	// Verify that a stale projection/backfill cannot reactivate a withdrawn event.
+	withdrawn := *want[5]
+	withdrawn.Revision = 5
+	withdrawn.Attributes = map[string]any{"withdrawn": true}
+	if err := db.ImportHazard(ctx, &withdrawn); err != nil {
+		t.Fatal(err)
+	}
+	b := db.session.Batch(gocql.LoggedBatch).WithContext(ctx)
+	addAuditProjection(b, want[5])
+	if err := b.Exec(); err != nil {
+		t.Fatal(err)
+	}
+	since := base.Add(12 * time.Millisecond)
+	filtered := []*domain.HazardRecord{}
+	for i, h := range want {
+		if i != 5 && !h.IngestedAt.Before(since) {
+			filtered = append(filtered, h)
+		}
+	}
+	sort.Slice(filtered, func(i, j int) bool {
+		if filtered[i].IngestedAt.Equal(filtered[j].IngestedAt) {
+			return filtered[i].HazardID < filtered[j].HazardID
+		}
+		return filtered[i].IngestedAt.Before(filtered[j].IngestedAt)
+	})
+	reader := audit{db}
+	got := []string{}
+	after := storage.AuditPosition{}
+	for {
+		page, err := reader.Events(ctx, storage.AuditQuery{Since: since, After: after, Limit: 117})
+		if err != nil || len(page.UnavailableUnits) > 0 {
+			t.Fatalf("page: %v %v", page.UnavailableUnits, err)
+		}
+		for _, h := range page.Items {
+			got = append(got, h.HazardID)
+		}
+		if !page.More {
+			break
+		}
+		if len(page.Items) == 0 {
+			t.Fatal("empty continuation")
+		}
+		last := page.Items[len(page.Items)-1]
+		after = storage.AuditPosition{At: last.IngestedAt, ID: last.HazardID}
+	}
+	ids := []string{}
+	for _, h := range filtered {
+		ids = append(ids, h.HazardID)
+	}
+	if !reflect.DeepEqual(got, ids) {
+		t.Fatalf("incorrect indexed pagination: %d/%d", len(got), len(ids))
+	}
+	refs := []string{}
+	units, err := reader.References(ctx, "", func(ref string) error { refs = append(refs, ref); return nil })
+	if err != nil || len(units) > 0 || len(refs) != 1049 || !sort.StringsAreSorted(refs) {
+		t.Fatalf("references: %d %v %v", len(refs), units, err)
+	}
+	for _, ref := range refs {
+		if ref == withdrawn.SourceRefID {
+			t.Fatal("withdrawal was resurrected by stale backfill")
+		}
+	}
+	location, err := reader.Locate(ctx, want[0].HazardID)
+	if err != nil || !location.Exists || len(location.Locations) != 1 || location.Locations[0].Role != "primary" || location.Locations[0].Node != "integration-node" {
+		t.Fatalf("location: %+v %v", location, err)
+	}
+}

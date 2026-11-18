@@ -145,13 +145,15 @@ type Outbox interface {
 
 // Backend is one opened store.
 type Backend struct {
-	Name    string
-	Hazards HazardStore
-	Sources SourceStateStore
-	Outbox  Outbox
-	Streams StreamStore
-	Reports FieldReports
-	Inbox   IngestInbox
+	Name      string
+	Hazards   HazardStore
+	Sources   SourceStateStore
+	Outbox    Outbox
+	Streams   StreamStore
+	Reports   FieldReports
+	Inbox     IngestInbox
+	Audit     AuditReader
+	Placement PlacementReader
 	// OutboxSingleConsumer is true when at most one publisher may claim from Outbox at a time.
 	OutboxSingleConsumer bool
 	// Close releases the backend's connections.

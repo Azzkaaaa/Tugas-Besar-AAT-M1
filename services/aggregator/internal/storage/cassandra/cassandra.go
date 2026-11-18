@@ -22,11 +22,12 @@ import (
 )
 
 type Config struct {
-	Hosts       []string
-	Keyspace    string
-	Username    string
-	Password    string
-	Consistency string // e.g. LOCAL_QUORUM
+	Hosts        []string
+	Keyspace     string
+	Username     string
+	Password     string
+	NodeFromRack bool
+	Consistency  string // e.g. LOCAL_QUORUM
 	// LocalDatacenter, when set, routes queries to that datacenter's nodes first, so LOCAL_*
 	// consistency means that datacenter. Set it with NetworkTopologyStrategy.
 	LocalDatacenter string
@@ -46,9 +47,10 @@ type Config struct {
 
 // DB is an open Cassandra store.
 type DB struct {
-	session   *gocql.Session
-	keyspace  string
-	retention time.Duration
+	session      *gocql.Session
+	keyspace     string
+	nodeFromRack bool
+	retention    time.Duration
 	// initialPeriod is the configured bucket period for a keyspace without a schedule.
 	initialPeriod time.Duration
 	sched         scheduleHolder
@@ -119,7 +121,7 @@ func Open(ctx context.Context, cfg Config) (*DB, error) {
 	if err != nil {
 		return nil, fmt.Errorf("unable to open keyspace %s: %w", cfg.Keyspace, err)
 	}
-	db := &DB{session: session, keyspace: cfg.Keyspace, retention: cfg.OutboxRetention, initialPeriod: cfg.BucketPeriod}
+	db := &DB{session: session, keyspace: cfg.Keyspace, retention: cfg.OutboxRetention, initialPeriod: cfg.BucketPeriod, nodeFromRack: cfg.NodeFromRack}
 	if cfg.ExistingOnly {
 		err = db.openExisting(ctx)
 	} else {
@@ -135,6 +137,9 @@ func Open(ctx context.Context, cfg Config) (*DB, error) {
 	refreshCtx, stop := context.WithCancel(context.Background())
 	db.stop = stop
 	go db.refreshSchedule(refreshCtx)
+	if !cfg.ExistingOnly {
+		go db.maintainAudit(refreshCtx)
+	}
 	return db, nil
 }
 
@@ -148,6 +153,8 @@ func (db *DB) Backend() *storage.Backend {
 		Streams:              streams{db},
 		Reports:              fieldReports{db},
 		Inbox:                ingestInbox{db},
+		Audit:                audit{db},
+		Placement:            audit{db},
 		OutboxSingleConsumer: true,
 		Close:                db.Close,
 	}
