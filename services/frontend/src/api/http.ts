@@ -84,6 +84,7 @@ export function createHttpGatewayClient(baseUrl = apiBaseUrl): GatewayClient {
   }
 
   return {
+    getAnalytics: (filters = {}, options) => request(`/analytics${queryString(filters)}`, options),
     listHazards: (filters = {}, options) => request(`/hazards${queryString(filters)}`, options),
     getHazard: (id, view = 'summary', options) => request(`/hazards/${encodeURIComponent(id)}${queryString({ view })}`, options),
     listNotifications: (filters = {}, options) => request(`/notifications${queryString(filters)}`, options),

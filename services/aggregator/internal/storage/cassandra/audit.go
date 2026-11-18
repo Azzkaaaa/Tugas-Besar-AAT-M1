@@ -18,7 +18,7 @@ import (
 )
 
 const auditShards = 16
-const auditReadyKey = "audit_indexes_v1"
+const auditReadyKey = "audit_indexes_v2"
 
 type audit struct{ db *DB }
 type auditEntry struct {
@@ -38,6 +38,8 @@ func auditShard(id string) int {
 func addAuditProjection(b *gocql.Batch, h *domain.HazardRecord) {
 	for _, scope := range []string{scopeAll, h.Source} {
 		version := int64(max(1, h.Revision))
+		b.Query(`INSERT INTO analytics_by_shard (scope,shard,hazard_id,occurred_at,hazard_type,severity,area_name,tsunami,active,revision)
+            VALUES (?,?,?,?,?,?,?,?,?,?) USING TIMESTAMP ?`, scope, auditShard(h.HazardID), h.HazardID, h.OccurredAt, h.HazardType, h.Severity, h.AreaName, storage.HasTsunami(h), !domain.Withdrawn(h), version, version)
 		b.Query(`INSERT INTO audit_events_by_shard (scope,shard,ingested_at,hazard_id,source_ref_id,active,revision)
             VALUES (?,?,?,?,?,?,?) USING TIMESTAMP ?`, scope, auditShard(h.HazardID), h.IngestedAt, h.HazardID, h.SourceRefID, !domain.Withdrawn(h), version, version)
 		b.Query(`INSERT INTO audit_refs_by_shard (scope,shard,source_ref_id,hazard_id,active,revision)

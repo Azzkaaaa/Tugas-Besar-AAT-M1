@@ -33,6 +33,10 @@ func TestAuditIndexedPaginationChecksumAndLocation(t *testing.T) {
 	for i := range 30 {
 		h := &domain.HazardRecord{Source: domain.SourceBMKG, SourceRefID: fmt.Sprintf("ref-%02d", 29-i), HazardType: domain.HazardTypeSeismic,
 			Severity: domain.SeverityWaspada, OccurredAt: base.Add(-time.Duration(i) * time.Hour), IngestedAt: base.Add(time.Duration(i/3) * time.Millisecond)}
+		h.AreaName = []string{"Padang", "Bali"}[i%2]
+		if i%3 == 0 {
+			h.Attributes = map[string]any{"tsunami_warnings": []any{map[string]any{"area": "Padang"}}}
+		}
 		if _, _, err := (hazards{db}).ApplyRevision(ctx, h, func(h *domain.HazardRecord) (storage.OutboxEvent, error) {
 			return storage.OutboxEvent{EventID: h.HazardID, Source: h.Source, Payload: []byte(`{}`)}, nil
 		}); err != nil {
@@ -68,6 +72,14 @@ func TestAuditIndexedPaginationChecksumAndLocation(t *testing.T) {
 	units, err := reader.References(ctx, "BMKG", func(ref string) error { refs = append(refs, ref); return nil })
 	if err != nil || len(units) > 0 || len(refs) != 30 || !sort.StringsAreSorted(refs) {
 		t.Fatalf("references %v %v", units, err)
+	}
+	aggregate := storage.Aggregate(ctx, reader, storage.AnalyticsQuery{Interval: "day"})
+	if aggregate.Partial || aggregate.Total != int64(len(refs)) || aggregate.Categories["SEISMIC"] != 30 || aggregate.Categories["TSUNAMI"] != 10 || aggregate.Severity["WASPADA"] != 30 || len(aggregate.Areas) != 2 || aggregate.Areas[0].Count != 15 {
+		t.Fatalf("analytics does not match Audit: %+v", aggregate)
+	}
+	filtered := storage.Aggregate(ctx, reader, storage.AnalyticsQuery{Since: base.Add(-4 * time.Hour), Until: base, Interval: "hour"})
+	if filtered.Partial || filtered.Total != 4 || filtered.Categories["TSUNAMI"] != 1 || len(filtered.Series) != 4 {
+		t.Fatalf("analytics range incorrect: %+v", filtered)
 	}
 	location, err := reader.Locate(ctx, domain.HazardID("BMKG", "ref-01"))
 	if err != nil || !location.Exists || len(location.Locations) != 1 || location.Locations[0].Node != "integration-node" {

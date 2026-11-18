@@ -25,6 +25,7 @@ type DB struct {
 // (FOR UPDATE SKIP LOCKED gives concurrent claimers disjoint rows).
 func (db *DB) Backend() *storage.Backend {
 	return &storage.Backend{
+		Analytics: audit{db},
 		Name:      "postgres",
 		Hazards:   hazards{db},
 		Sources:   sources{db},

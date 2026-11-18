@@ -7,6 +7,14 @@ vi.mock('../auth/session', () => ({ refreshSession: vi.fn(), getCsrfToken: vi.fn
 afterEach(() => vi.unstubAllGlobals());
 
 describe('Gateway HTTP adapter', () => {
+  it('requests whole-catalog analytics with range and completeness metadata', async () => {
+    const payload = { total: 1500, categories: { SEISMIC: 1500 }, severity: {}, areas: [], series: [], partial: true, unavailable_units: ['analytics-shard-03'], as_of: '2026-11-18T00:00:00Z' };
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify(payload)));
+    vi.stubGlobal('fetch', fetchMock);
+    const result = await createHttpGatewayClient('/api/v1').getAnalytics({ since: '2026-11-01T00:00:00Z', interval: 'month' });
+    expect(result).toEqual(payload);
+    expect(fetchMock.mock.calls[0][0]).toContain('/analytics?since=2026-11-01T00%3A00%3A00Z&interval=month');
+  });
   it('preserves a partial storage result without inventing a missing hazard', async () => {
     const partial = { partial: true, freshness: [], unavailable_units: ['canonical'] };
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify(partial), {

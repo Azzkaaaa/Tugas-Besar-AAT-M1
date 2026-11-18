@@ -77,6 +77,22 @@ test('filter sumber hanya menampilkan kejadian dari sumber terpilih', async ({ p
   }).toBe(true);
 });
 
+test('analitik menghitung seluruh katalog dan menampilkan lima kategori serta rentang', async ({ page }, testInfo) => {
+  await enterDemo(page);
+  const analytics = page.getByRole('region', { name: 'Analitik seluruh kejadian' });
+  await expect(analytics.getByRole('img', { name: 'Grafik garis jumlah kejadian per jenis bahaya terhadap waktu' })).toBeVisible();
+  for (const label of ['Gempa:', 'Tsunami:', 'Gunung berapi:', 'Kebakaran hutan:', 'Pesisir:']) await expect(analytics.getByText(label, { exact: false })).toBeVisible();
+  const total = Number((await analytics.locator('p > strong').first().textContent())?.replaceAll('.', ''));
+  expect(total).toBeGreaterThan(8);
+  await expect(analytics.getByRole('heading', { name: 'Jumlah per severity' })).toBeVisible();
+  await expect(analytics.getByRole('heading', { name: 'Jumlah per wilayah' })).toBeVisible();
+  await analytics.getByLabel('Rentang analitik').selectOption('all');
+  await expect(analytics).toHaveAttribute('aria-busy', 'false');
+  await analytics.getByRole('combobox', { name: 'Interval', exact: true }).selectOption('month');
+  await expect(analytics).toHaveAttribute('aria-busy', 'false');
+  await analytics.screenshot({ path: testInfo.outputPath('analytics-desktop.png') });
+});
+
 test('dashboard menangani data terlambat, kosong, gagal, dan kembali normal', async ({ page }) => {
   await enterDemo(page);
   const scenarios = page.getByLabel('Skenario demo', { exact: true });

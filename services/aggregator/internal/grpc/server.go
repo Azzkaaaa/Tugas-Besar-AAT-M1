@@ -23,18 +23,20 @@ import (
 )
 
 type Server struct {
-	cfg     *config.Config
-	hazards storage.HazardStore
-	sources storage.SourceStateStore
-	auth    *auth.JWTVerifier
-	reports storage.FieldReports
+	cfg            *config.Config
+	hazards        storage.HazardStore
+	sources        storage.SourceStateStore
+	auth           *auth.JWTVerifier
+	reports        storage.FieldReports
+	analytics      storage.AnalyticsReader
+	analyticsSlots chan struct{}
 	aggregatorv1.UnimplementedAggregatorServiceServer
 }
 
 func (s *Server) SetFieldReports(reports storage.FieldReports) { s.reports = reports }
 
 func NewServer(cfg *config.Config, hazards storage.HazardStore, sources storage.SourceStateStore, verifier *auth.JWTVerifier) *Server {
-	return &Server{cfg: cfg, hazards: hazards, sources: sources, auth: verifier}
+	return &Server{cfg: cfg, hazards: hazards, sources: sources, auth: verifier, analyticsSlots: make(chan struct{}, 1)}
 }
 
 func (s *Server) Start(ctx context.Context) error {

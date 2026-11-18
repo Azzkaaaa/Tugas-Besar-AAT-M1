@@ -7,6 +7,7 @@ import { isNotificationWorthy, matchesFilters, upsertHazard } from '../live/merg
 import type { PushState } from '../push/client';
 import { loadPush } from '../push/lazy';
 import { WebhookPage } from './WebhookPage';
+import { AnalyticsPanel } from './AnalyticsPanel';
 import type { AuthSession, DemoScenario, FeedStatus, Freshness, GatewayClient, Hazard, HazardFeedEvent, HazardFilters, HazardPage, HazardResult, Notification, NotificationPage, Severity, Source } from '../types';
 
 
@@ -309,6 +310,7 @@ export function DashboardPage({ session, onLogout, activePage, focusHazardId, lo
         {activePage === 'webhooks' ? (
           <WebhookPage session={session} client={client} />
         ) : activePage === 'dashboard' ? <>
+          <AnalyticsPanel client={client} revision={revision} />
           <section className="stats-grid" aria-label="Ringkasan halaman yang dimuat"><article className="stat-card"><span className="stat-icon"><Database size={19} /></span><div><p>Kejadian dimuat</p><strong>{initialLoading ? '—' : items.length}</strong><small>Pada halaman ini</small></div></article><article className="stat-card attention"><span className="stat-icon"><TriangleAlert size={19} /></span><div><p>Perlu perhatian</p><strong>{initialLoading ? '—' : attention}</strong><small>Siaga & Awas pada halaman ini</small></div></article><article className="stat-card"><span className="stat-icon"><Activity size={19} /></span><div><p>Jenis kejadian</p><strong className="stat-split">{initialLoading ? '—' : seismic}<span>seismik</span><i />{initialLoading ? '—' : items.length - seismic}<span>jenis lainnya</span></strong><small>Pada halaman ini</small></div></article></section>
 
           <div className="dashboard-columns"><section className="events-panel panel" aria-labelledby="events-heading"><div className="panel-heading"><div><h2 id="events-heading">Daftar kejadian<span className="count-pill">{visibleItems.length}</span></h2><p>Urutan waktu kejadian terbaru</p></div><span className="view-label"><ShieldCheck size={13} />{full ? 'Akses lengkap' : 'Ringkasan publik'}</span></div>

@@ -193,6 +193,7 @@ func main() {
 	// 5. Initialize & Start gRPC Server
 	srv := grpc.NewServer(cfg, store.Hazards, store.Sources, verifier)
 	srv.SetFieldReports(store.Reports)
+	srv.SetAnalytics(store.Analytics)
 	log.Printf("[Aggregator] Starting gRPC server on port %s...", cfg.GRPCPort)
 	if err := srv.Start(ctx); err != nil {
 		log.Fatalf("[Aggregator] gRPC server error: %v", err)

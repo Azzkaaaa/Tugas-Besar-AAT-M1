@@ -19,6 +19,7 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
+	AggregatorService_GetAnalytics_FullMethodName      = "/bnpb.aggregator.v1.AggregatorService/GetAnalytics"
 	AggregatorService_ListHazards_FullMethodName       = "/bnpb.aggregator.v1.AggregatorService/ListHazards"
 	AggregatorService_GetHazard_FullMethodName         = "/bnpb.aggregator.v1.AggregatorService/GetHazard"
 	AggregatorService_GetSourceStatuses_FullMethodName = "/bnpb.aggregator.v1.AggregatorService/GetSourceStatuses"
@@ -32,6 +33,9 @@ const (
 // through polling the mock REST sources; public clients cannot mutate hazards.
 // Every method requires service identity and the original actor's bearer token.
 type AggregatorServiceClient interface {
+	// Requires hazards:read:summary. Counts all current canonical metadata, with
+	// explicit storage incompleteness. TSUNAMI is a subset of SEISMIC.
+	GetAnalytics(ctx context.Context, in *GetAnalyticsRequest, opts ...grpc.CallOption) (*GetAnalyticsResponse, error)
 	// Requires hazards:read:summary; FULL additionally requires hazards:read:full.
 	ListHazards(ctx context.Context, in *ListHazardsRequest, opts ...grpc.CallOption) (*ListHazardsResponse, error)
 	// Same view scope requirements as ListHazards.
@@ -49,6 +53,16 @@ type aggregatorServiceClient struct {
 
 func NewAggregatorServiceClient(cc grpc.ClientConnInterface) AggregatorServiceClient {
 	return &aggregatorServiceClient{cc}
+}
+
+func (c *aggregatorServiceClient) GetAnalytics(ctx context.Context, in *GetAnalyticsRequest, opts ...grpc.CallOption) (*GetAnalyticsResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GetAnalyticsResponse)
+	err := c.cc.Invoke(ctx, AggregatorService_GetAnalytics_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 func (c *aggregatorServiceClient) ListHazards(ctx context.Context, in *ListHazardsRequest, opts ...grpc.CallOption) (*ListHazardsResponse, error) {
@@ -89,6 +103,9 @@ func (c *aggregatorServiceClient) GetSourceStatuses(ctx context.Context, in *Get
 // through polling the mock REST sources; public clients cannot mutate hazards.
 // Every method requires service identity and the original actor's bearer token.
 type AggregatorServiceServer interface {
+	// Requires hazards:read:summary. Counts all current canonical metadata, with
+	// explicit storage incompleteness. TSUNAMI is a subset of SEISMIC.
+	GetAnalytics(context.Context, *GetAnalyticsRequest) (*GetAnalyticsResponse, error)
 	// Requires hazards:read:summary; FULL additionally requires hazards:read:full.
 	ListHazards(context.Context, *ListHazardsRequest) (*ListHazardsResponse, error)
 	// Same view scope requirements as ListHazards.
@@ -108,6 +125,9 @@ type AggregatorServiceServer interface {
 // pointer dereference when methods are called.
 type UnimplementedAggregatorServiceServer struct{}
 
+func (UnimplementedAggregatorServiceServer) GetAnalytics(context.Context, *GetAnalyticsRequest) (*GetAnalyticsResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetAnalytics not implemented")
+}
 func (UnimplementedAggregatorServiceServer) ListHazards(context.Context, *ListHazardsRequest) (*ListHazardsResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method ListHazards not implemented")
 }
@@ -136,6 +156,24 @@ func RegisterAggregatorServiceServer(s grpc.ServiceRegistrar, srv AggregatorServ
 		t.testEmbeddedByValue()
 	}
 	s.RegisterService(&AggregatorService_ServiceDesc, srv)
+}
+
+func _AggregatorService_GetAnalytics_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetAnalyticsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(AggregatorServiceServer).GetAnalytics(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: AggregatorService_GetAnalytics_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(AggregatorServiceServer).GetAnalytics(ctx, req.(*GetAnalyticsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
 }
 
 func _AggregatorService_ListHazards_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
@@ -199,6 +237,10 @@ var AggregatorService_ServiceDesc = grpc.ServiceDesc{
 	ServiceName: "bnpb.aggregator.v1.AggregatorService",
 	HandlerType: (*AggregatorServiceServer)(nil),
 	Methods: []grpc.MethodDesc{
+		{
+			MethodName: "GetAnalytics",
+			Handler:    _AggregatorService_GetAnalytics_Handler,
+		},
 		{
 			MethodName: "ListHazards",
 			Handler:    _AggregatorService_ListHazards_Handler,

@@ -93,6 +93,19 @@ export interface RequestOptions {
   signal?: AbortSignal;
 }
 
+export type AnalyticsCategory = HazardType | 'TSUNAMI';
+export interface AnalyticsFilters { source?: Source; since?: string; until?: string; interval?: 'hour' | 'day' | 'month' | 'year'; }
+export interface AnalyticsResult {
+  total: number;
+  categories: Record<string, number>;
+  severity: Record<string, number>;
+  areas: Array<{ area_name: string; count: number }>;
+  series: Array<{ bucket: string; counts: Record<string, number> }>;
+  partial: boolean;
+  unavailable_units: string[];
+  as_of: string;
+}
+
 export interface Problem {
   type: string;
   title: string;
@@ -164,6 +177,7 @@ export interface PingWebhookResult {
 }
 
 export interface GatewayClient {
+  getAnalytics(filters?: AnalyticsFilters, options?: RequestOptions): Promise<AnalyticsResult>;
   listHazards(filters?: HazardFilters, options?: RequestOptions): Promise<HazardPage>;
   getHazard(id: string, view?: HazardView, options?: RequestOptions): Promise<HazardResult>;
   listNotifications(filters?: HazardFilters, options?: RequestOptions): Promise<NotificationPage>;

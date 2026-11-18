@@ -6,6 +6,7 @@ import type {
   WebhookDelivery, WebhookSubscription,
 } from '../types';
 import { createFixture, createFixtures } from './fixtures';
+import { fixtureAnalytics } from './analytics';
 
 
 const sources: Source[] = ['BMKG', 'PVMBG'];
@@ -183,6 +184,11 @@ export function createMockGatewayClient(session: AuthSession, latencyMs = 350): 
   ]);
 
   return {
+    async getAnalytics(filters = {}, options) {
+      requireView('summary');
+      await beforeRead(options);
+      return fixtureAnalytics(scenario === 'empty' ? [] : hazards, filters);
+    },
     async listHazards(filters = {}, options) {
       const selected = selection(filters);
       requireView(filters.view ?? 'summary');

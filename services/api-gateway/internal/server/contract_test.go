@@ -95,6 +95,9 @@ func typed[T any](b *backend, ctx context.Context, method string, req any) (T, e
 func (b *backend) ListHazards(ctx context.Context, r *aggregatorv1.ListHazardsRequest) (*aggregatorv1.ListHazardsResponse, error) {
 	return typed[*aggregatorv1.ListHazardsResponse](b, ctx, "ListHazards", r)
 }
+func (b *backend) GetAnalytics(ctx context.Context, r *aggregatorv1.GetAnalyticsRequest) (*aggregatorv1.GetAnalyticsResponse, error) {
+	return typed[*aggregatorv1.GetAnalyticsResponse](b, ctx, "GetAnalytics", r)
+}
 func (b *backend) GetHazard(ctx context.Context, r *aggregatorv1.GetHazardRequest) (*aggregatorv1.GetHazardResponse, error) {
 	return typed[*aggregatorv1.GetHazardResponse](b, ctx, "GetHazard", r)
 }
@@ -439,6 +442,27 @@ func TestPartialStorageResultsRemainUsableThroughREST(t *testing.T) {
 func TestContract(t *testing.T) {
 	h := newHarness(t)
 	b := h.backend
+	t.Run("analytics", func(t *testing.T) {
+		b.reply("GetAnalytics", reply(&aggregatorv1.GetAnalyticsResponse{Total: 1500, Categories: map[string]int64{"SEISMIC": 1500, "TSUNAMI": 2}, Severity: map[string]int64{"WASPADA": 1500}, Areas: []*aggregatorv1.AnalyticsArea{{AreaName: "Padang", Count: 1500}}, Series: []*aggregatorv1.AnalyticsPoint{{Bucket: timestamppb.New(time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC)), Counts: map[string]int64{"SEISMIC": 1500}}}, Partial: true, UnavailableUnits: []string{"analytics-shard-03"}, AsOf: timestamppb.Now()}))
+		r := h.do("GET", "/api/v1/analytics?source=BMKG&since=2026-11-01T00:00:00Z&until=2026-12-01T00:00:00Z&interval=day", nil, nil)
+		if r.status != 200 {
+			t.Fatalf("analytics: %d %s", r.status, r.body)
+		}
+		body := r.json(t)
+		if body["total"] != float64(1500) || body["partial"] != true {
+			t.Fatal(body)
+		}
+		req := b.request("GetAnalytics").(*aggregatorv1.GetAnalyticsRequest)
+		if req.Source != "BMKG" || req.Interval != "day" || req.Since == nil || req.Until == nil {
+			t.Fatal(req)
+		}
+		if r := h.do("GET", "/api/v1/analytics?interval=invalid", nil, nil); r.status != 400 {
+			t.Fatal(r.status)
+		}
+		if r := h.do("GET", "/api/v1/analytics?since=2026-12-01T00:00:00Z&until=2026-11-01T00:00:00Z", nil, nil); r.status != 400 {
+			t.Fatal(r.status)
+		}
+	})
 
 	t.Run("hazards", func(t *testing.T) {
 		b.reply("ListHazards", reply(&aggregatorv1.ListHazardsResponse{Items: []*commonv1.HazardProjection{summary("haz-1")}, Freshness: freshness(), Partial: true}))

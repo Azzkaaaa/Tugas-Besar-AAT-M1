@@ -6,11 +6,17 @@ option go_package = "github.com/Azzkaaaa/Tugas-Besar-AAT-M1/packages/bnpb-aggreg
 
 import "bnpb/common/v1/common.proto";
 import "google/api/annotations.proto";
+import "google/protobuf/timestamp.proto";
 
 // Internal read API over Aggregator's durable canonical store. Ingestion occurs
 // through polling the mock REST sources; public clients cannot mutate hazards.
 // Every method requires service identity and the original actor's bearer token.
 service AggregatorService {
+  // Requires hazards:read:summary. Counts all current canonical metadata, with
+  // explicit storage incompleteness. TSUNAMI is a subset of SEISMIC.
+  rpc GetAnalytics(GetAnalyticsRequest) returns (GetAnalyticsResponse) {
+    option (google.api.http) = {get: "/api/v1/analytics"};
+  }
   // Requires hazards:read:summary; FULL additionally requires hazards:read:full.
   rpc ListHazards(ListHazardsRequest) returns (ListHazardsResponse) {
     option (google.api.http) = {
@@ -34,6 +40,25 @@ service AggregatorService {
       get: "/api/v1/hazards/sources/statuses"
     };
   }
+}
+
+message GetAnalyticsRequest {
+  string source = 1;
+  google.protobuf.Timestamp since = 2;
+  google.protobuf.Timestamp until = 3;
+  string interval = 4; // hour, day (default), month, year
+}
+message AnalyticsArea { string area_name = 1; int64 count = 2; }
+message AnalyticsPoint { google.protobuf.Timestamp bucket = 1; map<string,int64> counts = 2; }
+message GetAnalyticsResponse {
+  int64 total = 1;
+  map<string,int64> categories = 2;
+  map<string,int64> severity = 3;
+  repeated AnalyticsArea areas = 4;
+  repeated AnalyticsPoint series = 5;
+  bool partial = 6;
+  repeated string unavailable_units = 7;
+  google.protobuf.Timestamp as_of = 8;
 }
 
 message ListHazardsRequest {

@@ -11,6 +11,7 @@ import (
 	_ "google.golang.org/genproto/googleapis/api/annotations"
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
+	timestamppb "google.golang.org/protobuf/types/known/timestamppb"
 	reflect "reflect"
 	sync "sync"
 	unsafe "unsafe"
@@ -23,6 +24,278 @@ const (
 	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
 )
 
+type GetAnalyticsRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Source        string                 `protobuf:"bytes,1,opt,name=source,proto3" json:"source,omitempty"`
+	Since         *timestamppb.Timestamp `protobuf:"bytes,2,opt,name=since,proto3" json:"since,omitempty"`
+	Until         *timestamppb.Timestamp `protobuf:"bytes,3,opt,name=until,proto3" json:"until,omitempty"`
+	Interval      string                 `protobuf:"bytes,4,opt,name=interval,proto3" json:"interval,omitempty"` // hour, day (default), month, year
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetAnalyticsRequest) Reset() {
+	*x = GetAnalyticsRequest{}
+	mi := &file_bnpb_aggregator_v1_aggregator_proto_msgTypes[0]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetAnalyticsRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetAnalyticsRequest) ProtoMessage() {}
+
+func (x *GetAnalyticsRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_bnpb_aggregator_v1_aggregator_proto_msgTypes[0]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetAnalyticsRequest.ProtoReflect.Descriptor instead.
+func (*GetAnalyticsRequest) Descriptor() ([]byte, []int) {
+	return file_bnpb_aggregator_v1_aggregator_proto_rawDescGZIP(), []int{0}
+}
+
+func (x *GetAnalyticsRequest) GetSource() string {
+	if x != nil {
+		return x.Source
+	}
+	return ""
+}
+
+func (x *GetAnalyticsRequest) GetSince() *timestamppb.Timestamp {
+	if x != nil {
+		return x.Since
+	}
+	return nil
+}
+
+func (x *GetAnalyticsRequest) GetUntil() *timestamppb.Timestamp {
+	if x != nil {
+		return x.Until
+	}
+	return nil
+}
+
+func (x *GetAnalyticsRequest) GetInterval() string {
+	if x != nil {
+		return x.Interval
+	}
+	return ""
+}
+
+type AnalyticsArea struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	AreaName      string                 `protobuf:"bytes,1,opt,name=area_name,json=areaName,proto3" json:"area_name,omitempty"`
+	Count         int64                  `protobuf:"varint,2,opt,name=count,proto3" json:"count,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *AnalyticsArea) Reset() {
+	*x = AnalyticsArea{}
+	mi := &file_bnpb_aggregator_v1_aggregator_proto_msgTypes[1]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *AnalyticsArea) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*AnalyticsArea) ProtoMessage() {}
+
+func (x *AnalyticsArea) ProtoReflect() protoreflect.Message {
+	mi := &file_bnpb_aggregator_v1_aggregator_proto_msgTypes[1]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use AnalyticsArea.ProtoReflect.Descriptor instead.
+func (*AnalyticsArea) Descriptor() ([]byte, []int) {
+	return file_bnpb_aggregator_v1_aggregator_proto_rawDescGZIP(), []int{1}
+}
+
+func (x *AnalyticsArea) GetAreaName() string {
+	if x != nil {
+		return x.AreaName
+	}
+	return ""
+}
+
+func (x *AnalyticsArea) GetCount() int64 {
+	if x != nil {
+		return x.Count
+	}
+	return 0
+}
+
+type AnalyticsPoint struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Bucket        *timestamppb.Timestamp `protobuf:"bytes,1,opt,name=bucket,proto3" json:"bucket,omitempty"`
+	Counts        map[string]int64       `protobuf:"bytes,2,rep,name=counts,proto3" json:"counts,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"varint,2,opt,name=value"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *AnalyticsPoint) Reset() {
+	*x = AnalyticsPoint{}
+	mi := &file_bnpb_aggregator_v1_aggregator_proto_msgTypes[2]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *AnalyticsPoint) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*AnalyticsPoint) ProtoMessage() {}
+
+func (x *AnalyticsPoint) ProtoReflect() protoreflect.Message {
+	mi := &file_bnpb_aggregator_v1_aggregator_proto_msgTypes[2]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use AnalyticsPoint.ProtoReflect.Descriptor instead.
+func (*AnalyticsPoint) Descriptor() ([]byte, []int) {
+	return file_bnpb_aggregator_v1_aggregator_proto_rawDescGZIP(), []int{2}
+}
+
+func (x *AnalyticsPoint) GetBucket() *timestamppb.Timestamp {
+	if x != nil {
+		return x.Bucket
+	}
+	return nil
+}
+
+func (x *AnalyticsPoint) GetCounts() map[string]int64 {
+	if x != nil {
+		return x.Counts
+	}
+	return nil
+}
+
+type GetAnalyticsResponse struct {
+	state            protoimpl.MessageState `protogen:"open.v1"`
+	Total            int64                  `protobuf:"varint,1,opt,name=total,proto3" json:"total,omitempty"`
+	Categories       map[string]int64       `protobuf:"bytes,2,rep,name=categories,proto3" json:"categories,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"varint,2,opt,name=value"`
+	Severity         map[string]int64       `protobuf:"bytes,3,rep,name=severity,proto3" json:"severity,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"varint,2,opt,name=value"`
+	Areas            []*AnalyticsArea       `protobuf:"bytes,4,rep,name=areas,proto3" json:"areas,omitempty"`
+	Series           []*AnalyticsPoint      `protobuf:"bytes,5,rep,name=series,proto3" json:"series,omitempty"`
+	Partial          bool                   `protobuf:"varint,6,opt,name=partial,proto3" json:"partial,omitempty"`
+	UnavailableUnits []string               `protobuf:"bytes,7,rep,name=unavailable_units,json=unavailableUnits,proto3" json:"unavailable_units,omitempty"`
+	AsOf             *timestamppb.Timestamp `protobuf:"bytes,8,opt,name=as_of,json=asOf,proto3" json:"as_of,omitempty"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
+}
+
+func (x *GetAnalyticsResponse) Reset() {
+	*x = GetAnalyticsResponse{}
+	mi := &file_bnpb_aggregator_v1_aggregator_proto_msgTypes[3]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetAnalyticsResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetAnalyticsResponse) ProtoMessage() {}
+
+func (x *GetAnalyticsResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_bnpb_aggregator_v1_aggregator_proto_msgTypes[3]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetAnalyticsResponse.ProtoReflect.Descriptor instead.
+func (*GetAnalyticsResponse) Descriptor() ([]byte, []int) {
+	return file_bnpb_aggregator_v1_aggregator_proto_rawDescGZIP(), []int{3}
+}
+
+func (x *GetAnalyticsResponse) GetTotal() int64 {
+	if x != nil {
+		return x.Total
+	}
+	return 0
+}
+
+func (x *GetAnalyticsResponse) GetCategories() map[string]int64 {
+	if x != nil {
+		return x.Categories
+	}
+	return nil
+}
+
+func (x *GetAnalyticsResponse) GetSeverity() map[string]int64 {
+	if x != nil {
+		return x.Severity
+	}
+	return nil
+}
+
+func (x *GetAnalyticsResponse) GetAreas() []*AnalyticsArea {
+	if x != nil {
+		return x.Areas
+	}
+	return nil
+}
+
+func (x *GetAnalyticsResponse) GetSeries() []*AnalyticsPoint {
+	if x != nil {
+		return x.Series
+	}
+	return nil
+}
+
+func (x *GetAnalyticsResponse) GetPartial() bool {
+	if x != nil {
+		return x.Partial
+	}
+	return false
+}
+
+func (x *GetAnalyticsResponse) GetUnavailableUnits() []string {
+	if x != nil {
+		return x.UnavailableUnits
+	}
+	return nil
+}
+
+func (x *GetAnalyticsResponse) GetAsOf() *timestamppb.Timestamp {
+	if x != nil {
+		return x.AsOf
+	}
+	return nil
+}
+
 type ListHazardsRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Filter        *v1.HazardFilter       `protobuf:"bytes,1,opt,name=filter,proto3" json:"filter,omitempty"`
@@ -34,7 +307,7 @@ type ListHazardsRequest struct {
 
 func (x *ListHazardsRequest) Reset() {
 	*x = ListHazardsRequest{}
-	mi := &file_bnpb_aggregator_v1_aggregator_proto_msgTypes[0]
+	mi := &file_bnpb_aggregator_v1_aggregator_proto_msgTypes[4]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -46,7 +319,7 @@ func (x *ListHazardsRequest) String() string {
 func (*ListHazardsRequest) ProtoMessage() {}
 
 func (x *ListHazardsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_bnpb_aggregator_v1_aggregator_proto_msgTypes[0]
+	mi := &file_bnpb_aggregator_v1_aggregator_proto_msgTypes[4]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -59,7 +332,7 @@ func (x *ListHazardsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListHazardsRequest.ProtoReflect.Descriptor instead.
 func (*ListHazardsRequest) Descriptor() ([]byte, []int) {
-	return file_bnpb_aggregator_v1_aggregator_proto_rawDescGZIP(), []int{0}
+	return file_bnpb_aggregator_v1_aggregator_proto_rawDescGZIP(), []int{4}
 }
 
 func (x *ListHazardsRequest) GetFilter() *v1.HazardFilter {
@@ -100,7 +373,7 @@ type ListHazardsResponse struct {
 
 func (x *ListHazardsResponse) Reset() {
 	*x = ListHazardsResponse{}
-	mi := &file_bnpb_aggregator_v1_aggregator_proto_msgTypes[1]
+	mi := &file_bnpb_aggregator_v1_aggregator_proto_msgTypes[5]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -112,7 +385,7 @@ func (x *ListHazardsResponse) String() string {
 func (*ListHazardsResponse) ProtoMessage() {}
 
 func (x *ListHazardsResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_bnpb_aggregator_v1_aggregator_proto_msgTypes[1]
+	mi := &file_bnpb_aggregator_v1_aggregator_proto_msgTypes[5]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -125,7 +398,7 @@ func (x *ListHazardsResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListHazardsResponse.ProtoReflect.Descriptor instead.
 func (*ListHazardsResponse) Descriptor() ([]byte, []int) {
-	return file_bnpb_aggregator_v1_aggregator_proto_rawDescGZIP(), []int{1}
+	return file_bnpb_aggregator_v1_aggregator_proto_rawDescGZIP(), []int{5}
 }
 
 func (x *ListHazardsResponse) GetItems() []*v1.HazardProjection {
@@ -173,7 +446,7 @@ type GetHazardRequest struct {
 
 func (x *GetHazardRequest) Reset() {
 	*x = GetHazardRequest{}
-	mi := &file_bnpb_aggregator_v1_aggregator_proto_msgTypes[2]
+	mi := &file_bnpb_aggregator_v1_aggregator_proto_msgTypes[6]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -185,7 +458,7 @@ func (x *GetHazardRequest) String() string {
 func (*GetHazardRequest) ProtoMessage() {}
 
 func (x *GetHazardRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_bnpb_aggregator_v1_aggregator_proto_msgTypes[2]
+	mi := &file_bnpb_aggregator_v1_aggregator_proto_msgTypes[6]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -198,7 +471,7 @@ func (x *GetHazardRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetHazardRequest.ProtoReflect.Descriptor instead.
 func (*GetHazardRequest) Descriptor() ([]byte, []int) {
-	return file_bnpb_aggregator_v1_aggregator_proto_rawDescGZIP(), []int{2}
+	return file_bnpb_aggregator_v1_aggregator_proto_rawDescGZIP(), []int{6}
 }
 
 func (x *GetHazardRequest) GetHazardId() string {
@@ -230,7 +503,7 @@ type GetHazardResponse struct {
 
 func (x *GetHazardResponse) Reset() {
 	*x = GetHazardResponse{}
-	mi := &file_bnpb_aggregator_v1_aggregator_proto_msgTypes[3]
+	mi := &file_bnpb_aggregator_v1_aggregator_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -242,7 +515,7 @@ func (x *GetHazardResponse) String() string {
 func (*GetHazardResponse) ProtoMessage() {}
 
 func (x *GetHazardResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_bnpb_aggregator_v1_aggregator_proto_msgTypes[3]
+	mi := &file_bnpb_aggregator_v1_aggregator_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -255,7 +528,7 @@ func (x *GetHazardResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetHazardResponse.ProtoReflect.Descriptor instead.
 func (*GetHazardResponse) Descriptor() ([]byte, []int) {
-	return file_bnpb_aggregator_v1_aggregator_proto_rawDescGZIP(), []int{3}
+	return file_bnpb_aggregator_v1_aggregator_proto_rawDescGZIP(), []int{7}
 }
 
 func (x *GetHazardResponse) GetItem() *v1.HazardProjection {
@@ -294,7 +567,7 @@ type GetSourceStatusesRequest struct {
 
 func (x *GetSourceStatusesRequest) Reset() {
 	*x = GetSourceStatusesRequest{}
-	mi := &file_bnpb_aggregator_v1_aggregator_proto_msgTypes[4]
+	mi := &file_bnpb_aggregator_v1_aggregator_proto_msgTypes[8]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -306,7 +579,7 @@ func (x *GetSourceStatusesRequest) String() string {
 func (*GetSourceStatusesRequest) ProtoMessage() {}
 
 func (x *GetSourceStatusesRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_bnpb_aggregator_v1_aggregator_proto_msgTypes[4]
+	mi := &file_bnpb_aggregator_v1_aggregator_proto_msgTypes[8]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -319,7 +592,7 @@ func (x *GetSourceStatusesRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetSourceStatusesRequest.ProtoReflect.Descriptor instead.
 func (*GetSourceStatusesRequest) Descriptor() ([]byte, []int) {
-	return file_bnpb_aggregator_v1_aggregator_proto_rawDescGZIP(), []int{4}
+	return file_bnpb_aggregator_v1_aggregator_proto_rawDescGZIP(), []int{8}
 }
 
 type GetSourceStatusesResponse struct {
@@ -331,7 +604,7 @@ type GetSourceStatusesResponse struct {
 
 func (x *GetSourceStatusesResponse) Reset() {
 	*x = GetSourceStatusesResponse{}
-	mi := &file_bnpb_aggregator_v1_aggregator_proto_msgTypes[5]
+	mi := &file_bnpb_aggregator_v1_aggregator_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -343,7 +616,7 @@ func (x *GetSourceStatusesResponse) String() string {
 func (*GetSourceStatusesResponse) ProtoMessage() {}
 
 func (x *GetSourceStatusesResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_bnpb_aggregator_v1_aggregator_proto_msgTypes[5]
+	mi := &file_bnpb_aggregator_v1_aggregator_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -356,7 +629,7 @@ func (x *GetSourceStatusesResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetSourceStatusesResponse.ProtoReflect.Descriptor instead.
 func (*GetSourceStatusesResponse) Descriptor() ([]byte, []int) {
-	return file_bnpb_aggregator_v1_aggregator_proto_rawDescGZIP(), []int{5}
+	return file_bnpb_aggregator_v1_aggregator_proto_rawDescGZIP(), []int{9}
 }
 
 func (x *GetSourceStatusesResponse) GetFreshness() []*v1.SourceFreshness {
@@ -370,7 +643,38 @@ var File_bnpb_aggregator_v1_aggregator_proto protoreflect.FileDescriptor
 
 const file_bnpb_aggregator_v1_aggregator_proto_rawDesc = "" +
 	"\n" +
-	"#bnpb/aggregator/v1/aggregator.proto\x12\x12bnpb.aggregator.v1\x1a\x1bbnpb/common/v1/common.proto\x1a\x1cgoogle/api/annotations.proto\"\xa5\x01\n" +
+	"#bnpb/aggregator/v1/aggregator.proto\x12\x12bnpb.aggregator.v1\x1a\x1bbnpb/common/v1/common.proto\x1a\x1cgoogle/api/annotations.proto\x1a\x1fgoogle/protobuf/timestamp.proto\"\xad\x01\n" +
+	"\x13GetAnalyticsRequest\x12\x16\n" +
+	"\x06source\x18\x01 \x01(\tR\x06source\x120\n" +
+	"\x05since\x18\x02 \x01(\v2\x1a.google.protobuf.TimestampR\x05since\x120\n" +
+	"\x05until\x18\x03 \x01(\v2\x1a.google.protobuf.TimestampR\x05until\x12\x1a\n" +
+	"\binterval\x18\x04 \x01(\tR\binterval\"B\n" +
+	"\rAnalyticsArea\x12\x1b\n" +
+	"\tarea_name\x18\x01 \x01(\tR\bareaName\x12\x14\n" +
+	"\x05count\x18\x02 \x01(\x03R\x05count\"\xc7\x01\n" +
+	"\x0eAnalyticsPoint\x122\n" +
+	"\x06bucket\x18\x01 \x01(\v2\x1a.google.protobuf.TimestampR\x06bucket\x12F\n" +
+	"\x06counts\x18\x02 \x03(\v2..bnpb.aggregator.v1.AnalyticsPoint.CountsEntryR\x06counts\x1a9\n" +
+	"\vCountsEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
+	"\x05value\x18\x02 \x01(\x03R\x05value:\x028\x01\"\xc3\x04\n" +
+	"\x14GetAnalyticsResponse\x12\x14\n" +
+	"\x05total\x18\x01 \x01(\x03R\x05total\x12X\n" +
+	"\n" +
+	"categories\x18\x02 \x03(\v28.bnpb.aggregator.v1.GetAnalyticsResponse.CategoriesEntryR\n" +
+	"categories\x12R\n" +
+	"\bseverity\x18\x03 \x03(\v26.bnpb.aggregator.v1.GetAnalyticsResponse.SeverityEntryR\bseverity\x127\n" +
+	"\x05areas\x18\x04 \x03(\v2!.bnpb.aggregator.v1.AnalyticsAreaR\x05areas\x12:\n" +
+	"\x06series\x18\x05 \x03(\v2\".bnpb.aggregator.v1.AnalyticsPointR\x06series\x12\x18\n" +
+	"\apartial\x18\x06 \x01(\bR\apartial\x12+\n" +
+	"\x11unavailable_units\x18\a \x03(\tR\x10unavailableUnits\x12/\n" +
+	"\x05as_of\x18\b \x01(\v2\x1a.google.protobuf.TimestampR\x04asOf\x1a=\n" +
+	"\x0fCategoriesEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
+	"\x05value\x18\x02 \x01(\x03R\x05value:\x028\x01\x1a;\n" +
+	"\rSeverityEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
+	"\x05value\x18\x02 \x01(\x03R\x05value:\x028\x01\"\xa5\x01\n" +
 	"\x12ListHazardsRequest\x124\n" +
 	"\x06filter\x18\x01 \x01(\v2\x1c.bnpb.common.v1.HazardFilterR\x06filter\x12(\n" +
 	"\x04view\x18\x02 \x01(\x0e2\x14.bnpb.common.v1.ViewR\x04view\x12/\n" +
@@ -391,8 +695,9 @@ const file_bnpb_aggregator_v1_aggregator_proto_rawDesc = "" +
 	"\x11unavailable_units\x18\x04 \x03(\tR\x10unavailableUnits\"\x1a\n" +
 	"\x18GetSourceStatusesRequest\"Z\n" +
 	"\x19GetSourceStatusesResponse\x12=\n" +
-	"\tfreshness\x18\x01 \x03(\v2\x1f.bnpb.common.v1.SourceFreshnessR\tfreshness2\xa8\x03\n" +
-	"\x11AggregatorService\x12w\n" +
+	"\tfreshness\x18\x01 \x03(\v2\x1f.bnpb.common.v1.SourceFreshnessR\tfreshness2\xa6\x04\n" +
+	"\x11AggregatorService\x12|\n" +
+	"\fGetAnalytics\x12'.bnpb.aggregator.v1.GetAnalyticsRequest\x1a(.bnpb.aggregator.v1.GetAnalyticsResponse\"\x19\x82\xd3\xe4\x93\x02\x13\x12\x11/api/v1/analytics\x12w\n" +
 	"\vListHazards\x12&.bnpb.aggregator.v1.ListHazardsRequest\x1a'.bnpb.aggregator.v1.ListHazardsResponse\"\x17\x82\xd3\xe4\x93\x02\x11\x12\x0f/api/v1/hazards\x12}\n" +
 	"\tGetHazard\x12$.bnpb.aggregator.v1.GetHazardRequest\x1a%.bnpb.aggregator.v1.GetHazardResponse\"#\x82\xd3\xe4\x93\x02\x1d\x12\x1b/api/v1/hazards/{hazard_id}\x12\x9a\x01\n" +
 	"\x11GetSourceStatuses\x12,.bnpb.aggregator.v1.GetSourceStatusesRequest\x1a-.bnpb.aggregator.v1.GetSourceStatusesResponse\"(\x82\xd3\xe4\x93\x02\"\x12 /api/v1/hazards/sources/statusesBdZbgithub.com/Azzkaaaa/Tugas-Besar-AAT-M1/packages/bnpb-aggregator-go/bnpb/aggregator/v1;aggregatorv1b\x06proto3"
@@ -409,41 +714,60 @@ func file_bnpb_aggregator_v1_aggregator_proto_rawDescGZIP() []byte {
 	return file_bnpb_aggregator_v1_aggregator_proto_rawDescData
 }
 
-var file_bnpb_aggregator_v1_aggregator_proto_msgTypes = make([]protoimpl.MessageInfo, 6)
+var file_bnpb_aggregator_v1_aggregator_proto_msgTypes = make([]protoimpl.MessageInfo, 13)
 var file_bnpb_aggregator_v1_aggregator_proto_goTypes = []any{
-	(*ListHazardsRequest)(nil),        // 0: bnpb.aggregator.v1.ListHazardsRequest
-	(*ListHazardsResponse)(nil),       // 1: bnpb.aggregator.v1.ListHazardsResponse
-	(*GetHazardRequest)(nil),          // 2: bnpb.aggregator.v1.GetHazardRequest
-	(*GetHazardResponse)(nil),         // 3: bnpb.aggregator.v1.GetHazardResponse
-	(*GetSourceStatusesRequest)(nil),  // 4: bnpb.aggregator.v1.GetSourceStatusesRequest
-	(*GetSourceStatusesResponse)(nil), // 5: bnpb.aggregator.v1.GetSourceStatusesResponse
-	(*v1.HazardFilter)(nil),           // 6: bnpb.common.v1.HazardFilter
-	(v1.View)(0),                      // 7: bnpb.common.v1.View
-	(*v1.PageRequest)(nil),            // 8: bnpb.common.v1.PageRequest
-	(*v1.HazardProjection)(nil),       // 9: bnpb.common.v1.HazardProjection
-	(*v1.SourceFreshness)(nil),        // 10: bnpb.common.v1.SourceFreshness
+	(*GetAnalyticsRequest)(nil),       // 0: bnpb.aggregator.v1.GetAnalyticsRequest
+	(*AnalyticsArea)(nil),             // 1: bnpb.aggregator.v1.AnalyticsArea
+	(*AnalyticsPoint)(nil),            // 2: bnpb.aggregator.v1.AnalyticsPoint
+	(*GetAnalyticsResponse)(nil),      // 3: bnpb.aggregator.v1.GetAnalyticsResponse
+	(*ListHazardsRequest)(nil),        // 4: bnpb.aggregator.v1.ListHazardsRequest
+	(*ListHazardsResponse)(nil),       // 5: bnpb.aggregator.v1.ListHazardsResponse
+	(*GetHazardRequest)(nil),          // 6: bnpb.aggregator.v1.GetHazardRequest
+	(*GetHazardResponse)(nil),         // 7: bnpb.aggregator.v1.GetHazardResponse
+	(*GetSourceStatusesRequest)(nil),  // 8: bnpb.aggregator.v1.GetSourceStatusesRequest
+	(*GetSourceStatusesResponse)(nil), // 9: bnpb.aggregator.v1.GetSourceStatusesResponse
+	nil,                               // 10: bnpb.aggregator.v1.AnalyticsPoint.CountsEntry
+	nil,                               // 11: bnpb.aggregator.v1.GetAnalyticsResponse.CategoriesEntry
+	nil,                               // 12: bnpb.aggregator.v1.GetAnalyticsResponse.SeverityEntry
+	(*timestamppb.Timestamp)(nil),     // 13: google.protobuf.Timestamp
+	(*v1.HazardFilter)(nil),           // 14: bnpb.common.v1.HazardFilter
+	(v1.View)(0),                      // 15: bnpb.common.v1.View
+	(*v1.PageRequest)(nil),            // 16: bnpb.common.v1.PageRequest
+	(*v1.HazardProjection)(nil),       // 17: bnpb.common.v1.HazardProjection
+	(*v1.SourceFreshness)(nil),        // 18: bnpb.common.v1.SourceFreshness
 }
 var file_bnpb_aggregator_v1_aggregator_proto_depIdxs = []int32{
-	6,  // 0: bnpb.aggregator.v1.ListHazardsRequest.filter:type_name -> bnpb.common.v1.HazardFilter
-	7,  // 1: bnpb.aggregator.v1.ListHazardsRequest.view:type_name -> bnpb.common.v1.View
-	8,  // 2: bnpb.aggregator.v1.ListHazardsRequest.page:type_name -> bnpb.common.v1.PageRequest
-	9,  // 3: bnpb.aggregator.v1.ListHazardsResponse.items:type_name -> bnpb.common.v1.HazardProjection
-	10, // 4: bnpb.aggregator.v1.ListHazardsResponse.freshness:type_name -> bnpb.common.v1.SourceFreshness
-	7,  // 5: bnpb.aggregator.v1.GetHazardRequest.view:type_name -> bnpb.common.v1.View
-	9,  // 6: bnpb.aggregator.v1.GetHazardResponse.item:type_name -> bnpb.common.v1.HazardProjection
-	10, // 7: bnpb.aggregator.v1.GetHazardResponse.freshness:type_name -> bnpb.common.v1.SourceFreshness
-	10, // 8: bnpb.aggregator.v1.GetSourceStatusesResponse.freshness:type_name -> bnpb.common.v1.SourceFreshness
-	0,  // 9: bnpb.aggregator.v1.AggregatorService.ListHazards:input_type -> bnpb.aggregator.v1.ListHazardsRequest
-	2,  // 10: bnpb.aggregator.v1.AggregatorService.GetHazard:input_type -> bnpb.aggregator.v1.GetHazardRequest
-	4,  // 11: bnpb.aggregator.v1.AggregatorService.GetSourceStatuses:input_type -> bnpb.aggregator.v1.GetSourceStatusesRequest
-	1,  // 12: bnpb.aggregator.v1.AggregatorService.ListHazards:output_type -> bnpb.aggregator.v1.ListHazardsResponse
-	3,  // 13: bnpb.aggregator.v1.AggregatorService.GetHazard:output_type -> bnpb.aggregator.v1.GetHazardResponse
-	5,  // 14: bnpb.aggregator.v1.AggregatorService.GetSourceStatuses:output_type -> bnpb.aggregator.v1.GetSourceStatusesResponse
-	12, // [12:15] is the sub-list for method output_type
-	9,  // [9:12] is the sub-list for method input_type
-	9,  // [9:9] is the sub-list for extension type_name
-	9,  // [9:9] is the sub-list for extension extendee
-	0,  // [0:9] is the sub-list for field type_name
+	13, // 0: bnpb.aggregator.v1.GetAnalyticsRequest.since:type_name -> google.protobuf.Timestamp
+	13, // 1: bnpb.aggregator.v1.GetAnalyticsRequest.until:type_name -> google.protobuf.Timestamp
+	13, // 2: bnpb.aggregator.v1.AnalyticsPoint.bucket:type_name -> google.protobuf.Timestamp
+	10, // 3: bnpb.aggregator.v1.AnalyticsPoint.counts:type_name -> bnpb.aggregator.v1.AnalyticsPoint.CountsEntry
+	11, // 4: bnpb.aggregator.v1.GetAnalyticsResponse.categories:type_name -> bnpb.aggregator.v1.GetAnalyticsResponse.CategoriesEntry
+	12, // 5: bnpb.aggregator.v1.GetAnalyticsResponse.severity:type_name -> bnpb.aggregator.v1.GetAnalyticsResponse.SeverityEntry
+	1,  // 6: bnpb.aggregator.v1.GetAnalyticsResponse.areas:type_name -> bnpb.aggregator.v1.AnalyticsArea
+	2,  // 7: bnpb.aggregator.v1.GetAnalyticsResponse.series:type_name -> bnpb.aggregator.v1.AnalyticsPoint
+	13, // 8: bnpb.aggregator.v1.GetAnalyticsResponse.as_of:type_name -> google.protobuf.Timestamp
+	14, // 9: bnpb.aggregator.v1.ListHazardsRequest.filter:type_name -> bnpb.common.v1.HazardFilter
+	15, // 10: bnpb.aggregator.v1.ListHazardsRequest.view:type_name -> bnpb.common.v1.View
+	16, // 11: bnpb.aggregator.v1.ListHazardsRequest.page:type_name -> bnpb.common.v1.PageRequest
+	17, // 12: bnpb.aggregator.v1.ListHazardsResponse.items:type_name -> bnpb.common.v1.HazardProjection
+	18, // 13: bnpb.aggregator.v1.ListHazardsResponse.freshness:type_name -> bnpb.common.v1.SourceFreshness
+	15, // 14: bnpb.aggregator.v1.GetHazardRequest.view:type_name -> bnpb.common.v1.View
+	17, // 15: bnpb.aggregator.v1.GetHazardResponse.item:type_name -> bnpb.common.v1.HazardProjection
+	18, // 16: bnpb.aggregator.v1.GetHazardResponse.freshness:type_name -> bnpb.common.v1.SourceFreshness
+	18, // 17: bnpb.aggregator.v1.GetSourceStatusesResponse.freshness:type_name -> bnpb.common.v1.SourceFreshness
+	0,  // 18: bnpb.aggregator.v1.AggregatorService.GetAnalytics:input_type -> bnpb.aggregator.v1.GetAnalyticsRequest
+	4,  // 19: bnpb.aggregator.v1.AggregatorService.ListHazards:input_type -> bnpb.aggregator.v1.ListHazardsRequest
+	6,  // 20: bnpb.aggregator.v1.AggregatorService.GetHazard:input_type -> bnpb.aggregator.v1.GetHazardRequest
+	8,  // 21: bnpb.aggregator.v1.AggregatorService.GetSourceStatuses:input_type -> bnpb.aggregator.v1.GetSourceStatusesRequest
+	3,  // 22: bnpb.aggregator.v1.AggregatorService.GetAnalytics:output_type -> bnpb.aggregator.v1.GetAnalyticsResponse
+	5,  // 23: bnpb.aggregator.v1.AggregatorService.ListHazards:output_type -> bnpb.aggregator.v1.ListHazardsResponse
+	7,  // 24: bnpb.aggregator.v1.AggregatorService.GetHazard:output_type -> bnpb.aggregator.v1.GetHazardResponse
+	9,  // 25: bnpb.aggregator.v1.AggregatorService.GetSourceStatuses:output_type -> bnpb.aggregator.v1.GetSourceStatusesResponse
+	22, // [22:26] is the sub-list for method output_type
+	18, // [18:22] is the sub-list for method input_type
+	18, // [18:18] is the sub-list for extension type_name
+	18, // [18:18] is the sub-list for extension extendee
+	0,  // [0:18] is the sub-list for field type_name
 }
 
 func init() { file_bnpb_aggregator_v1_aggregator_proto_init() }
@@ -457,7 +781,7 @@ func file_bnpb_aggregator_v1_aggregator_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_bnpb_aggregator_v1_aggregator_proto_rawDesc), len(file_bnpb_aggregator_v1_aggregator_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   6,
+			NumMessages:   13,
 			NumExtensions: 0,
 			NumServices:   1,
 		},
