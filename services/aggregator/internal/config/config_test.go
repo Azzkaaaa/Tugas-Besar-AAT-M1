@@ -104,3 +104,23 @@ func TestYieldConfig(t *testing.T) {
 		t.Fatal("growth below 1 accepted")
 	}
 }
+
+func TestM2SourceConfigurationRequiresWriteAuthority(t *testing.T) {
+	setBaseEnv(t)
+	t.Setenv("AGGREGATOR_REQUIRE_WRITE_AUTHORITY", "false")
+	t.Setenv("SATELLITE_BASE_URL", "")
+	t.Setenv("PANTAI_BASE_URL", "")
+	for _, key := range []string{"AGGREGATOR_REQUIRE_WRITE_AUTHORITY", "SATELLITE_BASE_URL", "PANTAI_BASE_URL"} {
+		t.Run(key, func(t *testing.T) {
+			value := "https://source.example"
+			if key == "AGGREGATOR_REQUIRE_WRITE_AUTHORITY" {
+				value = "true"
+			}
+			t.Setenv(key, value)
+			cfg, err := Load()
+			if err != nil || !cfg.RequireWriteAuthority {
+				t.Fatal("M2 fencing not required", err)
+			}
+		})
+	}
+}

@@ -41,15 +41,66 @@ the server expires its transaction, takeover succeeds, and the old hazard remain
 absent when the caller resumes. The frozen-transaction test passed in 5.45s;
 the entire PostgreSQL integration suite and untagged Aggregator suite pass.
 
-## Cassandra work still required
+## Cassandra
 
-The existing `hazards_by_id` partition does not contain source authority.
-A pre-write SELECT against `leader_leases` would leave a check/write race and is
-not sufficient. Authority and mutation must share the same conditional Paxos
-boundary. [Apache Cassandra's batch guidance](https://cassandra.apache.org/doc/stable/cassandra/developing/cql/batch/batch-good-example.html)
-describes static-column conditions in single-partition batches. The integration
-probe in `authority_partition_integration_test.go` tests this primitive on the
-pinned image; production Cassandra canonical/intake/stream writes still need to
-adopt it. F05 remains unchecked until that implementation and its fault tests
-are complete. The legacy single/Kubernetes electors also do not supply this
-storage authority and must not be used as evidence for a fenced M2 deployment.
+Migration 0011 places canonical records in 16 `canonical_events` partitions.
+Each partition contains static source-authority maps. The authority condition
+and the actual insert/revision CAS run in the same single-partition conditional
+batch, including an ID that has never existed. Inbox mutations use the same
+pattern in their 32 partitions. The journal, checkpoint and fallback quarantine
+share 16 `stream_inputs_by_shard` partitions, covering future journal blocks;
+source-state mutations check authority in their own row. Chunk archives may be
+staged before metadata acceptance, but only guarded Inbox metadata accepts them.
+
+The durable lease stores a monotonically increasing epoch and absolute expiry.
+Acquisition, renewal and expiry checks use database time and Paxos. Before a
+source worker starts, four bounded workers install its epoch on every mutation
+partition and then revalidate the lease. A successor does not start before that
+barrier completes. Higher installed epochs reject delayed old activation.
+Release installs an odd revocation version before releasing the global lease,
+so a delayed activation of that same term cannot restore permission. Ordinary
+writes use server timestamps too; client timestamps could otherwise override
+conditional outbox writes when application and storage clocks differ.
+
+Existing canonical data is adopted with `IF NOT EXISTS` during bounded
+background backfill and on access. Reads fall back to legacy records and stream
+reads merge old/new journal blocks; retried legacy input retains its original
+bytes. Audit remains partial until backfill finishes. Canonical placement now
+uses `token(shard)`. Do a controlled upgrade: stop all old source writers,
+deploy the new schema/build, wait for backfill, and then enable the new writers.
+An old binary writing the legacy table cannot participate in this protocol.
+Keep legacy tables until the upgraded catalog has been independently audited.
+
+`TestCassandraProductionWritesFenceExpiredAndReleasedTerms` exercises the real
+production paths with an uncancelled expired context, new/revised hazards,
+intake, an unseen journal block, checkpoint, source state and quarantine. A
+worker paused before canonical CAS resumes after takeover and is rejected.
+The test also checks current-term success and permanent release revocation.
+Focused integration passes on pinned Cassandra 5.0.9 under a 1 GiB limit;
+separate upgrade and repeated outbox retry/release regressions pass too.
+The 607.35s full run passed those paths and both ordinary storage contracts;
+three tests stopped during keyspace creation at the old five-second bootstrap
+timeout. Keyspace bootstrap now has 30 seconds while application queries retain
+five seconds. All three failed cases passed together on rerun (151.11s),
+including the complete schedule-change contract. The full untagged Aggregator
+suite also passes. Cassandra stayed below its 1 GiB cgroup cap without OOM;
+observed usage reached about 1,011 MiB. The disposable fixture was removed.
+These RF=1 fixtures do not prove multi-node clock/freeze acceptance, which
+remains separately unchecked in the infrastructure completion checklist.
+
+Reproduce from `services/aggregator` with `AGG_TEST_CASSANDRA_HOSTS` set to a
+disposable Cassandra 5.0.9 endpoint and the memory-limited Go environment from
+the infrastructure checklist:
+
+```powershell
+go test -p 1 -parallel 1 ./...
+go test -p 1 -parallel 1 -tags integration ./internal/storage/cassandra -count=1 -timeout=18m -v
+```
+
+## Deployment enforcement
+
+`AGGREGATOR_REQUIRE_WRITE_AUTHORITY=true` rejects single/Kubernetes election or
+an elector different from the canonical backend. Configuring an M2 source also
+enables this requirement automatically. The M2/P3 chart sets it explicitly and
+the Cassandra client ConfigMap selects Cassandra election. Use database-backed
+election and upgraded writers throughout the deployment.

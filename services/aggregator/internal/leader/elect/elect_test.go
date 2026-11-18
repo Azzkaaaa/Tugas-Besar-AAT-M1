@@ -61,3 +61,13 @@ func (nopLeases) Renew(context.Context, string, string, time.Duration) (bool, er
 func (nopLeases) Release(context.Context, string, string) error { return nil }
 
 func store() *open.Store { return &open.Store{Leases: nopLeases{}} }
+
+func TestM2RequiresAFencedCanonicalElector(t *testing.T) {
+	for _, election := range []string{"single", "kubernetes", "cassandra"} {
+		c := cfg(election, "cassandra")
+		c.RequireWriteAuthority = true
+		if _, err := Open(c, store()); err == nil {
+			t.Fatal("unfenced M2 configuration accepted", election)
+		}
+	}
+}

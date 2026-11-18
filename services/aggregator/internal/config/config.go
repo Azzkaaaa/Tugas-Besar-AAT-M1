@@ -31,6 +31,7 @@ type Config struct {
 	CanonicalStoreDSN     string
 	Cassandra             CassandraConfig
 	Leader                LeaderConfig
+	RequireWriteAuthority bool
 	AMQPURL               string
 	RabbitMQExchange      string
 	// OutboxMaxRetries is the max publish attempts before a record is dead-lettered.
@@ -219,6 +220,7 @@ func Load() (*Config, error) {
 		PVMBGRequestTimeout:    requireDurationMS("PVMBG_REQUEST_TIMEOUT_MS"),
 		SourceStaleThreshold:   requireDurationMS("SOURCE_STALE_AFTER_MS"),
 		CanonicalStoreBackend:  strings.ToLower(strings.TrimSpace(os.Getenv("CANONICAL_STORE_BACKEND"))),
+		RequireWriteAuthority:  strings.EqualFold(os.Getenv("AGGREGATOR_REQUIRE_WRITE_AUTHORITY"), "true") || os.Getenv("SATELLITE_BASE_URL") != "" || os.Getenv("PANTAI_BASE_URL") != "",
 		AMQPURL:                requireEnv("AGGREGATOR_AMQP_URL"),
 		RabbitMQExchange:       requireEnv("RABBITMQ_EXCHANGE"),
 		OutboxMaxRetries:       requireInt("OUTBOX_MAX_RETRIES"),

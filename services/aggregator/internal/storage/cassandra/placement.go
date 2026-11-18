@@ -2,6 +2,7 @@ package cassandra
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 	"strconv"
@@ -9,6 +10,7 @@ import (
 
 	"github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/aggregator/internal/domain"
 	"github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/aggregator/internal/storage"
+	gocql "github.com/apache/cassandra-gocql-driver/v2"
 )
 
 type ringHost struct {
@@ -113,7 +115,11 @@ func (s audit) Locate(ctx context.Context, id string) (storage.PlacementResult, 
 	}
 	out.Exists = true
 	var token int64
-	if err = s.db.session.Query(`SELECT token(hazard_id) FROM hazards_by_id WHERE hazard_id=?`, id).WithContext(ctx).Scan(&token); err != nil {
+	err = s.db.session.Query(`SELECT token(shard) FROM canonical_events WHERE shard=? AND hazard_id=?`, auditShard(id), id).WithContext(ctx).Scan(&token)
+	if errors.Is(err, gocql.ErrNotFound) {
+		err = s.db.session.Query(`SELECT token(hazard_id) FROM hazards_by_id WHERE hazard_id=?`, id).WithContext(ctx).Scan(&token)
+	}
+	if err != nil {
 		out.UnavailableUnits = []string{"placement-token"}
 		return out, err
 	}

@@ -47,6 +47,7 @@ type Config struct {
 
 // DB is an open Cassandra store.
 type DB struct {
+	fencedSchema bool
 	session      *gocql.Session
 	keyspace     string
 	nodeFromRack bool
@@ -88,7 +89,13 @@ func Open(ctx context.Context, cfg Config) (*DB, error) {
 	cluster := gocql.NewCluster(cfg.Hosts...)
 	cluster.Consistency = consistency
 	cluster.SerialConsistency = gocql.LocalSerial
-	cluster.Timeout = 5 * time.Second
+	// Never let a skewed Aggregator wall clock assign future LWW timestamps
+	// that can outvote storage-controlled conditional mutations.
+	cluster.DefaultTimestamp = false
+	// Keyspace creation includes schema propagation and can exceed an ordinary
+	// request's budget on the required 1 GiB store. This bootstrap session is
+	// closed before opening the normal five-second application session below.
+	cluster.Timeout = 30 * time.Second
 	cluster.ConnectTimeout = 10 * time.Second
 	// A host selection policy holds per-session state, so each session gets its own.
 	newPolicy := func() {
@@ -115,6 +122,7 @@ func Open(ctx context.Context, cfg Config) (*DB, error) {
 		return nil, err
 	}
 
+	cluster.Timeout = 5 * time.Second
 	cluster.Keyspace = cfg.Keyspace
 	newPolicy()
 	session, err := cluster.CreateSession()
@@ -134,6 +142,7 @@ func Open(ctx context.Context, cfg Config) (*DB, error) {
 		session.Close()
 		return nil, err
 	}
+	db.fencedSchema = true
 	refreshCtx, stop := context.WithCancel(context.Background())
 	db.stop = stop
 	go db.refreshSchedule(refreshCtx)

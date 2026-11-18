@@ -52,16 +52,17 @@ func msUTC(t time.Time) time.Time {
 	return t.UTC().Truncate(time.Millisecond)
 }
 
-// stored is a hazards_by_id row: the record's committed revision.
+// stored is a canonical row: the record's committed revision.
 //
-// hazards_by_id is the commit point of revisions. Its rows are keyed by the derived
-// domain.HazardID, so every writer of a record addresses the same row, and they are only written
-// with lightweight transactions, so writers agree on what each revision is (even two leaders
-// during an overlap). The other tables (the List row, the bucket index, the outbox) are a
+// canonical_events is the commit point of revisions after migration 0011. A hash shard and
+// derived domain.HazardID make every writer address the same row. Conditional batches check
+// the source authority and revision in the same partition. Legacy hazards_by_id rows remain
+// readable until adoption. The other tables (the List row, the bucket index, the outbox) are a
 // projection written by a logged batch that may run late, twice, or after a crash not at all.
 // Writing revision r again gives the same rows and the same event ID. The List row's revision
 // marks a revision as written out; one that is not is written by the next ApplyRevision.
 type stored struct {
+	legacy   bool
 	rec      *domain.HazardRecord
 	bucket   time.Time // bucket of the current List row
 	hash     string
@@ -104,6 +105,12 @@ func (s hazards) applyRevision(ctx context.Context, rev *domain.HazardRecord, se
 		if err != nil {
 			return nil, false, fmt.Errorf("check existing hazard failed: %w", err)
 		}
+		if st != nil && st.legacy && s.db.fencedSchema {
+			if err := s.adoptLegacy(ctx, st); err != nil {
+				return nil, false, err
+			}
+			continue
+		}
 
 		if st == nil { // new record: revision 1
 			if h.IngestedAt.IsZero() {
@@ -116,9 +123,7 @@ func (s hazards) applyRevision(ctx context.Context, rev *domain.HazardRecord, se
 				return nil, false, err
 			}
 			bucket := s.db.bucketOf(h.OccurredAt)
-			applied, err := s.db.session.Query(`INSERT INTO hazards_by_id (`+storedColumns+`, ingest_sequence)
-				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) IF NOT EXISTS`,
-				append(storedValues(&h, bucket, hash, time.Time{}, time.Time{}), sequence)...).WithContext(ctx).MapScanCAS(map[string]any{})
+			applied, err := s.insertStored(ctx, &h, bucket, hash, time.Time{}, time.Time{}, sequence)
 			if err != nil {
 				return nil, false, fmt.Errorf("claim hazard failed: %w", err)
 			}
@@ -157,9 +162,9 @@ func (s hazards) applyRevision(ctx context.Context, rev *domain.HazardRecord, se
 		}
 		if st.hash == hash || (sequence > 0 && priorSequence == sequence) {
 			if sequence > priorSequence {
-				applied, err := s.db.session.Query(`UPDATE hazards_by_id SET ingest_sequence = ?
-					WHERE hazard_id = ? IF revision = ? AND ingest_sequence = ?`, sequence,
-					h.HazardID, st.rec.Revision, st.sequence).WithContext(ctx).MapScanCAS(map[string]any{})
+				b := s.db.guardBatch(ctx, canonicalGuard(h.HazardID))
+				b.Query(`UPDATE canonical_events SET ingest_sequence=? WHERE shard=? AND hazard_id=? IF revision=? AND ingest_sequence=?`, sequence, auditShard(h.HazardID), h.HazardID, st.rec.Revision, st.sequence)
+				applied, err := s.db.guardedCAS(ctx, canonicalGuard(h.HazardID), b)
 				if err != nil {
 					return nil, false, err
 				}
@@ -176,13 +181,15 @@ func (s hazards) applyRevision(ctx context.Context, rev *domain.HazardRecord, se
 			return nil, false, err
 		}
 		bucket := s.db.bucketOf(h.OccurredAt)
-		applied, err := s.db.session.Query(`UPDATE hazards_by_id SET
+		b := s.db.guardBatch(ctx, canonicalGuard(h.HazardID))
+		b.Query(`UPDATE canonical_events SET
 				hazard_type = ?, severity = ?, area_name = ?, latitude = ?, longitude = ?, occurred_at = ?,
 				attributes = ?, revision = ?, bucket = ?, content_hash = ?, prev_bucket = ?, prev_occurred_at = ?, ingest_sequence = ?
-			WHERE hazard_id = ? IF revision = ? AND ingest_sequence = ?`,
+			WHERE shard=? AND hazard_id = ? IF revision = ? AND ingest_sequence = ?`,
 			h.HazardType, h.Severity, h.AreaName, h.Latitude, h.Longitude, h.OccurredAt,
 			mustJSON(h.Attributes), h.Revision, bucket, hash, st.bucket, st.rec.OccurredAt, max(sequence, priorSequence),
-			h.HazardID, st.rec.Revision, st.sequence).WithContext(ctx).MapScanCAS(map[string]any{})
+			auditShard(h.HazardID), h.HazardID, st.rec.Revision, st.sequence)
+		applied, err := s.db.guardedCAS(ctx, canonicalGuard(h.HazardID), b)
 		if err != nil {
 			return nil, false, fmt.Errorf("claim hazard revision failed: %w", err)
 		}
@@ -204,7 +211,7 @@ func buildEvent(h *domain.HazardRecord, newEvent func(*domain.HazardRecord) (sto
 	return ev, nil
 }
 
-// storedColumns are the hazards_by_id columns written on insert.
+// storedColumns are the canonical payload columns shared with the legacy table.
 const storedColumns = hazardColumns + `, bucket, content_hash, prev_bucket, prev_occurred_at`
 
 func storedValues(h *domain.HazardRecord, bucket time.Time, hash string, prevBucket, prevOccurredAt time.Time) []any {
@@ -221,17 +228,41 @@ func mustJSON(attrs map[string]any) string {
 	return string(b)
 }
 
-// readStored reads a hazards_by_id row (at serial consistency when serial, so it sees every
-// committed lightweight transaction), or nil when there is none.
+// readStored reads the current canonical row, falling back to the legacy layout. Serial
+// consistency observes committed lightweight transactions. Absence returns nil.
 func (s hazards) readStored(ctx context.Context, hazardID string, serial bool) (*stored, error) {
+	if s.db.fencedSchema {
+		st, err := s.readStoredTable(ctx, hazardID, serial, false)
+		if st != nil || err != nil {
+			return st, err
+		}
+	}
+	return s.readStoredTable(ctx, hazardID, serial, true)
+}
+func (s hazards) readStoredTable(ctx context.Context, hazardID string, serial, legacy bool) (*stored, error) {
 	var st stored
+	st.legacy = legacy
 	var hash *string
-	q := s.db.session.Query(`SELECT `+storedColumns+`, ingest_sequence FROM hazards_by_id WHERE hazard_id = ?`, hazardID).WithContext(ctx)
+	cols := storedColumns + `, ingest_sequence`
+	if legacy && !s.db.fencedSchema {
+		cols = storedColumns
+	}
+	stmt := `SELECT ` + cols + ` FROM canonical_events WHERE shard=? AND hazard_id=?`
+	args := []any{auditShard(hazardID), hazardID}
+	if legacy {
+		stmt = `SELECT ` + cols + ` FROM hazards_by_id WHERE hazard_id=?`
+		args = []any{hazardID}
+	}
+	q := s.db.session.Query(stmt, args...).WithContext(ctx)
 	if serial {
 		q = q.Consistency(gocql.LocalSerial)
 	}
 	rec, err := scanHazard(func(dest ...any) error {
-		return q.Scan(append(dest, &st.bucket, &hash, &st.prevBucket, &st.prevOccurredAt, &st.sequence)...)
+		extra := []any{&st.bucket, &hash, &st.prevBucket, &st.prevOccurredAt}
+		if !legacy || s.db.fencedSchema {
+			extra = append(extra, &st.sequence)
+		}
+		return q.Scan(append(dest, extra...)...)
 	})
 	if errors.Is(err, gocql.ErrNotFound) {
 		return nil, nil
@@ -285,7 +316,9 @@ func (s hazards) writeOut(ctx context.Context, h *domain.HazardRecord, bucket, p
 // addProjection adds the List row of h, the removal of the previous one if it moved, and the
 // bucket index entries to b.
 func (s hazards) addProjection(b *gocql.Batch, h *domain.HazardRecord, bucket, prevBucket, prevOccurredAt time.Time) {
-	addAuditProjection(b, h)
+	if s.db.fencedSchema {
+		addAuditProjection(b, h)
+	}
 	if !prevBucket.IsZero() && (!prevBucket.Equal(bucket) || !prevOccurredAt.Equal(h.OccurredAt)) {
 		b.Query(`DELETE FROM hazards_by_bucket WHERE bucket = ? AND occurred_at = ? AND hazard_id = ?`,
 			prevBucket, prevOccurredAt, h.HazardID)
@@ -319,12 +352,11 @@ func contentHash(h *domain.HazardRecord) (string, error) {
 }
 
 func (s hazards) Get(ctx context.Context, hazardID string) (*domain.HazardRecord, error) {
-	h, err := scanHazard(s.db.session.Query(`SELECT `+hazardColumns+` FROM hazards_by_id WHERE hazard_id = ?`, hazardID).
-		WithContext(ctx).Scan)
-	if errors.Is(err, gocql.ErrNotFound) {
-		return nil, nil
+	st, err := s.readStored(ctx, hazardID, false)
+	if err != nil || st == nil {
+		return nil, err
 	}
-	return h, err
+	return st.rec, nil
 }
 
 func (s hazards) HasData(ctx context.Context, source string) (bool, error) {

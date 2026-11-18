@@ -56,7 +56,7 @@ func (db *DB) rekeyHazardIDs(ctx context.Context) error {
 }
 
 func (s hazards) rekeyHazard(ctx context.Context, oldID string) error {
-	st, err := s.readStored(ctx, oldID, false)
+	st, err := s.readStoredTable(ctx, oldID, false, true)
 	if err != nil || st == nil {
 		return err
 	}
@@ -71,6 +71,14 @@ func (s hazards) rekeyHazard(ctx context.Context, oldID string) error {
 	b.Query(`DELETE FROM hazards_by_bucket WHERE bucket = ? AND occurred_at = ? AND hazard_id = ?`,
 		st.bucket, st.rec.OccurredAt, oldID)
 	s.addProjection(b, &rec, st.bucket, time.Time{}, time.Time{})
+	if s.db.fencedSchema {
+		retired := *st.rec
+		retired.Revision++
+		retired.Attributes = domain.NormalizeAttributes(retired.Attributes)
+		retired.Attributes["withdrawn"] = true
+		addAuditProjection(b, &retired)
+		b.Query(`DELETE FROM canonical_events WHERE shard=? AND hazard_id=?`, auditShard(oldID), oldID)
+	}
 	if err := b.Exec(); err != nil {
 		return err
 	}

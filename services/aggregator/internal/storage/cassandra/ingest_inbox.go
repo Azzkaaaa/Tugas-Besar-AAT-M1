@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/aggregator/internal/leader"
 	"github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/aggregator/internal/storage"
 	gocql "github.com/apache/cassandra-gocql-driver/v2"
 )
@@ -50,7 +51,9 @@ func (s ingestInbox) Put(ctx context.Context, m storage.IngestMessage) error {
 			m.Companion, archive, m.ArchiveChunks}
 	}
 	if m.SourceRefID == "" {
-		_, err := s.db.session.Query(insert, values(0)...).WithContext(ctx).Consistency(gocql.LocalQuorum).MapScanCAS(map[string]any{})
+		b := s.db.guardBatch(ctx, inboxGuard(shard))
+		b.Query(insert, values(0)...)
+		_, err := s.db.guardedCAS(ctx, inboxGuard(shard), b)
 		return err
 	}
 
@@ -67,20 +70,18 @@ func (s ingestInbox) Put(ctx context.Context, m storage.IngestMessage) error {
 		err = s.db.session.Query(`SELECT intake_sequence FROM ingest_inbox WHERE shard = ? AND message_id = ?`, shard, sequenceKey).
 			WithContext(ctx).Consistency(gocql.LocalQuorum).Scan(&prior)
 		if errors.Is(err, gocql.ErrNotFound) {
-			_, err = s.db.session.Query(`INSERT INTO ingest_inbox (shard, message_id, intake_sequence) VALUES (?, ?, 0) IF NOT EXISTS`,
-				shard, sequenceKey).WithContext(ctx).Consistency(gocql.LocalQuorum).MapScanCAS(map[string]any{})
+			b := s.db.guardBatch(ctx, inboxGuard(shard))
+			b.Query(`INSERT INTO ingest_inbox (shard,message_id,intake_sequence) VALUES (?,?,0) IF NOT EXISTS`, shard, sequenceKey)
+			_, err = s.db.guardedCAS(ctx, inboxGuard(shard), b)
 		}
 		if err != nil {
 			return err
 		}
-		batch := s.db.session.Batch(gocql.LoggedBatch).WithContext(ctx).Consistency(gocql.LocalQuorum)
+		batch := s.db.guardBatch(ctx, inboxGuard(shard)).Consistency(gocql.LocalQuorum)
 		batch.Query(`UPDATE ingest_inbox SET intake_sequence = ? WHERE shard = ? AND message_id = ? IF intake_sequence = ?`,
 			prior+1, shard, sequenceKey, prior)
 		batch.Query(insert, values(prior+1)...)
-		applied, iter, err := batch.MapExecCAS(map[string]any{})
-		if iter != nil {
-			_ = iter.Close()
-		}
+		applied, err := s.db.guardedCAS(ctx, inboxGuard(shard), batch)
 		if applied || err != nil {
 			return err
 		}
@@ -149,13 +150,17 @@ func (s ingestInbox) ListMessages(ctx context.Context, source string, cursor sto
 }
 
 func (s ingestInbox) ChangeState(ctx context.Context, m storage.IngestMessage, state, reason string, attempts int, next time.Time) (bool, error) {
-	return s.db.session.Query(`UPDATE ingest_inbox SET state = ?, reason = ?, attempts = ?, next_attempt = ?
+	b := s.db.guardBatch(ctx, inboxGuard(messageShard(m.ID)))
+	b.Query(`UPDATE ingest_inbox SET state = ?, reason = ?, attempts = ?, next_attempt = ?
 		WHERE shard = ? AND message_id = ? IF state = ? AND attempts = ?`, state, reason, attempts,
-		nullableTime(next), messageShard(m.ID), m.ID, m.State, m.Attempts).
-		WithContext(ctx).Consistency(gocql.LocalQuorum).MapScanCAS(map[string]any{})
+		nullableTime(next), messageShard(m.ID), m.ID, m.State, m.Attempts)
+	return s.db.guardedCAS(ctx, inboxGuard(messageShard(m.ID)), b)
 }
 
 func (s ingestInbox) ArchiveChunk(ctx context.Context, id string, chunk int, raw []byte) error {
+	if err := leader.CheckAuthority(ctx); err != nil {
+		return err
+	}
 	archiveID, err := gocql.ParseUUID(id)
 	if err != nil {
 		return err

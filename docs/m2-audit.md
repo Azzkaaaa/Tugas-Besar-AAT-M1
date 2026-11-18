@@ -24,7 +24,8 @@ Deduplicate by hazard ID when retrying. Events/location have a five-second
 request budget and checksum twenty seconds; per-shard queries are bounded to
 250 ms. No complete snapshot across concurrent revisions is claimed.
 
-Location uses Cassandra's server-computed partition token, actual keyspace
+Location uses Cassandra's server-computed `canonical_events` shard token (or
+the legacy ID token until that record is adopted), actual keyspace
 replication settings and driver ring metadata, including down natural replicas.
 The first natural replica is reported as `primary`, subsequent copies as
 `replica`. Set `CANONICAL_STORE_CASSANDRA_NODE_FROM_RACK=true` only for a deployment

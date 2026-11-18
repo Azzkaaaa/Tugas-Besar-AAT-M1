@@ -92,8 +92,9 @@ Konfigurasi (dibaca sama oleh aggregator, `storecopy`, dan `storeadmin`):
   harus 1. Dengan RF 3 dan `LOCAL_QUORUM`, tiap baca/tulis butuh 2 dari 3 replika;
   cluster minimal 3 node dan tahan satu node mati.
 
-- **Tabel:** `hazards_by_id` (Get; titik commit revisi, hanya ditulis dengan
-  lightweight transaction), `hazards_by_bucket` (List; partisi = waktu
+- **Tabel:** `canonical_events` (Get; 16 partisi hash, titik commit revisi dengan
+  otoritas sumber dan lightweight transaction), `hazards_by_id` (fallback data
+  lama selama migrasi), `hazards_by_bucket` (List; partisi = waktu
   `occurred_at` dibulatkan ke bucket period), `hazard_buckets` (indeks bucket
   yang berisi data per sumber dan `*`; dipakai List dan `HasData`),
   `source_state`, `outbox_events`, `outbox_pending`, `outbox_dead_letters`,
@@ -119,7 +120,7 @@ Konfigurasi (dibaca sama oleh aggregator, `storecopy`, dan `storeadmin`):
   minimal 1 menit dari sekarang (paling lama 24 jam lagi). Aggregator membaca
   ulang jadwal tiap 30 detik, jadi sudah tahu sebelum segmen dimulai. Bucket lama
   tidak ditulis ulang; List membaca bucket lama dan baru sekaligus. Hanya satu
-  perubahan boleh menunggu. Tiap baris `hazards_by_id` mencatat bucket tempat ia
+  perubahan boleh menunggu. Tiap baris kanonis mencatat bucket tempat ia
   ditulis, sehingga revisi yang memindahkan hazard menghapus baris yang benar.
   Period pendek: partisi kecil, tetapi lebih banyak partisi dibaca per halaman;
   period panjang: sebaliknya.
@@ -211,16 +212,18 @@ cluster.
   transaksi saat hazard, jurnal/checkpoint, karantina, atau status sumber ditulis.
   Context lama tetap ditolak walaupun goroutine pembatalan belum berjalan.
   Lihat [write authority](../../docs/m2-write-authority.md) untuk bukti dan batas
-  backend; implementasi fencing Cassandra masih dilacak di checklist F05.
+  backend. Cassandra memeriksa epoch dan kedaluwarsa dalam conditional batch
+  pada partisi yang sama dengan mutasi. Profil M2 menolak elector tanpa fencing.
   Idempotensi tetap diperlukan untuk retry yang sah. Karena itu
   `event_id` deterministik: `pub-` + UUIDv5(`hazard_id`, revisi). Revisi = 1 saat
   hazard pertama disimpan, +1 per perubahan konten. Revisi yang sama selalu
   menghasilkan `event_id` yang sama; consumer sudah men-dedup `event_id`.
   - Postgres: `ApplyRevision` mengunci baris hazard (`FOR UPDATE`), jadi penulis
     kedua melihat konten baru dan tidak menulis apa pun.
-  - Cassandra: baris `hazards_by_id` (dialamatkan langsung dengan ID turunan)
+  - Cassandra: baris `canonical_events` (shard hash dan ID turunan)
     menyimpan konten, revisi, dan hash konten, dan hanya ditulis dengan
-    lightweight transaction (`IF revision = n`); baris List, indeks bucket, dan
+    lightweight transaction (`IF revision = n`) bersama kondisi otoritas sumber;
+    baris List, indeks bucket, dan
     outbox adalah proyeksinya. Revisi yang sudah di-commit tetapi belum tertulis
     ke proyeksi (crash di antara keduanya) ditulis oleh poll berikutnya dengan
     `event_id` yang sama; revisi baris List menjadi penanda.

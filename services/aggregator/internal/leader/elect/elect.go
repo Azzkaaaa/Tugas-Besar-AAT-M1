@@ -25,6 +25,17 @@ const (
 // leader.Pool, which spreads jobs across replicas.
 func Open(cfg *config.Config, store *open.Store) (leader.Electors, error) {
 	lc := cfg.Leader
+	if cfg.RequireWriteAuthority {
+		if lc.Election != cfg.CanonicalStoreBackend {
+			return nil, fmt.Errorf("M2 write authority requires LEADER_ELECTION=%s", cfg.CanonicalStoreBackend)
+		}
+		if store == nil {
+			return nil, fmt.Errorf("M2 write authority requires a canonical lease store")
+		}
+		if _, ok := store.Leases.(leader.FencingStore); !ok {
+			return nil, fmt.Errorf("canonical lease store does not enforce M2 write authority")
+		}
+	}
 	identity := lc.Identity
 	if identity == "" {
 		identity = leader.Identity()

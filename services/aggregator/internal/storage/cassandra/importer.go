@@ -36,10 +36,17 @@ func (db *DB) ImportHazard(ctx context.Context, rec *domain.HazardRecord) error 
 	if err != nil {
 		return err
 	}
+	if st != nil && st.legacy {
+		if err := s.adoptLegacy(ctx, st); err != nil {
+			return err
+		}
+		st, err = s.readStored(ctx, h.HazardID, true)
+		if err != nil {
+			return err
+		}
+	}
 	if st == nil {
-		applied, err := db.session.Query(`INSERT INTO hazards_by_id (`+storedColumns+`)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) IF NOT EXISTS`,
-			storedValues(&h, bucket, hash, time.Time{}, time.Time{})...).WithContext(ctx).MapScanCAS(map[string]any{})
+		applied, err := s.insertStored(ctx, &h, bucket, hash, time.Time{}, time.Time{}, nil)
 		if err != nil {
 			return err
 		}
@@ -49,15 +56,22 @@ func (db *DB) ImportHazard(ctx context.Context, rec *domain.HazardRecord) error 
 		_, _, err = s.writeOut(ctx, &h, bucket, time.Time{}, time.Time{}, nil)
 		return err
 	}
+	if st.rec.Revision > h.Revision {
+		return nil
+	}
 	// Re-run of the copy: bring the row to the copied revision, moving its List row if needed.
-	if _, err := db.session.Query(`UPDATE hazards_by_id SET
+	b := db.guardBatch(ctx, canonicalGuard(h.HazardID))
+	b.Query(`UPDATE canonical_events SET
 			hazard_type = ?, severity = ?, area_name = ?, latitude = ?, longitude = ?, occurred_at = ?,
 			ingested_at = ?, attributes = ?, revision = ?, bucket = ?, content_hash = ?, prev_bucket = ?, prev_occurred_at = ?
-		WHERE hazard_id = ? IF revision = ?`,
+		WHERE shard=? AND hazard_id = ? IF revision = ?`,
 		h.HazardType, h.Severity, h.AreaName, h.Latitude, h.Longitude, h.OccurredAt,
 		h.IngestedAt, mustJSON(h.Attributes), h.Revision, bucket, hash, st.bucket, st.rec.OccurredAt,
-		h.HazardID, st.rec.Revision).WithContext(ctx).MapScanCAS(map[string]any{}); err != nil {
+		auditShard(h.HazardID), h.HazardID, st.rec.Revision)
+	if applied, err := db.guardedCAS(ctx, canonicalGuard(h.HazardID), b); err != nil {
 		return err
+	} else if !applied {
+		return fmt.Errorf("hazard %s changed while importing it", h.HazardID)
 	}
 	_, _, err = s.writeOut(ctx, &h, bucket, st.bucket, st.rec.OccurredAt, nil)
 	return err

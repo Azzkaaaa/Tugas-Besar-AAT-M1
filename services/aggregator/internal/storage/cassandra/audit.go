@@ -18,7 +18,7 @@ import (
 )
 
 const auditShards = 16
-const auditReadyKey = "audit_indexes_v2"
+const auditReadyKey = "audit_indexes_v3"
 
 type audit struct{ db *DB }
 type auditEntry struct {
@@ -311,13 +311,36 @@ func (db *DB) maintainAudit(ctx context.Context) {
 }
 
 func (db *DB) backfillAudit(ctx context.Context) error {
-	iter := db.session.Query(`SELECT ` + hazardColumns + ` FROM hazards_by_id`).WithContext(ctx).PageSize(1).Iter()
+	// Copy legacy canonical rows without blocking startup. A concurrent new
+	// revision wins its conditional insert, and reads retain legacy fallback.
+	legacy := db.session.Query(`SELECT hazard_id FROM hazards_by_id`).WithContext(ctx).PageSize(64).Iter()
+	var id string
+	for legacy.Scan(&id) {
+		st, err := (hazards{db}).readStoredTable(ctx, id, true, true)
+		if err != nil {
+			_ = legacy.Close()
+			return err
+		}
+		if st != nil {
+			if err := (hazards{db}).adoptLegacy(ctx, st); err != nil {
+				_ = legacy.Close()
+				return err
+			}
+		}
+	}
+	if err := legacy.Close(); err != nil {
+		return err
+	}
+	iter := db.session.Query(`SELECT ` + hazardColumns + ` FROM canonical_events`).WithContext(ctx).PageSize(1).Iter()
 	scanner := iter.Scanner()
 	for scanner.Next() {
 		h, err := scanHazard(scanner.Scan)
 		if err != nil {
 			_ = scanner.Err()
 			return err
+		}
+		if h.HazardID == "" {
+			continue
 		}
 		b := db.session.Batch(gocql.LoggedBatch).WithContext(ctx)
 		addAuditProjection(b, h)

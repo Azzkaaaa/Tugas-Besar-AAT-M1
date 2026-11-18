@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/aggregator/internal/domain"
+	"github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/aggregator/internal/leader"
 	"github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/aggregator/internal/storage"
 	gocql "github.com/apache/cassandra-gocql-driver/v2"
 )
@@ -37,17 +38,37 @@ func (s sources) Get(ctx context.Context, key domain.SourceKey) (storage.SourceS
 // RecordSuccess writes the whole row; error_message is cleared.
 func (s sources) RecordSuccess(ctx context.Context, key domain.SourceKey, watermark time.Time) error {
 	now := msUTC(time.Now())
-	return s.db.session.Query(`INSERT INTO source_state
+	stmt := `INSERT INTO source_state
 			(source_key, watermark_time, last_success_at, last_attempt_at, status, error_message)
-		VALUES (?, ?, ?, ?, ?, null)`,
-		string(key), nullableTime(watermark), now, now, domain.StatusFresh).WithContext(ctx).Exec()
+		VALUES (?, ?, ?, ?, ?, null)`
+	args := []any{string(key), nullableTime(watermark), now, now, domain.StatusFresh}
+	if _, ok := leader.AuthorityFromContext(ctx); ok {
+		b := s.db.guardBatch(ctx, sourceGuard(key))
+		b.Query(stmt, args...)
+		ok, err := s.db.guardedCAS(ctx, sourceGuard(key), b)
+		if err == nil && !ok {
+			return leader.ErrLostAuthority
+		}
+		return err
+	}
+	return s.db.session.Query(stmt, args...).WithContext(ctx).Exec()
 }
 
 // RecordFailure only touches the attempt columns, so watermark and last success are kept (an
 // UPDATE of a missing row creates it with those columns null).
 func (s sources) RecordFailure(ctx context.Context, key domain.SourceKey, cause string) error {
-	return s.db.session.Query(`UPDATE source_state SET last_attempt_at = ?, status = ?, error_message = ?
-		WHERE source_key = ?`, msUTC(time.Now()), domain.StatusStale, cause, string(key)).WithContext(ctx).Exec()
+	stmt := `UPDATE source_state SET last_attempt_at = ?, status = ?, error_message = ? WHERE source_key = ?`
+	args := []any{msUTC(time.Now()), domain.StatusStale, cause, string(key)}
+	if _, ok := leader.AuthorityFromContext(ctx); ok {
+		b := s.db.guardBatch(ctx, sourceGuard(key))
+		b.Query(stmt, args...)
+		ok, err := s.db.guardedCAS(ctx, sourceGuard(key), b)
+		if err == nil && !ok {
+			return leader.ErrLostAuthority
+		}
+		return err
+	}
+	return s.db.session.Query(stmt, args...).WithContext(ctx).Exec()
 }
 
 // nullableTime writes the zero time as null.

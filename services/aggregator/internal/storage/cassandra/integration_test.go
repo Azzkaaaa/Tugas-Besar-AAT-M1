@@ -27,7 +27,7 @@ import (
 
 // Tables emptied between contract cases (store_meta and schema tables are kept).
 var dataTables = []string{
-	"hazards_by_id", "hazards_by_bucket", "hazard_buckets", "source_state",
+	"hazards_by_id", "canonical_events", "stream_inputs_by_shard", "hazards_by_bucket", "hazard_buckets", "source_state",
 	"outbox_events", "outbox_pending", "outbox_dead_letters", "leader_leases",
 	"audit_events_by_shard", "audit_refs_by_shard", "analytics_by_shard",
 }
@@ -245,14 +245,26 @@ func TestExistingOnly(t *testing.T) {
 	}
 }
 
-// The configured replication is used on creation and compared on later opens. The docker image's
-// datacenter is datacenter1.
+// The configured replication is used on creation and compared on later opens.
+// Discover the fixture's real DC instead of assuming the image's default name.
 func TestReplicationOnCreate(t *testing.T) {
 	hosts := testHosts(t)
 	ctx := context.Background()
-	nts := Replication{Strategy: NetworkTopologyStrategy, Datacenters: map[string]int{"datacenter1": 1}}
+	probe := gocql.NewCluster(hosts...)
+	probe.Consistency = gocql.One
+	session, err := probe.CreateSession()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var dc string
+	err = session.Query(`SELECT data_center FROM system.local`).Scan(&dc)
+	session.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	nts := Replication{Strategy: NetworkTopologyStrategy, Datacenters: map[string]int{dc: 1}}
 	db, err := Open(ctx, Config{Hosts: hosts, Keyspace: "agg_test_nts", Consistency: "LOCAL_QUORUM",
-		LocalDatacenter: "datacenter1", Replication: nts, BucketPeriod: time.Minute})
+		LocalDatacenter: dc, Replication: nts, BucketPeriod: time.Minute})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -310,7 +322,7 @@ func testHazard(ref string, severity string) *domain.HazardRecord {
 		Attributes: map[string]any{"magnitude": 5.0}}
 }
 
-// A revision committed on hazards_by_id whose batch never ran (a crash between the two) is
+// A revision committed on canonical_events whose projection batch never ran is
 // written out by the next ApplyRevision of that content, with that revision's event ID.
 func TestRepairCommittedRevision(t *testing.T) {
 	db, err := openTest(t, "agg_test_repair", time.Minute)
@@ -329,9 +341,9 @@ func TestRepairCommittedRevision(t *testing.T) {
 	next.Attributes = domain.NormalizeAttributes(next.Attributes)
 	hash, _ := contentHash(next)
 	bucket := db.bucketOf(next.OccurredAt)
-	if applied, err := db.session.Query(`UPDATE hazards_by_id SET severity = ?, revision = 2, content_hash = ?,
+	if applied, err := db.session.Query(`UPDATE canonical_events SET severity = ?, revision = 2, content_hash = ?,
 			bucket = ?, prev_bucket = ?, prev_occurred_at = ?
-		WHERE hazard_id = ? IF revision = 1`, domain.SeveritySiaga, hash, bucket, bucket, next.OccurredAt, first.HazardID).
+		WHERE shard=? AND hazard_id = ? IF revision = 1`, domain.SeveritySiaga, hash, bucket, bucket, next.OccurredAt, auditShard(first.HazardID), first.HazardID).
 		MapScanCAS(map[string]any{}); err != nil || !applied {
 		t.Fatalf("simulated commit: %v, %v", applied, err)
 	}
