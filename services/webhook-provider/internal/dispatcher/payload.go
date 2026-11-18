@@ -183,6 +183,10 @@ func sourceString(s commonv1.Source) string {
 		return "BMKG"
 	case commonv1.Source_SOURCE_PVMBG:
 		return "PVMBG"
+	case commonv1.Source_SOURCE_SATELITE:
+		return "SATELIT"
+	case commonv1.Source_SOURCE_COAST_SENSOR:
+		return "SENSOR_PANTAI"
 	default:
 		return "UNSPECIFIED"
 	}
@@ -194,6 +198,10 @@ func hazardTypeString(h commonv1.HazardType) string {
 		return "SEISMIC"
 	case commonv1.HazardType_HAZARD_TYPE_VOLCANIC:
 		return "VOLCANIC"
+	case commonv1.HazardType_HAZARD_TYPE_WILDFIRE:
+		return "WILDFIRE"
+	case commonv1.HazardType_HAZARD_TYPE_COASTAL:
+		return "COASTAL"
 	default:
 		return "UNSPECIFIED"
 	}

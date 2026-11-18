@@ -1,8 +1,12 @@
 # Webhook Provider
 
-Rencana consumer RabbitMQ dan server manajemen gRPC pada port **9094**, melalui
+Consumer RabbitMQ dan server manajemen gRPC Go pada port **9094**, melalui
 [WebhookService](../../contracts/proto/bnpb/webhook/v1/webhook.proto).
-Implementasi dan bahasa belum dipilih.
+
+Payload webhook memakai label sumber `BMKG`, `PVMBG`, `SATELIT`, dan
+`SENSOR_PANTAI`, beserta tipe `SEISMIC`, `VOLCANIC`, `WILDFIRE`, dan `COASTAL`.
+View SUMMARY tidak memuat koordinat, referensi sumber, atau attributes; FULL
+mempertahankan data mentah termasuk penanda coastal `critical`.
 
 - **Input:** envelope `HazardEventPublished` dari queue durable
   `bnpb.webhook-provider.v1`; RPC manajemen (`CreateWebhook`, `ListWebhooks`,
