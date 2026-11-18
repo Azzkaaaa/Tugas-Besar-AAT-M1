@@ -9,6 +9,7 @@ import (
 	"math"
 	"net/url"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -217,6 +218,7 @@ func (r *Runner) coastal(ctx context.Context) error {
 	stations := map[string]Station{}
 	var stationRefresh, lastProgress, lastGenerated time.Time
 	lastBody := ""
+	pageLimit := 200
 	base := strings.TrimRight(r.Config.CoastalURL, "/")
 	fail := func(err error) {
 		b.Fail(time.Now(), err)
@@ -233,7 +235,7 @@ func (r *Runner) coastal(ctx context.Context) error {
 		}
 		r.metrics.breaker.Record(ctx, 0)
 		if len(stations) == 0 || time.Since(stationRefresh) > time.Minute {
-			raw, err := get(ctx, c, base+"/v1/stations", r.Config.CoastalToken, r.Config.MaxBodyBytes)
+			raw, err := r.getCaptured(ctx, c, base+"/v1/stations", "/v1/stations", "")
 			if err != nil {
 				fail(err)
 				pause(ctx, r.Config.CoastalPoll)
@@ -250,17 +252,15 @@ func (r *Runner) coastal(ctx context.Context) error {
 			}
 			stationRefresh = time.Now()
 		}
-		u := base + "/v1/observations?limit=200"
+		u := base + "/v1/observations?limit=" + strconv.Itoa(pageLimit)
 		if p.Cursor != "" {
 			u += "&cursor=" + url.QueryEscape(p.Cursor)
 		}
-		raw, err := get(ctx, c, u, r.Config.CoastalToken, r.Config.MaxBodyBytes)
+		raw, err := r.getCaptured(ctx, c, u, "/v1/observations", p.Cursor)
 		received := time.Now().UTC()
 		if err != nil {
-			if len(raw) > 0 {
-				if pe := r.park(ctx, domain.SourceCoastal, raw, err.Error()+": first bytes retained up to size cap", received); pe != nil {
-					return pe
-				}
+			if err.Error() == "body_size_exceeded" && pageLimit > 1 {
+				pageLimit = max(1, pageLimit/2)
 			}
 			fail(err)
 			pause(ctx, r.Config.CoastalPoll)

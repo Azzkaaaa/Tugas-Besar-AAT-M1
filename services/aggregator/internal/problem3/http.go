@@ -220,10 +220,18 @@ func (a *api) details(w http.ResponseWriter, r *http.Request) {
 	m.ReceivedAt = m.ReceivedAt.UTC()
 	respond(w, 200, struct {
 		storage.IngestMessage
-		SourceRefID   string `json:"source_ref_id,omitempty"`
-		SchemaVersion string `json:"schema_version,omitempty"`
-		CorrelationID string `json:"correlation_id"`
-	}{*m, m.SourceRefID, m.SchemaVersion, m.CorrelationID})
+		SourceRefID   string          `json:"source_ref_id,omitempty"`
+		SchemaVersion string          `json:"schema_version,omitempty"`
+		CorrelationID string          `json:"correlation_id"`
+		Capture       json.RawMessage `json:"capture,omitempty"`
+	}{*m, m.SourceRefID, m.SchemaVersion, m.CorrelationID, externalCapture(m)})
+}
+
+func externalCapture(m *storage.IngestMessage) json.RawMessage {
+	if m.Format == "m2-raw" && json.Valid(m.Companion) {
+		return json.RawMessage(m.Companion)
+	}
+	return nil
 }
 
 func (a *api) replay(w http.ResponseWriter, r *http.Request) {

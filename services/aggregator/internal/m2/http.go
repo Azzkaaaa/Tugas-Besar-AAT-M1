@@ -1,7 +1,6 @@
 package m2
 
 import (
-	"bufio"
 	"context"
 	"errors"
 	"fmt"
@@ -9,7 +8,6 @@ import (
 	"net"
 	"net/http"
 	"strconv"
-	"strings"
 	"time"
 
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
@@ -86,51 +84,7 @@ type sseFrame struct {
 // ReadSSE implements multiline data, CRLF, comments, and bounded frame sizes.
 // A half frame at EOF is NOT committed: the peer must terminate it with a blank line.
 func ReadSSE(r io.Reader, max int, consume func(sseFrame) error) error {
-	s := bufio.NewScanner(r)
-	s.Buffer(make([]byte, 4096), max+1)
-	f := sseFrame{}
-	size := 0
-	for s.Scan() {
-		line := s.Text()
-		if line == "" {
-			if len(f.Data) > 0 {
-				if f.Kind == "" {
-					f.Kind = "message"
-				}
-				f.Data = f.Data[:len(f.Data)-1]
-				if err := consume(f); err != nil {
-					return err
-				}
-			}
-			f = sseFrame{}
-			size = 0
-			continue
-		}
-		size += len(line)
-		if size > max {
-			return errors.New("sse_frame_size_exceeded")
-		}
-		if strings.HasPrefix(line, ":") {
-			continue
-		}
-		name, value, _ := strings.Cut(line, ":")
-		value = strings.TrimPrefix(value, " ")
-		switch name {
-		case "id":
-			if strings.ContainsRune(value, 0) {
-				return errors.New("invalid_sse_id")
-			}
-			f.ID = value
-		case "event":
-			f.Kind = value
-		case "data":
-			f.Data = append(f.Data, []byte(value+"\n")...)
-		}
-	}
-	if err := s.Err(); err != nil {
-		return err
-	}
-	return io.EOF
+	return ReadSSECaptured(r, max, consume, nil)
 }
 
 // Breaker is local to the single elected coastal poller, using monotonic elapsed

@@ -3,11 +3,23 @@ package ingest
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/json"
+	"io"
 	"time"
 
 	"github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/aggregator/internal/storage"
 	"github.com/google/uuid"
 )
+
+// ParkExternalReader spools failed bytes to temporary disk before committing
+// fixed-size durable chunks. contextInfo contains source position, never auth.
+func ParkExternalReader(ctx context.Context, inbox storage.IngestInbox, source string, raw io.Reader, readErr error, reason, correlation string, received time.Time, contextInfo map[string]string) error {
+	m := storage.IngestMessage{Source: source, Stream: "m2/" + source, Format: "m2-raw", ReceivedAt: received, Reason: reason, CorrelationID: correlation}
+	contextBytes, _ := json.Marshal(contextInfo)
+	m.SchemaVersion = "capture-v1"
+	m.Companion = contextBytes
+	return (&Pipeline{inbox: inbox}).spool(ctx, m, nil, raw, readErr)
+}
 
 // ParkExternal shares P3's durable quarantine and protected raw download with
 // adapters that own their own parsers/replay (satellite and coastal). There is no

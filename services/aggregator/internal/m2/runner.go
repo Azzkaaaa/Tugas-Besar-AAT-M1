@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"net/url"
@@ -130,7 +131,9 @@ func (r *Runner) satellite(ctx context.Context) error {
 			if row.Sequence != seq+1 {
 				return errors.New("journal_gap")
 			}
-			_, err = e.Apply(row.Kind, row.Payload, row.Sequence, row.ReceivedAt)
+			if row.Kind != "quarantined" {
+				_, err = e.Apply(row.Kind, row.Payload, row.Sequence, row.ReceivedAt)
+			}
 			if errors.Is(err, errCapacity) {
 				return err
 			}
@@ -142,7 +145,11 @@ func (r *Runner) satellite(ctx context.Context) error {
 		work, span := otel.Tracer("bnpb.m2").Start(ctx, "satellite.process")
 		defer span.End()
 		span.SetAttributes(attribute.String("correlation_id", corr))
-		records, err := e.Apply(row.Kind, row.Payload, row.Sequence, row.ReceivedAt)
+		var records []*domain.HazardRecord
+		var err error
+		if row.Kind != "quarantined" {
+			records, err = e.Apply(row.Kind, row.Payload, row.Sequence, row.ReceivedAt)
+		}
 		if errors.Is(err, errCapacity) {
 			return err
 		}
@@ -275,11 +282,25 @@ func (r *Runner) connection(ctx context.Context, c *http.Client, cursor string, 
 		return err
 	}
 	defer resp.Body.Close()
+	parkResponse := func(reason error) error {
+		if r.Store.Inbox == nil {
+			return errors.New("durable_capture_requires_ingest_inbox")
+		}
+		if err := ingest.ParkExternalReader(ctx, r.Store.Inbox, domain.SourceSatellite, resp.Body, nil, reason.Error(), "satellite-capture", time.Now().UTC(), map[string]string{"endpoint": "/v1/stream", "cursor": cursor}); err != nil {
+			return err
+		}
+		return reason
+	}
 	if resp.StatusCode != 200 {
-		return httpFailure(resp)
+		return parkResponse(httpFailure(resp))
 	}
 	if !strings.HasPrefix(resp.Header.Get("Content-Type"), "text/event-stream") {
-		return errors.New("expected_event_stream")
+		return parkResponse(errors.New("expected_event_stream"))
 	}
-	return ReadSSE(resp.Body, r.Config.MaxBodyBytes, func(f sseFrame) error { idle.Reset(30 * time.Second); return consume(f) })
+	return ReadSSECaptured(resp.Body, r.Config.MaxBodyBytes, func(f sseFrame) error { idle.Reset(30 * time.Second); return consume(f) }, func(f sseFrame, raw io.Reader, readErr error) error {
+		if r.Store.Inbox == nil {
+			return errors.New("durable_capture_requires_ingest_inbox")
+		}
+		return ingest.ParkExternalReader(ctx, r.Store.Inbox, domain.SourceSatellite, raw, readErr, "sse_frame_size_exceeded_or_incomplete", "satellite-capture", time.Now().UTC(), map[string]string{"endpoint": "/v1/stream", "cursor": cursor, "frame_id": f.ID, "frame_kind": f.Kind})
+	})
 }

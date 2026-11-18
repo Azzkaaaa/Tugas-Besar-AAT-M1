@@ -127,6 +127,10 @@ func (p *Pipeline) spool(ctx context.Context, m storage.IngestMessage, prefix []
 	defer file.Close()
 	hash := sha256.New()
 	_, _ = io.WriteString(hash, m.Stream+"\x00"+m.Format+"\x00"+m.SchemaVersion+"\x00")
+	if m.Format == "m2-raw" {
+		_, _ = hash.Write(m.Companion)
+		_, _ = hash.Write([]byte{0})
+	}
 	out := io.MultiWriter(file, hash)
 	if _, err := out.Write(prefix); err != nil {
 		return err
@@ -140,8 +144,21 @@ func (p *Pipeline) spool(ctx context.Context, m storage.IngestMessage, prefix []
 			readErr = err
 		}
 	}
-	if readErr != nil {
+	if readErr != nil && m.Format != "m2-raw" {
 		m.Reason = "incomplete_response"
+	}
+	if m.Format == "m2-raw" {
+		info, err := file.Stat()
+		if err != nil {
+			return err
+		}
+		var position map[string]string
+		_ = json.Unmarshal(m.Companion, &position)
+		m.Companion, _ = json.Marshal(map[string]any{"complete": readErr == nil, "bytes": info.Size(), "position": position})
+		_, _ = fmt.Fprintf(hash, "\x00complete=%t", readErr == nil)
+		if readErr != nil {
+			m.Reason = "incomplete_response: " + m.Reason
+		}
 	}
 	digest := hash.Sum(nil)
 	m.ID = shardedMessageID(m, digest)
