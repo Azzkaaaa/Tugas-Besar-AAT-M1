@@ -1,0 +1,50 @@
+=== RUN   TestContract
+=== RUN   TestContract/1m0s
+2026/11/19 12:41:01 INFO created keyspace keyspace=agg_test_contract_1m replication="{'class': 'SimpleStrategy', 'replication_factor': 1}"
+2026/11/19 12:41:07 INFO applied migration migration=0001_baseline.cql
+2026/11/19 12:41:08 INFO applied migration migration=0002_bucket_schedule.cql
+2026/11/19 12:41:10 INFO applied migration migration=0003_leader_and_revision.cql
+2026/11/19 12:41:11 INFO applied migration migration=0004_derived_hazard_ids.cql
+2026/11/19 12:41:11 INFO applied migration migration="0005_rekey_hazard_ids (go)"
+2026/11/19 12:41:13 INFO applied migration migration=0006_drop_hazard_by_source_ref.cql
+2026/11/19 12:41:15 INFO applied migration migration=0007_problem3.cql
+2026/11/19 12:41:16 INFO applied migration migration=0008_m2_streams.cql
+2026/11/19 12:41:17 INFO applied migration migration=0009_audit_indexes.cql
+2026/11/19 12:41:17 INFO applied migration migration=0010_analytics_metadata.cql
+2026/11/19 12:41:23 INFO applied migration migration=0011_write_authority.cql
+2026/11/19 12:41:28 INFO applied migration migration=0012_critical_journal.cql
+2026/11/19 12:41:29 INFO applied migration migration=0013_stream_snapshots.cql
+2026/11/19 12:41:29 INFO applied migration migration=0014_sharded_projection.cql
+2026/11/19 12:41:29 INFO applied migration migration="0015_backfill_sharded_projection (go)"
+2026/11/19 12:41:30 INFO applied migration migration=0016_streaming_snapshots.cql
+=== RUN   TestContract/1m0s/Outbox/PayloadBudgetAndFairness
+=== RUN   TestContract/1m0s/Outbox/LargePriorityClasses
+=== RUN   TestContract/24h0m0s
+2026/11/19 12:41:50 INFO created keyspace keyspace=agg_test_contract_24h replication="{'class': 'SimpleStrategy', 'replication_factor': 1}"
+2026/11/19 12:41:55 INFO applied migration migration=0001_baseline.cql
+2026/11/19 12:41:56 INFO applied migration migration=0002_bucket_schedule.cql
+2026/11/19 12:41:58 INFO applied migration migration=0003_leader_and_revision.cql
+2026/11/19 12:41:59 INFO applied migration migration=0004_derived_hazard_ids.cql
+2026/11/19 12:41:59 INFO applied migration migration="0005_rekey_hazard_ids (go)"
+2026/11/19 12:42:01 INFO applied migration migration=0006_drop_hazard_by_source_ref.cql
+2026/11/19 12:42:03 INFO applied migration migration=0007_problem3.cql
+2026/11/19 12:42:04 INFO applied migration migration=0008_m2_streams.cql
+2026/11/19 12:42:05 INFO applied migration migration=0009_audit_indexes.cql
+2026/11/19 12:42:05 INFO applied migration migration=0010_analytics_metadata.cql
+2026/11/19 12:42:11 INFO applied migration migration=0011_write_authority.cql
+2026/11/19 12:42:16 INFO applied migration migration=0012_critical_journal.cql
+2026/11/19 12:42:17 INFO applied migration migration=0013_stream_snapshots.cql
+2026/11/19 12:42:18 INFO applied migration migration=0014_sharded_projection.cql
+2026/11/19 12:42:18 INFO applied migration migration="0015_backfill_sharded_projection (go)"
+2026/11/19 12:42:18 INFO applied migration migration=0016_streaming_snapshots.cql
+=== RUN   TestContract/24h0m0s/Outbox/PayloadBudgetAndFairness
+=== RUN   TestContract/24h0m0s/Outbox/LargePriorityClasses
+--- PASS: TestContract (90.39s)
+    --- PASS: TestContract/1m0s (40.03s)
+        --- PASS: TestContract/1m0s/Outbox/PayloadBudgetAndFairness (2.93s)
+        --- PASS: TestContract/1m0s/Outbox/LargePriorityClasses (3.31s)
+    --- PASS: TestContract/24h0m0s (50.37s)
+        --- PASS: TestContract/24h0m0s/Outbox/PayloadBudgetAndFairness (4.82s)
+        --- PASS: TestContract/24h0m0s/Outbox/LargePriorityClasses (3.26s)
+PASS
+ok  	github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/aggregator/internal/storage/cassandra	90.582s

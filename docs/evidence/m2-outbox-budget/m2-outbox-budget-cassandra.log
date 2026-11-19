@@ -1,0 +1,87 @@
+=== RUN   TestContract
+=== RUN   TestContract/1m0s
+2026/11/19 11:58:19 INFO created keyspace keyspace=agg_test_contract_1m replication="{'class': 'SimpleStrategy', 'replication_factor': 1}"
+2026/11/19 11:58:25 INFO applied migration migration=0001_baseline.cql
+2026/11/19 11:58:26 INFO applied migration migration=0002_bucket_schedule.cql
+2026/11/19 11:58:28 INFO applied migration migration=0003_leader_and_revision.cql
+2026/11/19 11:58:30 INFO applied migration migration=0004_derived_hazard_ids.cql
+2026/11/19 11:58:30 INFO applied migration migration="0005_rekey_hazard_ids (go)"
+2026/11/19 11:58:31 INFO applied migration migration=0006_drop_hazard_by_source_ref.cql
+2026/11/19 11:58:33 INFO applied migration migration=0007_problem3.cql
+2026/11/19 11:58:34 INFO applied migration migration=0008_m2_streams.cql
+2026/11/19 11:58:35 INFO applied migration migration=0009_audit_indexes.cql
+2026/11/19 11:58:35 INFO applied migration migration=0010_analytics_metadata.cql
+2026/11/19 11:58:44 INFO applied migration migration=0011_write_authority.cql
+2026/11/19 11:58:49 INFO applied migration migration=0012_critical_journal.cql
+2026/11/19 11:58:50 INFO applied migration migration=0013_stream_snapshots.cql
+2026/11/19 11:58:50 INFO applied migration migration=0014_sharded_projection.cql
+2026/11/19 11:58:50 INFO applied migration migration="0015_backfill_sharded_projection (go)"
+2026/11/19 11:58:51 INFO applied migration migration=0016_streaming_snapshots.cql
+=== RUN   TestContract/1m0s/Outbox/ClaimAck
+=== RUN   TestContract/1m0s/Outbox/Lease
+=== RUN   TestContract/1m0s/Outbox/RetryAndRelease
+=== RUN   TestContract/1m0s/Outbox/DeadLetter
+=== RUN   TestContract/1m0s/Outbox/ConcurrentClaimers
+    storetest.go:561: backend allows a single outbox consumer
+=== RUN   TestContract/1m0s/Outbox/PayloadBudgetAndFairness
+=== RUN   TestContract/24h0m0s
+2026/11/19 11:59:16 INFO created keyspace keyspace=agg_test_contract_24h replication="{'class': 'SimpleStrategy', 'replication_factor': 1}"
+2026/11/19 11:59:21 INFO applied migration migration=0001_baseline.cql
+2026/11/19 11:59:22 INFO applied migration migration=0002_bucket_schedule.cql
+2026/11/19 11:59:25 INFO applied migration migration=0003_leader_and_revision.cql
+2026/11/19 11:59:26 INFO applied migration migration=0004_derived_hazard_ids.cql
+2026/11/19 11:59:26 INFO applied migration migration="0005_rekey_hazard_ids (go)"
+2026/11/19 11:59:28 INFO applied migration migration=0006_drop_hazard_by_source_ref.cql
+2026/11/19 11:59:29 INFO applied migration migration=0007_problem3.cql
+2026/11/19 11:59:31 INFO applied migration migration=0008_m2_streams.cql
+2026/11/19 11:59:32 INFO applied migration migration=0009_audit_indexes.cql
+2026/11/19 11:59:32 INFO applied migration migration=0010_analytics_metadata.cql
+2026/11/19 11:59:38 INFO applied migration migration=0011_write_authority.cql
+2026/11/19 11:59:43 INFO applied migration migration=0012_critical_journal.cql
+2026/11/19 11:59:44 INFO applied migration migration=0013_stream_snapshots.cql
+2026/11/19 11:59:44 INFO applied migration migration=0014_sharded_projection.cql
+2026/11/19 11:59:44 INFO applied migration migration="0015_backfill_sharded_projection (go)"
+2026/11/19 11:59:45 INFO applied migration migration=0016_streaming_snapshots.cql
+=== RUN   TestContract/24h0m0s/Outbox/ClaimAck
+=== RUN   TestContract/24h0m0s/Outbox/Lease
+=== RUN   TestContract/24h0m0s/Outbox/RetryAndRelease
+=== RUN   TestContract/24h0m0s/Outbox/DeadLetter
+=== RUN   TestContract/24h0m0s/Outbox/ConcurrentClaimers
+    storetest.go:561: backend allows a single outbox consumer
+=== RUN   TestContract/24h0m0s/Outbox/PayloadBudgetAndFairness
+--- PASS: TestContract (110.45s)
+    --- PASS: TestContract/1m0s (53.52s)
+        --- PASS: TestContract/1m0s/Outbox/ClaimAck (2.04s)
+        --- PASS: TestContract/1m0s/Outbox/Lease (3.62s)
+        --- PASS: TestContract/1m0s/Outbox/RetryAndRelease (2.75s)
+        --- PASS: TestContract/1m0s/Outbox/DeadLetter (2.60s)
+        --- SKIP: TestContract/1m0s/Outbox/ConcurrentClaimers (2.70s)
+        --- PASS: TestContract/1m0s/Outbox/PayloadBudgetAndFairness (2.75s)
+    --- PASS: TestContract/24h0m0s (56.92s)
+        --- PASS: TestContract/24h0m0s/Outbox/ClaimAck (1.89s)
+        --- PASS: TestContract/24h0m0s/Outbox/Lease (6.38s)
+        --- PASS: TestContract/24h0m0s/Outbox/RetryAndRelease (2.77s)
+        --- PASS: TestContract/24h0m0s/Outbox/DeadLetter (2.60s)
+        --- SKIP: TestContract/24h0m0s/Outbox/ConcurrentClaimers (2.72s)
+        --- PASS: TestContract/24h0m0s/Outbox/PayloadBudgetAndFairness (2.84s)
+=== RUN   TestOutboxReleaseAndRetryRemainOrderedAcrossConditionalWrites
+2026/11/19 12:00:13 INFO created keyspace keyspace=agg_test_outbox_clock_2cbd1d0d replication="{'class': 'SimpleStrategy', 'replication_factor': 1}"
+2026/11/19 12:00:18 INFO applied migration migration=0001_baseline.cql
+2026/11/19 12:00:19 INFO applied migration migration=0002_bucket_schedule.cql
+2026/11/19 12:00:22 INFO applied migration migration=0003_leader_and_revision.cql
+2026/11/19 12:00:23 INFO applied migration migration=0004_derived_hazard_ids.cql
+2026/11/19 12:00:23 INFO applied migration migration="0005_rekey_hazard_ids (go)"
+2026/11/19 12:00:24 INFO applied migration migration=0006_drop_hazard_by_source_ref.cql
+2026/11/19 12:00:26 INFO applied migration migration=0007_problem3.cql
+2026/11/19 12:00:28 INFO applied migration migration=0008_m2_streams.cql
+2026/11/19 12:00:28 INFO applied migration migration=0009_audit_indexes.cql
+2026/11/19 12:00:29 INFO applied migration migration=0010_analytics_metadata.cql
+2026/11/19 12:00:35 INFO applied migration migration=0011_write_authority.cql
+2026/11/19 12:00:40 INFO applied migration migration=0012_critical_journal.cql
+2026/11/19 12:00:41 INFO applied migration migration=0013_stream_snapshots.cql
+2026/11/19 12:00:41 INFO applied migration migration=0014_sharded_projection.cql
+2026/11/19 12:00:41 INFO applied migration migration="0015_backfill_sharded_projection (go)"
+2026/11/19 12:00:42 INFO applied migration migration=0016_streaming_snapshots.cql
+--- PASS: TestOutboxReleaseAndRetryRemainOrderedAcrossConditionalWrites (38.73s)
+PASS
+ok  	github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/aggregator/internal/storage/cassandra	149.385s

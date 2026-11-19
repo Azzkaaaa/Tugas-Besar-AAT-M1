@@ -1,0 +1,8 @@
+=== RUN   TestContract
+=== RUN   TestContract/Outbox/PayloadBudgetAndFairness
+    outbox_bulk.go:34: first batch has 6 events, want coastal plus three 3MiB records
+--- FAIL: TestContract (0.45s)
+    --- FAIL: TestContract/Outbox/PayloadBudgetAndFairness (0.30s)
+FAIL
+FAIL	github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/aggregator/internal/storage/postgres	0.590s
+FAIL

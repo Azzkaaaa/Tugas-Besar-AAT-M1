@@ -1,0 +1,21 @@
+=== RUN   TestOutboxLargeBacklogBudget
+2026/11/19 05:40:07 INFO created keyspace keyspace=agg_test_outbox_bulk_7bcaa7a4 replication="{'class': 'SimpleStrategy', 'replication_factor': 1}"
+    outbox_bulk_integration_test.go:124: pending=32 event_bytes=9600420 pending_bytes=307213440 batch_events=1 setup_retries=0 peak_rss=151512 kB container_peak_bytes=159252480 elapsed=14.12713989s
+--- PASS: TestOutboxLargeBacklogBudget (48.28s)
+PASS
+2026/11/19 05:40:12 INFO applied migration migration=0001_baseline.cql
+2026/11/19 05:40:13 INFO applied migration migration=0002_bucket_schedule.cql
+2026/11/19 05:40:15 INFO applied migration migration=0003_leader_and_revision.cql
+2026/11/19 05:40:17 INFO applied migration migration=0004_derived_hazard_ids.cql
+2026/11/19 05:40:17 INFO applied migration migration="0005_rekey_hazard_ids (go)"
+2026/11/19 05:40:18 INFO applied migration migration=0006_drop_hazard_by_source_ref.cql
+2026/11/19 05:40:20 INFO applied migration migration=0007_problem3.cql
+2026/11/19 05:40:21 INFO applied migration migration=0008_m2_streams.cql
+2026/11/19 05:40:22 INFO applied migration migration=0009_audit_indexes.cql
+2026/11/19 05:40:23 INFO applied migration migration=0010_analytics_metadata.cql
+2026/11/19 05:40:28 INFO applied migration migration=0011_write_authority.cql
+2026/11/19 05:40:33 INFO applied migration migration=0012_critical_journal.cql
+2026/11/19 05:40:34 INFO applied migration migration=0013_stream_snapshots.cql
+2026/11/19 05:40:35 INFO applied migration migration=0014_sharded_projection.cql
+2026/11/19 05:40:35 INFO applied migration migration="0015_backfill_sharded_projection (go)"
+2026/11/19 05:40:36 INFO applied migration migration=0016_streaming_snapshots.cql

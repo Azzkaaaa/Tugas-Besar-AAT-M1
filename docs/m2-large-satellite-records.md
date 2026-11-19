@@ -64,8 +64,9 @@ data and a single-node RF=1 database. They do not prove RF=3 quorum latency,
 full-feed 60x catch-up, a combined graph/storage/RPC/broker memory envelope or
 official reference equivalence. F15 and intended-topology gates remain open.
 
-Remaining work includes byte-bounded bulk List/outbox payload hydration: row
-limits alone do not bound memory when many rows each contain a large fire.
-`Outbox.ClaimDue` still scans payloads in 200-row pages before selecting work;
-the large lifecycle test has only a few pending rows and does not cover that
-backlog. Verify the full path under the actual pod budgets before closing F15.
+The subsequent [outbox payload-budget work](m2-outbox-payload-budget.md) replaces
+bulk body scans with metadata selection and bounded hydration on both stores.
+Its backlog fixture also exposed Cassandra heap/direct-buffer failures that a
+single large mutation did not reveal; the chart's internal buffer/GC profile
+was revised within the same pod limit. Bulk List reads and the combined path
+still need verification under the actual pod budgets before closing F15.

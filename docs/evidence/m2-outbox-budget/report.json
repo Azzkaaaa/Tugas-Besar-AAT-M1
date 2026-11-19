@@ -1,0 +1,51 @@
+{
+  "date": "2026-11-19",
+  "scope": "Synthetic outbox byte budgets, priority fairness, leases, and Cassandra large-backlog memory; no intended-topology acceptance",
+  "before": {
+    "postgres": "Six events returned for the three-MiB payload fixture, rather than a byte-bounded prefix",
+    "cassandra": "Fresh and reused 256MiB-heap fixtures failed during backlog setup; an offheap-only attempt exhausted the 128MiB direct allowance; later compaction still exhausted the heap before small-heap G1 overrides",
+    "ordering_assertion": "One early run failed a combined oldest-ID/payload-hash assertion without logging which comparison failed. Its cause was not established. Diagnostic output and explicitly ordered past creation timestamps were added; five later stress runs passed, including the final fixture. Preserve this limitation when interpreting the evidence."
+  },
+  "after": {
+    "payload_target_bytes": 8388608,
+    "max_claim_events": 50,
+    "boundary_policy": "One complete boundary event per nonempty priority class; regular work has reserved capacity",
+    "cassandra_stress": {
+      "passing_runs": 5,
+      "final_backlog_events": 32,
+      "final_event_bytes": 9600420,
+      "final_pending_payload_bytes": 307213440,
+      "final_claim_events": 1,
+      "setup_retries_in_passing_runs": 0,
+      "final_application_seconds": 14.12713989,
+      "final_including_schema_seconds": 48.28,
+      "final_client_peak_rss_kib": 151512,
+      "final_client_peak_charged_bytes": 159252480,
+      "max_passing_client_peak_rss_kib": 151852,
+      "max_passing_client_peak_charged_bytes": 160276480,
+      "client_hard_cap_bytes": 536870912,
+      "go_soft_limit": "384MiB",
+      "server_hard_cap_bytes": 1073741824,
+      "server_heap_mib": 256,
+      "server_direct_allowance_mib": 256,
+      "server_internal_oom_or_crc_errors_in_final_fixture": 0,
+      "notes": "Server lifetime memory reached its hard ceiling; raw charged peak and memory.events are in runtime.json/server-health.log. RSS and cgroup accounting measure different things. No server OOM or OOM kill occurred."
+    },
+    "cassandra_fairness_seconds": 90.582,
+    "cassandra_fairness_layouts": ["1m", "24h"],
+    "cassandra_prior_full_outbox_and_ordering_seconds": 149.385,
+    "postgres_full_integration_seconds": 11.898,
+    "aggregator_untagged_suite": "passed",
+    "infrastructure_tests": 122,
+    "infrastructure_skips": 1,
+    "infrastructure_seconds": 55.997,
+    "fixtures_removed": true
+  },
+  "limits": [
+    "Synthetic RF=1 single-node Cassandra, not RF=3 separate-kernel k3s",
+    "Cassandra server memory margin remains tight",
+    "No combined processor/storage/RPC/HTTP/broker/consumer memory proof",
+    "Bulk List payload buffering and summary projection remain unfinished",
+    "No official-feed 60x catch-up, quorum p95 or complete reference comparison"
+  ]
+}

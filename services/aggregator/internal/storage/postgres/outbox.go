@@ -3,7 +3,8 @@ package postgres
 import (
 	"context"
 	"encoding/json"
-	"sort"
+	"errors"
+	"fmt"
 	"time"
 
 	"github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/aggregator/internal/storage"
@@ -50,44 +51,82 @@ func decodeTraceContext(raw []byte) map[string]string {
 // (replicas, or both pods of a rolling update) take disjoint rows; a publisher that dies keeps its
 // rows only until the lease runs out. Records come back oldest first.
 func (o outbox) ClaimDue(ctx context.Context, limit int, lease time.Duration) ([]*storage.ClaimedEvent, error) {
-	if limit <= 0 {
-		limit = 50
-	}
-	query := `
-		UPDATE outbox_events
-		SET next_attempt_at = NOW() + $2 * INTERVAL '1 millisecond'
-		WHERE event_id IN (
-			SELECT event_id FROM outbox_events
-			WHERE published_at IS NULL AND failed_at IS NULL AND next_attempt_at <= NOW()
-			ORDER BY (source = 'SENSOR_PANTAI') DESC, created_at ASC
-			LIMIT $1
-			FOR UPDATE SKIP LOCKED
-		)
-		RETURNING event_id, hazard_id, source, payload, created_at, retry_count, trace_context
-	`
-	rows, err := o.db.Pool.Query(ctx, query, limit, lease.Milliseconds())
+	limit = storage.OutboxClaimLimit(limit)
+	tx, err := o.db.Pool.Begin(ctx)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-
-	var records []*storage.ClaimedEvent
-	for rows.Next() {
-		var rec storage.ClaimedEvent
-		var traceContext []byte
-		if err := rows.Scan(&rec.EventID, &rec.HazardID, &rec.Source, &rec.Payload, &rec.CreatedAt, &rec.RetryCount, &traceContext); err != nil {
-			return nil, err
-		}
-		rec.TraceContext = decodeTraceContext(traceContext)
-		rec.CreatedAt = rec.CreatedAt.UTC()
-		records = append(records, &rec)
-	}
-	if err := rows.Err(); err != nil {
+	defer func() {
+		rollback, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		_ = tx.Rollback(rollback)
+	}()
+	// Bound a frozen client holding selected rows between queries too.
+	if _, err := tx.Exec(ctx, `SET LOCAL statement_timeout='5s'; SET LOCAL idle_in_transaction_session_timeout='5s'; SET LOCAL transaction_timeout='10s'`); err != nil {
 		return nil, err
 	}
-	// RETURNING has no order.
-	sort.Slice(records, func(i, j int) bool { return records[i].CreatedAt.Before(records[j].CreatedAt) })
-	return records, nil
+	var candidates []*storage.ClaimedEvent
+	for _, coastal := range []bool{true, false} {
+		allowance := limit - len(candidates)
+		if allowance <= 0 {
+			break
+		}
+		predicate := `source <> 'SENSOR_PANTAI'`
+		if coastal {
+			allowance = max(1, limit/2)
+			predicate = `source = 'SENSOR_PANTAI'`
+		}
+		rows, err := tx.Query(ctx, `SELECT event_id,hazard_id,source,created_at,retry_count,trace_context
+			FROM outbox_events WHERE published_at IS NULL AND failed_at IS NULL AND next_attempt_at<=NOW()
+			AND `+predicate+` ORDER BY created_at,event_id LIMIT $1 FOR UPDATE SKIP LOCKED`, allowance)
+		if err != nil {
+			return nil, err
+		}
+		for rows.Next() {
+			var ev storage.ClaimedEvent
+			var traces []byte
+			if err := rows.Scan(&ev.EventID, &ev.HazardID, &ev.Source, &ev.CreatedAt, &ev.RetryCount, &traces); err != nil {
+				rows.Close()
+				return nil, err
+			}
+			ev.CreatedAt = ev.CreatedAt.UTC()
+			ev.TraceContext = decodeTraceContext(traces)
+			candidates = append(candidates, &ev)
+		}
+		err = rows.Err()
+		rows.Close()
+		if err != nil {
+			return nil, err
+		}
+	}
+	selected, err := storage.LoadOutboxPayloads(ctx, candidates, func(ev *storage.ClaimedEvent) (bool, error) {
+		err := tx.QueryRow(ctx, `SELECT payload FROM outbox_events WHERE event_id=$1`, ev.EventID).Scan(&ev.Payload)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return false, nil
+		}
+		return err == nil, err
+	})
+	if err != nil {
+		return nil, err
+	}
+	if len(selected) > 0 {
+		ids := make([]string, len(selected))
+		for i, ev := range selected {
+			ids[i] = ev.EventID
+		}
+		tag, err := tx.Exec(ctx, `UPDATE outbox_events SET next_attempt_at=clock_timestamp()+$2*INTERVAL '1 millisecond'
+			WHERE event_id=ANY($1) AND published_at IS NULL AND failed_at IS NULL`, ids, lease.Milliseconds())
+		if err != nil {
+			return nil, err
+		}
+		if tag.RowsAffected() != int64(len(ids)) {
+			return nil, fmt.Errorf("outbox claim changed while locked")
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, err
+	}
+	return selected, nil
 }
 
 func (o outbox) Ack(ctx context.Context, eventID string) error {

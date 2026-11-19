@@ -1,0 +1,61 @@
+=== RUN   TestOutboxLargeBacklogBudget
+2026/11/19 05:36:49 INFO created keyspace keyspace=agg_test_outbox_bulk_e35507d2 replication="{'class': 'SimpleStrategy', 'replication_factor': 1}"
+    outbox_bulk_integration_test.go:122: pending=32 event_bytes=9600420 pending_bytes=307213440 batch_events=1 setup_retries=0 peak_rss=142676 kB container_peak_bytes=151502848 elapsed=13.317462718s
+--- PASS: TestOutboxLargeBacklogBudget (44.64s)
+=== RUN   TestOutboxLargeBacklogBudget
+    outbox_bulk_integration_test.go:122: pending=32 event_bytes=9600420 pending_bytes=307213440 batch_events=1 setup_retries=0 peak_rss=144552 kB container_peak_bytes=156160000 elapsed=12.84098429s
+--- PASS: TestOutboxLargeBacklogBudget (47.51s)
+=== RUN   TestOutboxLargeBacklogBudget
+    outbox_bulk_integration_test.go:122: pending=32 event_bytes=9600418 pending_bytes=307213376 batch_events=1 setup_retries=0 peak_rss=146116 kB container_peak_bytes=156872704 elapsed=11.14046814s
+--- PASS: TestOutboxLargeBacklogBudget (48.94s)
+PASS
+2026/11/19 05:36:54 INFO applied migration migration=0001_baseline.cql
+2026/11/19 05:36:55 INFO applied migration migration=0002_bucket_schedule.cql
+2026/11/19 05:36:57 INFO applied migration migration=0003_leader_and_revision.cql
+2026/11/19 05:36:58 INFO applied migration migration=0004_derived_hazard_ids.cql
+2026/11/19 05:36:58 INFO applied migration migration="0005_rekey_hazard_ids (go)"
+2026/11/19 05:36:59 INFO applied migration migration=0006_drop_hazard_by_source_ref.cql
+2026/11/19 05:37:01 INFO applied migration migration=0007_problem3.cql
+2026/11/19 05:37:05 INFO applied migration migration=0008_m2_streams.cql
+2026/11/19 05:37:06 INFO applied migration migration=0009_audit_indexes.cql
+2026/11/19 05:37:06 INFO applied migration migration=0010_analytics_metadata.cql
+2026/11/19 05:37:11 INFO applied migration migration=0011_write_authority.cql
+2026/11/19 05:37:16 INFO applied migration migration=0012_critical_journal.cql
+2026/11/19 05:37:17 INFO applied migration migration=0013_stream_snapshots.cql
+2026/11/19 05:37:17 INFO applied migration migration=0014_sharded_projection.cql
+2026/11/19 05:37:17 INFO applied migration migration="0015_backfill_sharded_projection (go)"
+2026/11/19 05:37:18 INFO applied migration migration=0016_streaming_snapshots.cql
+2026/11/19 05:37:36 INFO created keyspace keyspace=agg_test_outbox_bulk_33410142 replication="{'class': 'SimpleStrategy', 'replication_factor': 1}"
+2026/11/19 05:37:41 INFO applied migration migration=0001_baseline.cql
+2026/11/19 05:37:42 INFO applied migration migration=0002_bucket_schedule.cql
+2026/11/19 05:37:44 INFO applied migration migration=0003_leader_and_revision.cql
+2026/11/19 05:37:45 INFO applied migration migration=0004_derived_hazard_ids.cql
+2026/11/19 05:37:45 INFO applied migration migration="0005_rekey_hazard_ids (go)"
+2026/11/19 05:37:54 INFO applied migration migration=0006_drop_hazard_by_source_ref.cql
+2026/11/19 05:37:56 INFO applied migration migration=0007_problem3.cql
+2026/11/19 05:37:57 INFO applied migration migration=0008_m2_streams.cql
+2026/11/19 05:37:58 INFO applied migration migration=0009_audit_indexes.cql
+2026/11/19 05:37:58 INFO applied migration migration=0010_analytics_metadata.cql
+2026/11/19 05:38:03 INFO applied migration migration=0011_write_authority.cql
+2026/11/19 05:38:08 INFO applied migration migration=0012_critical_journal.cql
+2026/11/19 05:38:04 INFO applied migration migration=0013_stream_snapshots.cql
+2026/11/19 05:38:05 INFO applied migration migration=0014_sharded_projection.cql
+2026/11/19 05:38:05 INFO applied migration migration="0015_backfill_sharded_projection (go)"
+2026/11/19 05:38:05 INFO applied migration migration=0016_streaming_snapshots.cql
+2026/11/19 05:38:27 INFO created keyspace keyspace=agg_test_outbox_bulk_8ca170ba replication="{'class': 'SimpleStrategy', 'replication_factor': 1}"
+2026/11/19 05:38:32 INFO applied migration migration=0001_baseline.cql
+2026/11/19 05:38:33 INFO applied migration migration=0002_bucket_schedule.cql
+2026/11/19 05:38:37 INFO applied migration migration=0003_leader_and_revision.cql
+2026/11/19 05:38:39 INFO applied migration migration=0004_derived_hazard_ids.cql
+2026/11/19 05:38:39 INFO applied migration migration="0005_rekey_hazard_ids (go)"
+2026/11/19 05:38:40 INFO applied migration migration=0006_drop_hazard_by_source_ref.cql
+2026/11/19 05:38:42 INFO applied migration migration=0007_problem3.cql
+2026/11/19 05:38:43 INFO applied migration migration=0008_m2_streams.cql
+2026/11/19 05:38:44 INFO applied migration migration=0009_audit_indexes.cql
+2026/11/19 05:38:45 INFO applied migration migration=0010_analytics_metadata.cql
+2026/11/19 05:38:50 INFO applied migration migration=0011_write_authority.cql
+2026/11/19 05:38:55 INFO applied migration migration=0012_critical_journal.cql
+2026/11/19 05:38:56 INFO applied migration migration=0013_stream_snapshots.cql
+2026/11/19 05:38:57 INFO applied migration migration=0014_sharded_projection.cql
+2026/11/19 05:38:57 INFO applied migration migration="0015_backfill_sharded_projection (go)"
+2026/11/19 05:38:58 INFO applied migration migration=0016_streaming_snapshots.cql

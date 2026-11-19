@@ -1,0 +1,21 @@
+=== RUN   TestOutboxLargeBacklogBudget
+2026/11/19 05:32:06 INFO created keyspace keyspace=agg_test_outbox_bulk_1b969b65 replication="{'class': 'SimpleStrategy', 'replication_factor': 1}"
+    outbox_bulk_integration_test.go:92: oldest complete payload was not preserved
+--- FAIL: TestOutboxLargeBacklogBudget (47.48s)
+FAIL
+2026/11/19 05:32:20 INFO applied migration migration=0001_baseline.cql
+2026/11/19 05:32:21 INFO applied migration migration=0002_bucket_schedule.cql
+2026/11/19 05:32:23 INFO applied migration migration=0003_leader_and_revision.cql
+2026/11/19 05:32:25 INFO applied migration migration=0004_derived_hazard_ids.cql
+2026/11/19 05:32:25 INFO applied migration migration="0005_rekey_hazard_ids (go)"
+2026/11/19 05:32:26 INFO applied migration migration=0006_drop_hazard_by_source_ref.cql
+2026/11/19 05:32:28 INFO applied migration migration=0007_problem3.cql
+2026/11/19 05:32:29 INFO applied migration migration=0008_m2_streams.cql
+2026/11/19 05:32:32 INFO applied migration migration=0009_audit_indexes.cql
+2026/11/19 05:32:33 INFO applied migration migration=0010_analytics_metadata.cql
+2026/11/19 05:32:38 INFO applied migration migration=0011_write_authority.cql
+2026/11/19 05:32:43 INFO applied migration migration=0012_critical_journal.cql
+2026/11/19 05:32:44 INFO applied migration migration=0013_stream_snapshots.cql
+2026/11/19 05:32:44 INFO applied migration migration=0014_sharded_projection.cql
+2026/11/19 05:32:44 INFO applied migration migration="0015_backfill_sharded_projection (go)"
+2026/11/19 05:32:45 INFO applied migration migration=0016_streaming_snapshots.cql

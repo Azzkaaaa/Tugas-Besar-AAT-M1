@@ -128,7 +128,10 @@ type ClaimedEvent struct {
 // Backend.OutboxSingleConsumer only guarantee this to one publisher at a time; others hand
 // concurrent claimers disjoint sets.
 type Outbox interface {
-	// ClaimDue leases up to limit due events for lease, oldest first.
+	// ClaimDue leases up to limit events, possibly fewer under its payload-byte
+	// budget. Coastal work has priority with capacity reserved for regular work;
+	// each class is oldest first. Payloads are complete, never truncated. A large
+	// boundary record per class may exceed its byte target so it cannot starve.
 	ClaimDue(ctx context.Context, limit int, lease time.Duration) ([]*ClaimedEvent, error)
 	// Ack marks an event published.
 	Ack(ctx context.Context, eventID string) error

@@ -75,9 +75,7 @@ func decodeTraceContext(raw string) map[string]string {
 }
 
 func (o *outbox) ClaimDue(ctx context.Context, limit int, lease time.Duration) ([]*storage.ClaimedEvent, error) {
-	if limit <= 0 {
-		limit = 50
-	}
+	limit = storage.OutboxClaimLimit(limit)
 	o.mu.Lock()
 	defer o.mu.Unlock()
 
@@ -87,10 +85,15 @@ func (o *outbox) ClaimDue(ctx context.Context, limit int, lease time.Duration) (
 	// Reserve half each batch for regular sources to avoid starvation in either direction.
 	for _, shard := range []int{1, 0} {
 		allowance := limit - len(claimed)
+		if allowance <= 0 {
+			break
+		}
 		if shard == 1 {
 			allowance = max(1, limit/2)
 		}
-		iter := o.db.session.Query(`SELECT created_at, event_id, hazard_id, source, payload, trace_context, retry_count, next_attempt_at
+		// Backoff and completed rows never bring their potentially large body
+		// into this scan. Hydrate only the chosen byte-bounded prefix below.
+		iter := o.db.session.Query(`SELECT created_at, event_id, hazard_id, source, trace_context, retry_count, next_attempt_at
             FROM outbox_pending WHERE shard = ? AND created_at >= ? LIMIT `+strconv.Itoa(claimScanLimit),
 			shard, o.scanFrom[shard]).WithContext(ctx).PageSize(200).Iter()
 		var oldest time.Time
@@ -98,14 +101,13 @@ func (o *outbox) ClaimDue(ctx context.Context, limit int, lease time.Duration) (
 		var traceContext string
 		var nextAttempt time.Time
 		taken := 0
-		for iter.Scan(&rec.CreatedAt, &rec.EventID, &rec.HazardID, &rec.Source, &rec.Payload, &traceContext, &rec.RetryCount, &nextAttempt) {
+		for iter.Scan(&rec.CreatedAt, &rec.EventID, &rec.HazardID, &rec.Source, &traceContext, &rec.RetryCount, &nextAttempt) {
 			if oldest.IsZero() {
 				oldest = rec.CreatedAt
 			}
 			if taken < allowance && !nextAttempt.After(now) {
 				ev := rec
 				ev.CreatedAt = ev.CreatedAt.UTC()
-				ev.Payload = append([]byte(nil), rec.Payload...)
 				ev.TraceContext = decodeTraceContext(traceContext)
 				claimed = append(claimed, &ev)
 				taken++
@@ -124,16 +126,35 @@ func (o *outbox) ClaimDue(ctx context.Context, limit int, lease time.Duration) (
 	if err != nil {
 		return nil, err
 	}
+	claimed, err = storage.LoadOutboxPayloads(ctx, claimed, func(ev *storage.ClaimedEvent) (bool, error) {
+		err := o.db.session.Query(`SELECT payload FROM outbox_pending WHERE shard=? AND created_at=? AND event_id=?`,
+			pendingPartition(ev.Source), ev.CreatedAt, ev.EventID).WithContext(ctx).Scan(&ev.Payload)
+		if errors.Is(err, gocql.ErrNotFound) {
+			return false, nil
+		}
+		return err == nil, err
+	})
+	if err != nil {
+		return nil, err
+	}
 
-	leaseUntil := msUTC(now.Add(lease))
+	leaseUntil := msUTC(time.Now().Add(lease))
+	leased := claimed[:0]
 	for _, ev := range claimed {
-		if err := o.db.session.Query(`UPDATE outbox_pending SET next_attempt_at = ?
-			WHERE shard = ? AND created_at = ? AND event_id = ?`,
-			leaseUntil, pendingPartition(ev.Source), ev.CreatedAt, ev.EventID).WithContext(ctx).Exec(); err != nil {
+		ok, err := o.db.session.Query(`UPDATE outbox_pending SET next_attempt_at = ?
+			WHERE shard = ? AND created_at = ? AND event_id = ? IF EXISTS`,
+			leaseUntil, pendingPartition(ev.Source), ev.CreatedAt, ev.EventID).WithContext(ctx).MapScanCAS(map[string]any{})
+		if err != nil {
 			return nil, err
 		}
+		if ok {
+			leased = append(leased, ev)
+		}
 	}
-	return claimed, nil
+	for i := len(leased); i < len(claimed); i++ {
+		claimed[i] = nil
+	}
+	return leased, nil
 }
 
 // dropFinished removes pending rows whose event is already published or dead-lettered and returns

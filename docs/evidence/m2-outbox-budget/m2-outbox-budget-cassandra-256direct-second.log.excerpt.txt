@@ -1,0 +1,19 @@
+Excerpt from m2-outbox-budget-cassandra-256direct-second.log; original SHA256 0F3E6FA9809E269E8F3AFA81FC4E26887124B3F870853FE606132274BA38A326
+
+  services\.cache\m2-outbox-budget-cassandra-256direct-second.log:3838:INFO  [SlabPoolCleaner] 2026-11-19T05:27:52,789 ColumnFamilyStore.java:1055 - Enqueuing flush of agg_test_outbox_bulk_f36dc513.outbox_events, Reason: MEMTABLE_LIMIT, Usage: 1.146KiB (0%) on-heap, 9.156MiB (29%) off-heap
+  services\.cache\m2-outbox-budget-cassandra-256direct-second.log:3839:INFO  [PerDiskMemtableFlushWriter_0:2] 2026-11-19T05:27:52,891 Flushing.java:153 - Writing Memtable-outbox_pending@883945656(9.156MiB serialized bytes, 1 ops, 1.317KiB (0%) on-heap, 9.156MiB (29%) off-heap), flushed range = [min(-9223372036854775808), max(9223372036854775807))
+  services\.cache\m2-outbox-budget-cassandra-256direct-second.log:3840:INFO  [PerDiskMemtableFlushWriter_0:2] 2026-11-19T05:27:53,073 Flushing.java:179 - Completed flushing /var/lib/cassandra/data/agg_test_outbox_bulk_f36dc513/outbox_pending-db43fb70e3d911f1baba436334e011b0/nb-32-big-Data.db (9.156MiB) for commitlog position CommitLogPosition(segmentId=1795065789948, position=19201347)
+  services\.cache\m2-outbox-budget-cassandra-256direct-second.log:3841:INFO  [SlabPoolCleaner] 2026-11-19T05:27:53,449 AbstractAllocatorMemtable.java:293 - Flushing largest CFS(Keyspace='agg_test_outbox_bulk_f36dc513', ColumnFamily='outbox_pending') to free up room. Used total: 0.01/0.86, live: 0.01/0.57, flushing: 0.00/0.29, this: 0.00/0.29
+  services\.cache\m2-outbox-budget-cassandra-256direct-second.log:3842:INFO  [SlabPoolCleaner] 2026-11-19T05:27:53,450 ColumnFamilyStore.java:1055 - Enqueuing flush of agg_test_outbox_bulk_f36dc513.outbox_pending, Reason: MEMTABLE_LIMIT, Usage: 1.317KiB (0%) on-heap, 9.156MiB (29%) off-heap
+  services\.cache\m2-outbox-budget-cassandra-256direct-second.log:3843:INFO  [PerDiskMemtableFlushWriter_0:2] 2026-11-19T05:27:53,628 Flushing.java:153 - Writing Memtable-outbox_events@785011144(9.156MiB serialized bytes, 1 ops, 1.146KiB (0%) on-heap, 9.156MiB (29%) off-heap), flushed range = [min(-9223372036854775808), max(9223372036854775807))
+> services\.cache\m2-outbox-budget-cassandra-256direct-second.log:3844:java.lang.OutOfMemoryError: Java heap space
+  services\.cache\m2-outbox-budget-cassandra-256direct-second.log:3845:Dumping heap to /opt/cassandra/logs/cassandra-1795065787-pid1.hprof ...
+  services\.cache\m2-outbox-budget-cassandra-256direct-second.log:3846:Heap dump file created [171472893 bytes in 0.914 secs]
+  services\.cache\m2-outbox-budget-cassandra-256direct-second.log:3847:#
+  services\.cache\m2-outbox-budget-cassandra-256direct-second.log:3848:# java.lang.OutOfMemoryError: Java heap space
+  services\.cache\m2-outbox-budget-cassandra-256direct-second.log:3849:# -XX:OnOutOfMemoryError="kill -9 %p"
+  services\.cache\m2-outbox-budget-cassandra-256direct-second.log:3850:#   Executing /bin/sh -c "kill -9 1"...
+  services\.cache\m2-outbox-budget-cassandra-256direct-second.log:3851:INFO  [Notification Thread] 2026-11-19T05:27:54,968 GCInspector.java:286 - G1 Old Generation GC in 941ms.  Compressed Class Space: 6935976 -> 6935456; G1 Old Gen: 224922912 -> 223966736; Metaspace: 59328592 -> 59326704
+  services\.cache\m2-outbox-budget-cassandra-256direct-second.log:3852:ERROR [ScheduledFastTasks:1] 2026-11-19T05:27:54,922 JVMStabilityInspector.java:70 - Exception in thread Thread[ScheduledFastTasks:1,5,ScheduledFastTasks]
+> services\.cache\m2-outbox-budget-cassandra-256direct-second.log:3853:java.lang.OutOfMemoryError: Java heap space
+  services\.cache\m2-outbox-budget-cassandra-256direct-second.log:3854:ERROR [PERIODIC-COMMIT-LOG-SYNCER] 2026-11-19T05:27:54,922 JVMStabilityInspector.java:123 - OutOfMemory error letting the JVM handle the error:

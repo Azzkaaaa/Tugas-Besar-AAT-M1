@@ -1,0 +1,29 @@
+?   	github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/aggregator/cmd	[no test files]
+?   	github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/aggregator/cmd/critical-export	[no test files]
+?   	github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/aggregator/cmd/critical-receiver	[no test files]
+?   	github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/aggregator/cmd/critical-reconcile	[no test files]
+?   	github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/aggregator/cmd/m2replay	[no test files]
+?   	github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/aggregator/cmd/storeadmin	[no test files]
+?   	github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/aggregator/cmd/storecopy	[no test files]
+ok  	github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/aggregator/internal/auth	(cached)
+ok  	github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/aggregator/internal/broker	(cached)
+ok  	github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/aggregator/internal/config	(cached)
+ok  	github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/aggregator/internal/criticaldelivery	(cached)
+?   	github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/aggregator/internal/criticaldelivery/receiver	[no test files]
+ok  	github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/aggregator/internal/criticaldelivery/reconcile	(cached)
+ok  	github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/aggregator/internal/domain	(cached)
+ok  	github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/aggregator/internal/grpc	(cached)
+ok  	github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/aggregator/internal/ingest	(cached)
+ok  	github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/aggregator/internal/leader	(cached)
+ok  	github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/aggregator/internal/leader/elect	(cached)
+ok  	github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/aggregator/internal/leader/kubernetes	(cached)
+?   	github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/aggregator/internal/leader/leasetest	[no test files]
+ok  	github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/aggregator/internal/m2	(cached)
+ok  	github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/aggregator/internal/problem3	(cached)
+ok  	github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/aggregator/internal/storage	(cached)
+ok  	github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/aggregator/internal/storage/cassandra	(cached)
+?   	github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/aggregator/internal/storage/open	[no test files]
+ok  	github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/aggregator/internal/storage/postgres	(cached)
+ok  	github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/aggregator/internal/storage/rekey	(cached)
+?   	github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/aggregator/internal/storage/storetest	[no test files]
+ok  	github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/aggregator/internal/telemetry	(cached)

@@ -1,0 +1,22 @@
+{
+  "client": {
+    "oom_killed": false,
+    "cap_bytes": 536870912,
+    "exit_code": 0
+  },
+  "server": {
+    "oom_killed": false,
+    "cap_bytes": 1073741824,
+    "process_hwm": "VmHWM:\t 1067968 kB",
+    "lifetime_memory_peak_bytes": 1075032064,
+    "memory_events": [
+      "low 0",
+      "high 0",
+      "max 22753",
+      "oom 0",
+      "oom_kill 0",
+      "oom_group_kill 0"
+    ]
+  },
+  "recorded_at": "2026-11-19T12:42:08.4305454+07:00"
+}

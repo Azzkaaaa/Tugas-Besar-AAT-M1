@@ -43,6 +43,8 @@ func Run(t *testing.T, newBackend func(t *testing.T) *storage.Backend) {
 		{"Outbox/RetryAndRelease", testOutboxRetryRelease},
 		{"Outbox/DeadLetter", testOutboxDeadLetter},
 		{"Outbox/ConcurrentClaimers", testOutboxConcurrent},
+		{"Outbox/PayloadBudgetAndFairness", testOutboxPayloadBudgetAndFairness},
+		{"Outbox/LargePriorityClasses", testOutboxLargePriorityClasses},
 		{"Snapshots/LatestAndRetention", testSnapshots},
 		{"Snapshots/StreamingIntegrity", StreamingSnapshotContract},
 	}
