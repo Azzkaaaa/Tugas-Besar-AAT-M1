@@ -163,13 +163,48 @@ func (s *PostgresStore) DeleteSubscription(ctx context.Context, webhookID string
 	return err
 }
 
-// ListActiveSubscriptions returns all active subscriptions (used by the consumer).
-func (s *PostgresStore) ListActiveSubscriptions(ctx context.Context) ([]*Subscription, error) {
-	rows, err := s.pool.Query(ctx, `SELECT `+subscriptionColumns+` FROM webhook_subscriptions WHERE is_active`)
+// ActiveSubscriptionHead fixes a finite, clock-independent insertion boundary.
+func (s *PostgresStore) ActiveSubscriptionHead(ctx context.Context) (int64, error) {
+	var head int64
+	err := s.pool.QueryRow(ctx, `SELECT COALESCE(MAX(fanout_seq), 0) FROM webhook_subscriptions WHERE is_active`).Scan(&head)
+	return head, err
+}
+
+// ListActiveSubscriptions closes both readers before returning. Dispatch may
+// write logs while keeping only this bounded batch, never an open row stream.
+func (s *PostgresStore) ListActiveSubscriptions(ctx context.Context, after, through int64) ([]*Subscription, int64, error) {
+	rows, err := s.pool.Query(ctx, `SELECT fanout_seq, octet_length(url)::bigint + octet_length(secret)::bigint
+		FROM webhook_subscriptions WHERE is_active AND fanout_seq > $1 AND fanout_seq <= $2
+		ORDER BY fanout_seq LIMIT $3`, after, through, ActiveBatchRows)
 	if err != nil {
-		return nil, err
+		return nil, after, err
 	}
-	return collectSubscriptions(rows)
+	var candidates []activeCandidate
+	for rows.Next() {
+		var candidate activeCandidate
+		if err := rows.Scan(&candidate.sequence, &candidate.bytes); err != nil {
+			rows.Close()
+			return nil, after, err
+		}
+		candidates = append(candidates, candidate)
+	}
+	err = rows.Err()
+	rows.Close()
+	if err != nil {
+		return nil, after, err
+	}
+	ids := activeBatch(candidates)
+	if len(ids) == 0 {
+		return nil, through, nil
+	}
+	rows, err = s.pool.Query(ctx, `SELECT webhook_id, '', url, secret, filter_source, filter_hazard,
+		filter_severity, filter_since, filter_until, view, '', is_active, created_at, updated_at
+		FROM webhook_subscriptions WHERE is_active AND fanout_seq = ANY($1) ORDER BY fanout_seq`, ids)
+	if err != nil {
+		return nil, after, err
+	}
+	subs, err := collectSubscriptions(rows)
+	return subs, ids[len(ids)-1], err
 }
 
 // ---------------------------------------------------------------------------

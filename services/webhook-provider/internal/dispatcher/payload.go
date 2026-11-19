@@ -11,11 +11,11 @@ import (
 
 // deliveryEnvelope is the JSON body sent to external webhook endpoints.
 type deliveryEnvelope struct {
-	EventID    string          `json:"event_id"`
-	HazardID   string          `json:"hazard_id"`
-	OccurredAt string          `json:"occurred_at"`
-	Source     string          `json:"source"`
-	Data       json.RawMessage `json:"data"`
+	EventID    string `json:"event_id"`
+	HazardID   string `json:"hazard_id"`
+	OccurredAt string `json:"occurred_at"`
+	Source     string `json:"source"`
+	Data       any    `json:"data"`
 }
 
 // summaryPayload is the projected SUMMARY view (no coordinates, no attributes).
@@ -71,8 +71,7 @@ func BuildPayload(ev *eventv1.HazardEventPublished, view commonv1.View) ([]byte,
 		ingestedAt = t.AsTime().UTC().Format(time.RFC3339)
 	}
 
-	var dataJSON []byte
-	var err error
+	var data any
 
 	if view == commonv1.View_VIEW_FULL {
 		fp := &fullPayload{
@@ -97,7 +96,7 @@ func BuildPayload(ev *eventv1.HazardEventPublished, view commonv1.View) ([]byte,
 		if payload.Attributes != nil {
 			fp.Attributes = payload.Attributes.AsMap()
 		}
-		dataJSON, err = json.Marshal(fp)
+		data = fp
 	} else {
 		// Default: SUMMARY — never include coordinates, source_ref_id, or attributes.
 		sp := &summaryPayload{
@@ -109,10 +108,7 @@ func BuildPayload(ev *eventv1.HazardEventPublished, view commonv1.View) ([]byte,
 			OccurredAt: occurredAt,
 			IngestedAt: ingestedAt,
 		}
-		dataJSON, err = json.Marshal(sp)
-	}
-	if err != nil {
-		return nil, fmt.Errorf("marshalling payload data: %w", err)
+		data = sp
 	}
 
 	var envelopeOccurredAt string
@@ -125,7 +121,7 @@ func BuildPayload(ev *eventv1.HazardEventPublished, view commonv1.View) ([]byte,
 		HazardID:   payload.HazardId,
 		OccurredAt: envelopeOccurredAt,
 		Source:     srcName,
-		Data:       json.RawMessage(dataJSON),
+		Data:       data,
 	}
 
 	return json.Marshal(env)

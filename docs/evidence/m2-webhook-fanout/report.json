@@ -1,0 +1,102 @@
+{
+  "delivery_logs": 80,
+  "runtime": {
+    "m2-webhook-postgres": {
+      "image": "postgres:17.10-alpine",
+      "memory_peak": 133046272,
+      "restart_count": 0,
+      "memory_limit": 536870912,
+      "memory_current": 35713024,
+      "memory_events": [
+        "low 0",
+        "high 0",
+        "max 0",
+        "oom 0",
+        "oom_kill 0",
+        "oom_group_kill 0"
+      ],
+      "oom_killed": false,
+      "memory_swap": 536870912
+    },
+    "m2-webhook-rabbit": {
+      "image": "rabbitmq:4-management",
+      "memory_peak": 216174592,
+      "restart_count": 0,
+      "memory_limit": 805306368,
+      "memory_current": 125022208,
+      "memory_events": [
+        "low 0",
+        "high 0",
+        "max 0",
+        "oom 0",
+        "oom_kill 0",
+        "oom_group_kill 0"
+      ],
+      "oom_killed": false,
+      "memory_swap": 805306368
+    },
+    "m2-webhook-consumer": {
+      "image": "alpine:3.21",
+      "memory_peak": 130461696,
+      "restart_count": 0,
+      "memory_limit": 268435456,
+      "memory_current": 4882432,
+      "memory_events": [
+        "low 0",
+        "high 0",
+        "max 0",
+        "oom 0",
+        "oom_kill 0",
+        "oom_group_kill 0"
+      ],
+      "oom_killed": false,
+      "memory_swap": 268435456
+    },
+    "m2-webhook-redis": {
+      "image": "redis:8-alpine",
+      "memory_peak": 70684672,
+      "restart_count": 0,
+      "memory_limit": 268435456,
+      "memory_current": 29478912,
+      "memory_events": [
+        "low 0",
+        "high 0",
+        "max 0",
+        "oom 0",
+        "oom_kill 0",
+        "oom_group_kill 0"
+      ],
+      "oom_killed": false,
+      "memory_swap": 268435456
+    }
+  },
+  "full_subscriptions": 40,
+  "scope": "Native production Consumer.Start with real PostgreSQL, RabbitMQ and Redis; streaming HTTP receivers in the test process",
+  "peak_dispatch_workers": 4,
+  "dlq_messages": 0,
+  "protobuf_wire_bytes": 5000142,
+  "limitations": [
+    "Synthetic event, not official session/reference acceptance",
+    "Does not host webhook gRPC/OIDC or full telemetry exporters",
+    "Does not cover the complete concurrent Aggregator/notification/FCM/API/proxy stack",
+    "Single-host Docker fixtures do not prove separate-kernel k3s or RF=3"
+  ],
+  "test": "TestWebhookFanoutMemory",
+  "queue_messages_after_drain": 0,
+  "go_memory_limit_bytes": 167772160,
+  "subscriptions": 80,
+  "date": "2026-11-19",
+  "passed": true,
+  "broker_replays": 1,
+  "detection_keys_per_full_payload": 200000,
+  "http_attempts": 81,
+  "summary_subscriptions": 40,
+  "compiler": "go1.26.0 windows/amd64; cross-compiled linux/amd64 CGO_ENABLED=0",
+  "native_test_binary_sha256": "4d772874d69730076d08486de3efa082e0b173462affcaecb4c1a86b462deb98",
+  "suite": {
+    "failed": 0,
+    "native_fixture_in_ordinary_suite": "skipped (executed separately under native cgroup cap)",
+    "passed_named_tests_and_subtests": 44,
+    "postgres_upgrade_and_pager": "passed"
+  }
+}

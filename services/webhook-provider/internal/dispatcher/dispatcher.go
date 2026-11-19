@@ -134,8 +134,12 @@ func (d *Dispatcher) doPost(ctx context.Context, url, secret string, body []byte
 		return Result{DurationMS: durationMS, Err: fmt.Errorf("http post: %w", err)}
 	}
 	defer resp.Body.Close()
-	// Drain body so the connection can be reused.
-	_, _ = io.Copy(io.Discard, resp.Body)
+	// Only drain a known small reply for connection reuse. A receiver's streaming
+	// or huge response body is not an acknowledgment requirement and must not
+	// keep a large request payload/worker alive after its HTTP status arrives.
+	if resp.ContentLength >= 0 && resp.ContentLength <= 64<<10 {
+		_, _ = io.CopyN(io.Discard, resp.Body, resp.ContentLength)
+	}
 
 	statusStr := "FAILED"
 	if resp.StatusCode >= 200 && resp.StatusCode < 300 {

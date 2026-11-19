@@ -1,0 +1,7 @@
+=== RUN   TestWebhookFanoutMemory
+2026/11/19 15:02:27 [Consumer] Connected to RabbitMQ, consuming from m2.fixture.webhook
+    fanout_memory_test.go:326: native fixture: keys=200000 wire_bytes=5000142 recipients=80 full=40 summary=40 attempts=81 peak_workers=4 broker_replays=1 logs=80 queue=0 dlq=0
+--- PASS: TestWebhookFanoutMemory (4.11s)
+PASS
+TEST_EXIT=0
+2026/11/19 15:02:27 WARN webhook delivery attempt failed attempt=1 max_attempts=2 url=http://127.0.0.1:33153/1 status=503 error=<nil>

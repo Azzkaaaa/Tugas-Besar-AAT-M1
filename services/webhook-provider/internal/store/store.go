@@ -19,10 +19,34 @@ type Store interface {
 	GetSubscription(ctx context.Context, webhookID string) (*Subscription, error)
 	ListSubscriptions(ctx context.Context, ownerClientID, pageToken string, pageSize int) ([]*Subscription, string, error)
 	DeleteSubscription(ctx context.Context, webhookID string) error
-	ListActiveSubscriptions(ctx context.Context) ([]*Subscription, error)
+	ActiveSubscriptionHead(ctx context.Context) (int64, error)
+	ListActiveSubscriptions(ctx context.Context, after, through int64) ([]*Subscription, int64, error)
 	InsertDelivery(ctx context.Context, d *Delivery) error
 	ListDeliveries(ctx context.Context, webhookID, pageToken string, pageSize int) ([]*Delivery, string, error)
 	Close() error
+}
+
+// Consumer traversal is bounded independently of public API paging. A single
+// boundary subscription is kept intact even if it exceeds the byte target.
+const ActiveBatchRows = 64
+const ActiveBatchBytes = 256 << 10
+
+type activeCandidate struct {
+	sequence int64
+	bytes    int64
+}
+
+func activeBatch(candidates []activeCandidate) []int64 {
+	ids := make([]int64, 0, len(candidates))
+	var used int64
+	for _, candidate := range candidates {
+		if len(ids) != 0 && candidate.bytes > ActiveBatchBytes-used {
+			break
+		}
+		ids = append(ids, candidate.sequence)
+		used += candidate.bytes
+	}
+	return ids
 }
 
 // Open picks the backend from the DSN: postgres:// or postgresql:// is Postgres, anything else

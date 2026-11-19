@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strings"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -83,7 +84,50 @@ CREATE INDEX IF NOT EXISTS idx_deliveries_event
     ON webhook_deliveries (event_id, webhook_id);
 `
 	_, err := s.db.Exec(schema)
-	return err
+	if err != nil {
+		return err
+	}
+	return s.migrateFanout()
+}
+
+func (s *SQLiteStore) migrateFanout() error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var present int
+	if err := tx.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('webhook_subscriptions') WHERE name = 'fanout_seq'`).Scan(&present); err != nil {
+		return err
+	}
+	if present == 0 {
+		if _, err := tx.Exec(`ALTER TABLE webhook_subscriptions ADD COLUMN fanout_seq INTEGER`); err != nil {
+			return err
+		}
+	}
+	_, err = tx.Exec(`CREATE TABLE IF NOT EXISTS webhook_subscription_generation (
+		singleton INTEGER PRIMARY KEY CHECK (singleton = 1), latest INTEGER NOT NULL);
+		INSERT OR IGNORE INTO webhook_subscription_generation VALUES (1, 0);
+		UPDATE webhook_subscription_generation SET latest = MAX(latest,
+			COALESCE((SELECT MAX(fanout_seq) FROM webhook_subscriptions), 0));
+		WITH pending AS (SELECT rowid AS rid, ROW_NUMBER() OVER (ORDER BY rowid) AS number
+			FROM webhook_subscriptions WHERE fanout_seq IS NULL)
+		UPDATE webhook_subscriptions AS s SET fanout_seq =
+			(SELECT latest FROM webhook_subscription_generation) + pending.number
+			FROM pending WHERE s.rowid = pending.rid;
+		UPDATE webhook_subscription_generation SET latest = MAX(latest,
+			COALESCE((SELECT MAX(fanout_seq) FROM webhook_subscriptions), 0));
+		CREATE UNIQUE INDEX IF NOT EXISTS idx_subscription_fanout ON webhook_subscriptions (fanout_seq);
+		CREATE INDEX IF NOT EXISTS idx_subscription_active_fanout ON webhook_subscriptions (fanout_seq) WHERE is_active = 1;
+		CREATE TRIGGER IF NOT EXISTS assign_subscription_generation AFTER INSERT ON webhook_subscriptions
+		WHEN NEW.fanout_seq IS NULL BEGIN
+			UPDATE webhook_subscription_generation SET latest = latest + 1;
+			UPDATE webhook_subscriptions SET fanout_seq = (SELECT latest FROM webhook_subscription_generation) WHERE rowid = NEW.rowid;
+		END;`)
+	if err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 // ---------------------------------------------------------------------------
@@ -189,27 +233,58 @@ func (s *SQLiteStore) DeleteSubscription(ctx context.Context, webhookID string) 
 	return err
 }
 
-// ListActiveSubscriptions returns all active subscriptions (used by the consumer).
-func (s *SQLiteStore) ListActiveSubscriptions(ctx context.Context) ([]*Subscription, error) {
-	rows, err := s.db.QueryContext(ctx, `
-		SELECT webhook_id, owner_client_id, url, secret, filter_source, filter_hazard,
-		       filter_severity, filter_since, filter_until, view, description, is_active,
-		       created_at, updated_at
-		FROM webhook_subscriptions WHERE is_active = 1`)
+func (s *SQLiteStore) ActiveSubscriptionHead(ctx context.Context) (int64, error) {
+	var head int64
+	err := s.db.QueryRowContext(ctx, `SELECT COALESCE(MAX(fanout_seq), 0) FROM webhook_subscriptions WHERE is_active = 1`).Scan(&head)
+	return head, err
+}
+
+func (s *SQLiteStore) ListActiveSubscriptions(ctx context.Context, after, through int64) ([]*Subscription, int64, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT fanout_seq, length(CAST(url AS BLOB)) + length(CAST(secret AS BLOB))
+		FROM webhook_subscriptions WHERE is_active = 1 AND fanout_seq > ? AND fanout_seq <= ?
+		ORDER BY fanout_seq LIMIT ?`, after, through, ActiveBatchRows)
 	if err != nil {
-		return nil, err
+		return nil, after, err
+	}
+	var candidates []activeCandidate
+	for rows.Next() {
+		var candidate activeCandidate
+		if err := rows.Scan(&candidate.sequence, &candidate.bytes); err != nil {
+			rows.Close()
+			return nil, after, err
+		}
+		candidates = append(candidates, candidate)
+	}
+	err = rows.Err()
+	rows.Close()
+	if err != nil {
+		return nil, after, err
+	}
+	ids := activeBatch(candidates)
+	if len(ids) == 0 {
+		return nil, through, nil
+	}
+	args := make([]any, len(ids))
+	for i, id := range ids {
+		args[i] = id
+	}
+	rows, err = s.db.QueryContext(ctx, `
+		SELECT webhook_id, '', url, secret, filter_source, filter_hazard,
+		       filter_severity, filter_since, filter_until, view, '', is_active, created_at, updated_at
+		FROM webhook_subscriptions WHERE is_active = 1 AND fanout_seq IN (`+strings.TrimSuffix(strings.Repeat("?,", len(ids)), ",")+`) ORDER BY fanout_seq`, args...)
+	if err != nil {
+		return nil, after, err
 	}
 	defer rows.Close()
-
 	var subs []*Subscription
 	for rows.Next() {
 		sub, err := scanSQLiteSubscription(rows)
 		if err != nil {
-			return nil, err
+			return nil, after, err
 		}
 		subs = append(subs, sub)
 	}
-	return subs, rows.Err()
+	return subs, ids[len(ids)-1], rows.Err()
 }
 
 // ---------------------------------------------------------------------------

@@ -5,14 +5,12 @@ import (
 	"log"
 	"time"
 
-	commonv1 "github.com/Azzkaaaa/Tugas-Besar-AAT-M1/packages/bnpb-aggregator-go/bnpb/common/v1"
 	eventv1 "github.com/Azzkaaaa/Tugas-Besar-AAT-M1/packages/bnpb-aggregator-go/bnpb/event/v1"
 	"github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/webhook-provider/internal/config"
 	"github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/webhook-provider/internal/dedup"
 	"github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/webhook-provider/internal/dispatcher"
 	"github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/webhook-provider/internal/store"
 	"github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/webhook-provider/internal/telemetry"
-	"github.com/google/uuid"
 	amqp "github.com/rabbitmq/amqp091-go"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
@@ -273,128 +271,9 @@ func (c *Consumer) handleMessage(ctx context.Context, msg amqp.Delivery) {
 		))
 	}
 
-	subs, err := c.db.ListActiveSubscriptions(ctxMsg)
-	if err != nil && ctxMsg.Err() != nil {
-		c.interrupt(ctxMsg, msg, ev.EventId, span)
-		return
-	}
-	if err != nil {
-		requeue := !msg.Redelivered
-		logf("[Consumer] Failed to list subscriptions for event %s: %v (requeue=%v)", ev.EventId, err, requeue)
-		if span != nil {
-			span.RecordError(err)
-			span.SetStatus(codes.Error, err.Error())
-		}
-		if telemetry.ConsumerErrorsCounter != nil {
-			telemetry.ConsumerErrorsCounter.Add(ctxMsg, 1)
-		}
-		_ = msg.Nack(false, requeue)
-		return
-	}
-
-	allOK := true
-	interrupted := false
-	for _, sub := range subs {
-		if !dispatcher.MatchesFilter(&ev, sub.FilterSource, sub.FilterHazard, sub.FilterSeverity, sub.FilterSince, sub.FilterUntil) {
-			continue
-		}
-		if ctxMsg.Err() != nil {
-			// Out of shutdown grace: the redelivery skips the webhooks already delivered.
-			interrupted = true
-			break
-		}
-
-		// Idempotency: claim the delivery; skip it if it already succeeded.
-		claim, result, err := c.claim(ctxMsg, ev.EventId, sub.WebhookID)
-		if err != nil && ctxMsg.Err() != nil {
-			interrupted = true
-			break
-		}
-		if err != nil {
-			logf("[Consumer] Dedup claim failed for event %s / webhook %s: %v", ev.EventId, sub.WebhookID, err)
-			allOK = false
-			continue
-		}
-		switch result {
-		case dedup.AlreadyDelivered:
-			logf("[Consumer] Event %s already delivered to webhook %s — skipping", ev.EventId, sub.WebhookID)
-			continue
-		case dedup.HeldElsewhere:
-			logf("[Consumer] Event %s / webhook %s still claimed elsewhere after %s", ev.EventId, sub.WebhookID, c.lease)
-			allOK = false
-			continue
-		}
-
-		view := commonv1.View(sub.View)
-		payload, err := dispatcher.BuildPayload(&ev, view)
-		if err != nil {
-			logf("[Consumer] Failed building payload for event %s / webhook %s: %v", ev.EventId, sub.WebhookID, err)
-			c.release(ctxMsg, claim, logf)
-			allOK = false
-			continue
-		}
-
-		dispatchResult := c.disp.Dispatch(ctxMsg, sub.URL, sub.Secret, payload)
-
-		deliveryID := uuid.NewString()
-		status := "FAILED"
-		if dispatchResult.Err == nil && dispatchResult.StatusCode >= 200 && dispatchResult.StatusCode < 300 {
-			status = "SUCCESS"
-		}
-		if status != "SUCCESS" && ctxMsg.Err() != nil {
-			// Shutdown aborted the attempt; the receiver did not fail it. Hand it back unlogged.
-			c.release(ctxMsg, claim, logf)
-			interrupted = true
-			break
-		}
-		errMsg := ""
-		if dispatchResult.Err != nil {
-			errMsg = dispatchResult.Err.Error()
-		}
-
-		d := &store.Delivery{
-			DeliveryID:   deliveryID,
-			WebhookID:    sub.WebhookID,
-			EventID:      ev.EventId,
-			HazardID:     ev.GetPayload().GetHazardId(),
-			StatusCode:   int32(dispatchResult.StatusCode),
-			Status:       status,
-			Attempt:      int32(c.cfg.MaxDeliveryRetries),
-			DurationMS:   dispatchResult.DurationMS,
-			ErrorMessage: errMsg,
-			DeliveredAt:  time.Now().UTC(),
-		}
-
-		// Mark before logging: a successful send must not be repeated even if the log write fails.
-		// Both run on a cleanup context, so a send that just succeeded is recorded even if the
-		// shutdown grace runs out now.
-		if status == "SUCCESS" {
-			markCtx, cancel := cleanupContext(ctxMsg)
-			if err := c.claims.MarkDelivered(markCtx, claim); err != nil {
-				logf("[Consumer] Failed marking delivered for event %s / webhook %s: %v", ev.EventId, sub.WebhookID, err)
-			}
-			cancel()
-		} else {
-			c.release(ctxMsg, claim, logf)
-		}
-
-		logCtx, cancel := cleanupContext(ctxMsg)
-		err = c.db.InsertDelivery(logCtx, d)
-		cancel()
-		if err != nil {
-			logf("[Consumer] Failed inserting delivery log for event %s / webhook %s: %v", ev.EventId, sub.WebhookID, err)
-			allOK = false
-			continue
-		}
-
-		if status != "SUCCESS" {
-			logf("[Consumer] Delivery failed for event %s to webhook %s (url=%s): status=%d err=%v",
-				ev.EventId, sub.WebhookID, sub.URL, dispatchResult.StatusCode, dispatchResult.Err)
-			// Dispatch failures alone do not block the ack — they have already completed their own retries
-			// and are recorded in the delivery log.
-		}
-	}
-
+	outcome := c.fanout(ctxMsg, &ev, span)
+	allOK := !outcome.failed
+	interrupted := outcome.interrupted
 	// Ack after all side-effects have been stored (at-least-once semantics).
 	// If any internal side-effect failed (DB write error), we nack with requeue if not redelivered (one redelivery),
 	// so persistent failures reach the DLQ instead of looping forever.

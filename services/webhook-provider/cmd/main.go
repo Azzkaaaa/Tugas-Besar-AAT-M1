@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"runtime/debug"
 	"syscall"
 	"time"
 
@@ -20,6 +21,11 @@ import (
 )
 
 func main() {
+	// Leave room for network, database and runtime memory in the 256Mi pod.
+	// An explicit operator GOMEMLIMIT still takes precedence.
+	if os.Getenv("GOMEMLIMIT") == "" {
+		debug.SetMemoryLimit(160 << 20)
+	}
 	slog.SetDefault(telemetry.NewLogger(os.Stdout, "webhook-provider"))
 	log.Println("[WebhookProvider] Starting BNPB Webhook Provider Service...")
 
