@@ -44,6 +44,7 @@ func Run(t *testing.T, newBackend func(t *testing.T) *storage.Backend) {
 		{"Outbox/DeadLetter", testOutboxDeadLetter},
 		{"Outbox/ConcurrentClaimers", testOutboxConcurrent},
 		{"Snapshots/LatestAndRetention", testSnapshots},
+		{"Snapshots/StreamingIntegrity", StreamingSnapshotContract},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) { tc.fn(t, newBackend(t)) })

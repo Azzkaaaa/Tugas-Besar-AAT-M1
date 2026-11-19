@@ -3,6 +3,7 @@ package storage
 import (
 	"context"
 	"errors"
+	"io"
 	"time"
 )
 
@@ -51,13 +52,26 @@ const StreamBlockSize int64 = 1000
 
 // StreamSnapshots keeps derived processing state at a committed journal
 // sequence, so a new leadership term restores it and replays only the tail.
-// A snapshot is a pure function of the committed journal prefix, so writes
-// are idempotent and need no leader fencing: any writer saving sequence N
-// saves the same bytes. LatestSnapshot returns sequence 0 and nil state when
+// Snapshots are derived caches, never authoritative input or checkpoints.
+// Publication is immutable: the first completed writer for a sequence wins,
+// including when another build uses a different codec. LatestSnapshot returns
+// sequence 0 and nil state when
 // no usable snapshot exists at or below atMost; integrity is verified.
 type StreamSnapshots interface {
 	SaveSnapshot(ctx context.Context, stream string, sequence int64, state []byte) error
 	LatestSnapshot(ctx context.Context, stream string, atMost int64) (int64, []byte, error)
+}
+
+// StreamingSnapshots avoids a state-sized byte buffer on the production path.
+// SaveSnapshotFrom reads an immutable seekable source from offset zero and may
+// rewind it. OpenLatestSnapshot verifies bounded chunks on private temporary
+// disk before returning them. The caller must close its reader to remove that
+// file. tempDir must reside on disk, not a memory-backed volume. Legacy byte
+// snapshots are intentionally not loaded by this interface; replay of the
+// authoritative journal upgrades the derived cache safely.
+type StreamingSnapshots interface {
+	SaveSnapshotFrom(ctx context.Context, stream string, sequence int64, source io.ReadSeeker) error
+	OpenLatestSnapshot(ctx context.Context, stream string, atMost int64, tempDir string) (int64, io.ReadCloser, error)
 }
 
 // SnapshotsRetained is how many verified snapshots each backend keeps per stream.
