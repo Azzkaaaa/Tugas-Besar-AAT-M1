@@ -1,0 +1,4 @@
+/m2-stream-redis cap=1073741824 swap=1073741824 cpus=2000000000 exit=0 oom=false restarts=0
+/m2-stream-redis-check cap=268435456 swap=268435456 cpus=2000000000 exit=0 oom=false restarts=0
+/m2-stream-unit cap=268435456 swap=268435456 cpus=2000000000 exit=0 oom=false restarts=0
+/m2-stream-redis exit=0 oom=false restarts=0

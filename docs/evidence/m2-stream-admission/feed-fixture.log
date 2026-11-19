@@ -1,0 +1,7 @@
+
+running 1 test
+test adapters::inbound::grpc::memory_tests::serve_stream_memory_fixture ... STREAM_FIXTURE_READY address=0.0.0.0:19093 keys=200000
+STREAM_FIXTURE_DONE peak_rss=VmHWM:	   97348 kB container_peak_bytes=110723072
+ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 37 filtered out; finished in 36.14s

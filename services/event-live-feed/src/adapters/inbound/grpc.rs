@@ -17,6 +17,7 @@ use tracing_opentelemetry::OpenTelemetrySpanExt;
 use crate::adapters::inbound::cursor::{self, Binding, CursorError};
 use crate::adapters::inbound::hazard::{Filter, authorize, project, resolve_view};
 use crate::adapters::inbound::session::{SessionPolicy, supervise};
+use crate::adapters::inbound::stream_admission::{FullStreamCredit, FullStreams};
 use crate::core::feed::{FeedError, FeedService, FeedSubscription};
 use crate::core::models::FeedEntry;
 use crate::core::ports::{ActorVerifier, AuthError, Position, ReplayStore, StreamMeta, TokenRenewer};
@@ -30,6 +31,7 @@ pub struct FeedGrpc<S, V, R> {
     pub verifier: Arc<V>,
     pub renewer: Option<Arc<R>>,
     pub policy: SessionPolicy,
+    pub full_streams: FullStreams,
 }
 
 #[tonic::async_trait]
@@ -65,6 +67,7 @@ impl<S: ReplayStore, V: ActorVerifier, R: TokenRenewer> EventFeedService for Fee
                 Some(Position { epoch: meta.epoch, sequence })
             }
         };
+        let credit = if view == View::Full { Some(self.full_streams.acquire()?) } else { None };
         let subscription = self.feed.subscribe(after, view != View::Full).instrument(span.clone()).await.map_err(feed_status)?;
 
         let (events, data) = mpsc::channel(STREAM_BUFFER);
@@ -77,9 +80,27 @@ impl<S: ReplayStore, V: ActorVerifier, R: TokenRenewer> EventFeedService for Fee
             })
         };
         let forward = Forward { meta: subscription.meta(), subject: actor.subject, view, filter };
-        let pump = tokio::spawn(forward.run(subscription, events, end).instrument(span));
+        let pump_credit = credit.clone();
+        let pump = tokio::spawn(
+            async move {
+                // An abort is asynchronous; retain admission until its pending
+                // payload read/projection has actually been dropped.
+                let _credit = pump_credit;
+                forward.run(subscription, events, end).await;
+            }
+            .instrument(span),
+        );
 
-        let mut response = Response::new(FeedStream { data, ended, _tasks: [AbortOnDrop(session), AbortOnDrop(pump)], done: false });
+        let mut response = Response::new(FeedStream {
+            data,
+            ended,
+            _tasks: [AbortOnDrop(session), AbortOnDrop(pump)],
+            done: false,
+            _credit: credit.clone(),
+        });
+        if let Some(credit) = credit {
+            response.extensions_mut().insert(credit);
+        }
         if let Some(correlation_id) = correlation_id {
             response.metadata_mut().insert(CORRELATION_HEADER, correlation_id);
         }
@@ -193,6 +214,7 @@ pub struct FeedStream {
     ended: mpsc::Receiver<Status>,
     _tasks: [AbortOnDrop; 2],
     done: bool,
+    _credit: Option<FullStreamCredit>,
 }
 
 impl Stream for FeedStream {
@@ -215,6 +237,10 @@ impl Stream for FeedStream {
 }
 
 #[cfg(test)]
+#[path = "stream_memory_tests.rs"]
+mod memory_tests;
+
+#[cfg(test)]
 mod tests {
     use std::time::Duration;
 
@@ -229,7 +255,7 @@ mod tests {
     use crate::adapters::outbound::memory_store::MemoryStore;
     use crate::core::models::{Actor, Publication};
 
-    struct Verifier;
+    pub(super) struct Verifier;
 
     #[tokio::test]
     async fn slow_subscriber_does_not_read_the_next_full_payload_before_capacity_is_available() {
@@ -275,7 +301,7 @@ mod tests {
         }
     }
 
-    struct NoRenewer;
+    pub(super) struct NoRenewer;
 
     impl TokenRenewer for NoRenewer {
         async fn renew(&self, _token: &str) -> Result<String, AuthError> {
@@ -283,10 +309,11 @@ mod tests {
         }
     }
 
-    fn service() -> (FeedGrpc<MemoryStore, Verifier, NoRenewer>, Arc<FeedService<MemoryStore>>) {
+    pub(super) fn service() -> (FeedGrpc<MemoryStore, Verifier, NoRenewer>, Arc<FeedService<MemoryStore>>) {
         let feed = Arc::new(FeedService::new(Arc::new(MemoryStore::with_epoch(5, Duration::from_secs(600), 100))));
         let policy = SessionPolicy { renew_before: Duration::from_secs(15), max_stream: Duration::from_secs(3600) };
-        let grpc = FeedGrpc { feed: feed.clone(), verifier: Arc::new(Verifier), renewer: None, policy };
+        let grpc =
+            FeedGrpc { feed: feed.clone(), verifier: Arc::new(Verifier), renewer: None, policy, full_streams: FullStreams::default() };
         (grpc, feed)
     }
 
@@ -306,7 +333,7 @@ mod tests {
         }
     }
 
-    fn request(token: &str, message: SubscribeEventsRequest) -> Request<SubscribeEventsRequest> {
+    pub(super) fn request(token: &str, message: SubscribeEventsRequest) -> Request<SubscribeEventsRequest> {
         let mut request = Request::new(message);
         request.metadata_mut().insert("authorization", format!("Bearer {token}").parse().unwrap());
         request.metadata_mut().insert(CORRELATION_HEADER, "corr-1".parse().unwrap());

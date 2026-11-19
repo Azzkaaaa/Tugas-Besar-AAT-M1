@@ -9,9 +9,11 @@ bnpb-common = { path = "../../packages/bnpb-common-rust/bnpb-common" }
 bnpb-event = { path = "../../packages/bnpb-event-rust/bnpb-event" }
 bnpb-feed = { path = "../../packages/bnpb-feed-rust/bnpb-feed" }
 base64 = "0.22"
+bytes = "1"
 futures-util = { version = "0.3", default-features = false, features = ["std"] }
 hmac = "0.12"
 http = "1"
+http-body = "1"
 jsonwebtoken = { version = "10", default-features = false, features = ["rust_crypto"] }
 lapin = "2"
 opentelemetry = "0.31"

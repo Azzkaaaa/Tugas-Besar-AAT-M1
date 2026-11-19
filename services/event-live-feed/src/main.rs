@@ -18,6 +18,7 @@ use tonic_health::pb::health_client::HealthClient;
 use crate::adapters::inbound::grpc::FeedGrpc;
 use crate::adapters::inbound::rabbitmq::{Consumer, FEED_SERVICE_NAME};
 use crate::adapters::inbound::session::SessionPolicy;
+use crate::adapters::inbound::stream_admission::{FullStreams, StreamAdmissionLayer};
 use crate::adapters::outbound::memory_store::MemoryStore;
 use crate::adapters::outbound::oidc::{JwksVerifier, Oidc, ZitadelTokenExchange};
 use crate::adapters::outbound::redis_store::RedisStore;
@@ -87,14 +88,23 @@ async fn run(config: Config) -> Result<(), String> {
         .run(),
     );
 
-    let grpc =
-        FeedGrpc { feed, verifier, renewer, policy: SessionPolicy { renew_before: config.renew_before, max_stream: config.max_stream } };
+    let grpc = FeedGrpc {
+        feed,
+        verifier,
+        renewer,
+        policy: SessionPolicy { renew_before: config.renew_before, max_stream: config.max_stream },
+        full_streams: FullStreams::default(),
+    };
     let address = SocketAddr::from((Ipv4Addr::UNSPECIFIED, config.port));
     let (stop, stopped) = tokio::sync::oneshot::channel::<()>();
     let mut server = tokio::spawn(
-        Server::builder().add_service(health_service).add_service(EventFeedServiceServer::new(grpc)).serve_with_shutdown(address, async {
-            let _ = stopped.await;
-        }),
+        Server::builder()
+            .layer(StreamAdmissionLayer)
+            .add_service(health_service)
+            .add_service(EventFeedServiceServer::new(grpc))
+            .serve_with_shutdown(address, async {
+                let _ = stopped.await;
+            }),
     );
     tracing::info!(%address, "event-live-feed listening");
 

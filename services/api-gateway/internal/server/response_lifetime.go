@@ -5,6 +5,7 @@ import (
 	"net/http"
 
 	gw "github.com/Azzkaaaa/Tugas-Besar-AAT-M1/packages/bnpb-gateway-go/gatewayapi"
+	"github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/api-gateway/internal/exchange"
 )
 
 type responseReleases struct{ items []func() }
@@ -17,12 +18,28 @@ func responseLifetime(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		releases := &responseReleases{}
 		defer func() {
+			if body := exchange.From(r.Context()).ResponseBody; body != nil {
+				_ = body.Close()
+			}
 			for i := len(releases.items) - 1; i >= 0; i-- {
 				releases.items[i]()
 			}
 		}()
 		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), responseReleasesKey{}, releases)))
 	})
+}
+
+func isFullStream(request any) bool {
+	switch req := request.(type) {
+	case gw.StreamHazardEventsRequestObject:
+		return req.Params.View != nil && *req.Params.View == gw.StreamHazardEventsParamsViewFull
+	case gw.StreamSeismicHazardsRequestObject:
+		return req.Params.View != nil && *req.Params.View == gw.StreamSeismicHazardsParamsViewFull
+	case gw.StreamVolcanicHazardsRequestObject:
+		return req.Params.View != nil && *req.Params.View == gw.StreamVolcanicHazardsParamsViewFull
+	default:
+		return false
+	}
 }
 
 // holdResponse returns a local fallback for direct strict-middleware callers;

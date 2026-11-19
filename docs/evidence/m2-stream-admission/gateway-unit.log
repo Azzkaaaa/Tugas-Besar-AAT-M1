@@ -1,0 +1,11 @@
+?   	github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/api-gateway/cmd	[no test files]
+ok  	github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/api-gateway/internal/backend	(cached)
+?   	github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/api-gateway/internal/config	[no test files]
+?   	github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/api-gateway/internal/contract	[no test files]
+?   	github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/api-gateway/internal/exchange	[no test files]
+ok  	github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/api-gateway/internal/handlers	(cached)
+?   	github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/api-gateway/internal/mapping	[no test files]
+ok  	github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/api-gateway/internal/priority	(cached)
+?   	github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/api-gateway/internal/problem	[no test files]
+ok  	github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/api-gateway/internal/server	5.443s
+?   	github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/api-gateway/internal/telemetry	[no test files]

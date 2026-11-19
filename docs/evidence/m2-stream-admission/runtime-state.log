@@ -1,0 +1,2 @@
+/m2-stream-feed cap=268435456 swap=268435456 cpus=2000000000 exit=0 oom=false restarts=0
+/m2-stream-gateway cap=268435456 swap=268435456 cpus=2000000000 exit=0 oom=false restarts=0

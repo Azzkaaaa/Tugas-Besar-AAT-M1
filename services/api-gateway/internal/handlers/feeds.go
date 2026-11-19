@@ -88,6 +88,11 @@ func (h *Handlers) stream(ctx context.Context, filter *commonv1.HazardFilter, vi
 	// The body outlives this call: the stream context is cancelled by the pump, or by the
 	// request context when the client goes away.
 	streamCtx, cancel := context.WithCancel(ctx)
+	openTimeout := h.Timeout
+	if openTimeout <= 0 {
+		openTimeout = 2 * time.Second
+	}
+	opening := time.AfterFunc(openTimeout, cancel)
 	subscription, err := h.Clients.Feed.SubscribeEvents(streamCtx, request)
 	if err == nil {
 		// Header blocks until the feed accepts or rejects. No headers means a trailers-only
@@ -98,6 +103,10 @@ func (h *Handlers) stream(ctx context.Context, filter *commonv1.HazardFilter, vi
 				err = status.Error(codes.Internal, "feed sent a message without headers")
 			}
 		}
+	}
+	if !opening.Stop() && ctx.Err() == nil {
+		cancel()
+		err = status.Error(codes.Unavailable, "feed opening timed out; retry later")
 	}
 	if err != nil {
 		cancel()
@@ -112,11 +121,14 @@ func (h *Handlers) stream(ctx context.Context, filter *commonv1.HazardFilter, vi
 	}
 
 	reader, writer := io.Pipe()
+	done := make(chan struct{})
 	go func() {
-		defer cancel()
-		_ = writer.CloseWithError(pump(streamCtx, subscription, writer, view, correlationID, h.Heartbeat))
+		defer close(done)
+		_ = writer.CloseWithError(pump(streamCtx, subscription, writer, view, correlationID, h.Heartbeat, cancel))
 	}()
-	return eventStream(reader), nil
+	body := newStreamBody(ctx, reader, cancel, done)
+	exchange.From(ctx).ResponseBody = body
+	return eventStream(body), nil
 }
 
 func eventStream(body io.Reader) gw.EventStreamTexteventStreamResponse {
@@ -127,14 +139,17 @@ func eventStream(body io.Reader) gw.EventStreamTexteventStreamResponse {
 // pump forwards feed events as SSE frames with heartbeat comments until the feed or the
 // client ends the stream. Its error closes the pipe; nil means a clean end.
 func pump(ctx context.Context, subscription feedv1.EventFeedService_SubscribeEventsClient, out io.Writer,
-	view commonv1.View, correlationID string, heartbeat time.Duration,
+	view commonv1.View, correlationID string, heartbeat time.Duration, cancel context.CancelFunc,
 ) error {
 	type received struct {
 		response *feedv1.SubscribeEventsResponse
 		err      error
 	}
 	events := make(chan received)
+	consumed := make(chan struct{})
+	receivedDone := make(chan struct{})
 	go func() {
+		defer close(receivedDone)
 		for {
 			response, err := subscription.Recv()
 			select {
@@ -145,8 +160,19 @@ func pump(ctx context.Context, subscription feedv1.EventFeedService_SubscribeEve
 			if err != nil {
 				return
 			}
+			// Do not decode another full event while serialization or an HTTP
+			// write still retains the current frame.
+			select {
+			case <-consumed:
+			case <-ctx.Done():
+				return
+			}
 		}
 	}()
+	defer func() { cancel(); <-receivedDone }()
+	if heartbeat <= 0 {
+		heartbeat = 15 * time.Second
+	}
 	ticker := time.NewTicker(heartbeat)
 	defer ticker.Stop()
 	for {
@@ -176,12 +202,18 @@ func pump(ctx context.Context, subscription feedv1.EventFeedService_SubscribeEve
 				}
 			}
 			frame, err := hazardFrame(next.response.GetEvent(), view)
+			next.response = nil
 			if err != nil {
 				slog.ErrorContext(ctx, "feed event cannot be rendered; closing stream", "error", err)
 				return nil
 			}
 			if _, err := io.WriteString(out, frame); err != nil {
 				return err
+			}
+			select {
+			case consumed <- struct{}{}:
+			case <-ctx.Done():
+				return ctx.Err()
 			}
 		}
 	}

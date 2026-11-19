@@ -49,6 +49,9 @@ type gateway struct {
 	inFlight        chan struct{}
 	reserved        chan struct{}
 	fullRead        chan struct{}
+	streams         chan struct{}
+	reservedStreams chan struct{}
+	fullStream      chan struct{}
 	priorityAllowed func(*http.Request) bool
 }
 
@@ -56,7 +59,12 @@ type gateway struct {
 func New(opts Options) http.Handler {
 	capacity := max(opts.MaxInFlight, 1)
 	reserve := min(max(opts.ReservedInFlight, 0), capacity-1)
-	g := &gateway{contract: opts.Contract, retryAfter: opts.RetryAfterSeconds, inFlight: make(chan struct{}, capacity-reserve), reserved: make(chan struct{}, reserve), fullRead: make(chan struct{}, 1), priorityAllowed: opts.PriorityAllowed}
+	g := &gateway{
+		contract: opts.Contract, retryAfter: opts.RetryAfterSeconds,
+		inFlight: make(chan struct{}, capacity-reserve), reserved: make(chan struct{}, reserve),
+		streams: make(chan struct{}, capacity-reserve), reservedStreams: make(chan struct{}, reserve),
+		fullRead: make(chan struct{}, 1), fullStream: make(chan struct{}, 1), priorityAllowed: opts.PriorityAllowed,
+	}
 	strict := gw.NewStrictHandlerWithOptions(
 		&handlers.Handlers{Clients: opts.Clients, Timeout: opts.RequestTimeout, Heartbeat: opts.Heartbeat},
 		[]gw.StrictMiddlewareFunc{g.limit},
@@ -67,7 +75,7 @@ func New(opts Options) http.Handler {
 	)
 
 	router := chi.NewRouter()
-	router.Use(spanRoute, g.recoverer, g.correlation, responseLifetime)
+	router.Use(spanRoute, g.recoverer, g.correlation, streamWrites, responseLifetime)
 	router.Get("/healthz", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) })
 	router.Post("/field-reports", g.submitFieldReport(opts.Clients.FieldReports, opts.RequestTimeout))
 	router.NotFound(func(w http.ResponseWriter, r *http.Request) {
@@ -167,17 +175,28 @@ func (g *gateway) correlation(next http.Handler) http.Handler {
 	})
 }
 
-// limit bounds concurrent unary requests. Streams are long-lived and not counted.
+// Unary and long-lived stream capacities are independent. Each keeps reserved
+// verified-priority capacity; FULL pipelines have additional pod-wide limits.
 func (g *gateway) limit(next gw.StrictHandlerFunc, operationID string) gw.StrictHandlerFunc {
-	if strings.HasPrefix(operationID, "Stream") {
-		return next
-	}
+	stream := strings.HasPrefix(operationID, "Stream")
 	return func(ctx context.Context, w http.ResponseWriter, r *http.Request, request any) (any, error) {
-		release, ok := g.acquire(r)
+		regular, reserved := g.inFlight, g.reserved
+		if stream {
+			regular, reserved = g.streams, g.reservedStreams
+		}
+		release, ok := g.acquireFrom(r, regular, reserved)
 		if !ok {
 			return nil, problem.New(http.StatusTooManyRequests, "Too many requests; retry later.")
 		}
 		defer holdResponse(ctx, release)()
+		if isFullStream(request) {
+			select {
+			case g.fullStream <- struct{}{}:
+				defer holdResponse(ctx, func() { <-g.fullStream })()
+			default:
+				return nil, problem.New(http.StatusTooManyRequests, "Full stream capacity is busy; retry later.")
+			}
+		}
 		if isFullRead(request) {
 			select {
 			case g.fullRead <- struct{}{}:
@@ -192,15 +211,19 @@ func (g *gateway) limit(next gw.StrictHandlerFunc, operationID string) gw.Strict
 
 // acquire is shared by generated unary routes and P3's field-report intake.
 func (g *gateway) acquire(r *http.Request) (func(), bool) {
+	return g.acquireFrom(r, g.inFlight, g.reserved)
+}
+
+func (g *gateway) acquireFrom(r *http.Request, regular, reserved chan struct{}) (func(), bool) {
 	select {
-	case g.inFlight <- struct{}{}:
-		return func() { <-g.inFlight }, true
+	case regular <- struct{}{}:
+		return func() { <-regular }, true
 	default:
 	}
 	if g.priorityAllowed != nil && g.priorityAllowed(r) {
 		select {
-		case g.reserved <- struct{}{}:
-			return func() { <-g.reserved }, true
+		case reserved <- struct{}{}:
+			return func() { <-reserved }, true
 		default:
 		}
 	}

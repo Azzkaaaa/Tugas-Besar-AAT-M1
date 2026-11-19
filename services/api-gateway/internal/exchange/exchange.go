@@ -4,12 +4,16 @@ package exchange
 
 import (
 	"context"
+	"io"
 	"net/http"
 )
 
 type Exchange struct {
 	Request       *http.Request
 	CorrelationID string
+	// ResponseBody owns streaming workers. Close it before returning admission,
+	// including errors/panics that bypass the generated response visitor.
+	ResponseBody io.Closer
 }
 
 type key struct{}

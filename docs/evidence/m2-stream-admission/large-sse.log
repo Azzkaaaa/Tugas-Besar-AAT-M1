@@ -1,0 +1,6 @@
+=== RUN   TestFullSSELargeFireMemory
+2026/11/19 11:00:04 WARN request failed status=500 error="io: read/write on closed pipe"
+    stream_memory_test.go:182: VmHWM:	  147468 kB
+    stream_memory_test.go:185: STREAM_MEMORY keys=200000 shed_full=24 heap_bytes=40989152 go_sys_bytes=145275176 container_peak_bytes=154828800
+--- PASS: TestFullSSELargeFireMemory (1.09s)
+PASS

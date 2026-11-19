@@ -32,7 +32,7 @@ type Clients struct {
 
 type Handlers struct {
 	Clients Clients
-	// Timeout bounds unary backend calls; feeds have no deadline.
+	// Timeout bounds unary calls and feed opening; accepted feeds have no deadline.
 	Timeout time.Duration
 	// Heartbeat is the SSE keepalive comment interval.
 	Heartbeat time.Duration

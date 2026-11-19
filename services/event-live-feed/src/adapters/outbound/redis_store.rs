@@ -327,6 +327,19 @@ impl RedisStore {
     }
 
     async fn read_after_in(&self, after: Position, summary: bool) -> Result<Vec<SharedEntry>, ReplayError> {
+        if !summary {
+            // A FULL subscription owns its admission until this future drops.
+            // Cancellation must close the actual large-response socket rather
+            // than leave work outstanding on the shared multiplexer.
+            let config =
+                AsyncConnectionConfig::new().set_connection_timeout(Some(COMMAND_TIMEOUT)).set_response_timeout(Some(COMMAND_TIMEOUT));
+            let mut connection = self.client.get_multiplexed_async_connection_with_config(&config).await.map_err(unavailable)?;
+            return match self.read_one_on(&mut connection, after, false, false).await? {
+                ReadOne::Head => Ok(Vec::new()),
+                ReadOne::Entry(entry, _) => Ok(vec![Arc::new(*entry)]),
+                ReadOne::Legacy => Err(ReplayError::Unavailable),
+            };
+        }
         match self.read_one(after, summary, false).await? {
             ReadOne::Head => Ok(Vec::new()),
             ReadOne::Entry(entry, _) => Ok(vec![Arc::new(*entry)]),

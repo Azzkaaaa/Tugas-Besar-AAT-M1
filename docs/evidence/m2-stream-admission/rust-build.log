@@ -1,0 +1,9 @@
+info: downloading component rustfmt
+info: downloading component clippy
+    Checking event-live-feed v0.1.0 (/workspace/services/event-live-feed)
+    Finished `dev` profile [unoptimized] target(s) in 5.94s
+   Compiling event-live-feed v0.1.0 (/workspace/services/event-live-feed)
+    Finished `test` profile [unoptimized] target(s) in 8.43s
+  Executable unittests src/main.rs (/build/target/debug/deps/event_live_feed-b6ad6c8ee76320d6)
+   Compiling event-live-feed v0.1.0 (/workspace/services/event-live-feed)
+    Finished `dev` profile [unoptimized] target(s) in 10.21s
