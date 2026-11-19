@@ -33,6 +33,7 @@ func Run(t *testing.T, newBackend func(t *testing.T) *storage.Backend) {
 		{"List/TimeRange", testListTimeRange},
 		{"List/MovedRecord", testListMovedRecord},
 		{"List/InvalidToken", testListInvalidToken},
+		{"List/PayloadBudgetAndSummary", testListPayloadBudgetAndSummary},
 		{"HasData", testHasData},
 		{"Sources", testSources},
 		{"Revision/Counts", testRevisionCounts},
@@ -343,6 +344,9 @@ func testListTimeRange(t *testing.T, b *storage.Backend) {
 		filter(all, func(h *domain.HazardRecord) bool { return !h.OccurredAt.Before(since) }))
 	assertIDs(t, listAll(t, b, storage.HazardQuery{Until: until}, 4),
 		filter(all, func(h *domain.HazardRecord) bool { return h.OccurredAt.Before(until) }))
+	lastAt := all[0].OccurredAt
+	assertIDs(t, listAll(t, b, storage.HazardQuery{Since: lastAt, Until: lastAt.Add(time.Nanosecond)}, 2),
+		filter(all, func(h *domain.HazardRecord) bool { return h.OccurredAt.Equal(lastAt) }))
 }
 
 // A revision that changes OccurredAt moves the record; it must be listed once, at its new place.

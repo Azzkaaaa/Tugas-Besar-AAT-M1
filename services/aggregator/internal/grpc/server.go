@@ -20,6 +20,7 @@ import (
 	"google.golang.org/grpc/health"
 	healthpb "google.golang.org/grpc/health/grpc_health_v1"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/proto"
 )
 
 type Server struct {
@@ -137,7 +138,11 @@ func (s *Server) ListHazards(ctx context.Context, req *aggregatorv1.ListHazardsR
 		pageSize = defaultPageSize
 	}
 	q := hazardQuery(req.Filter)
+	q.SummaryOnly = req.View != commonv1.View_VIEW_FULL
 	page, err := s.hazards.List(ctx, q, storage.PageRequest{Size: pageSize, Token: req.Page.GetPageToken()})
+	if errors.Is(err, storage.ErrHazardProjectionTooLarge) {
+		return nil, status.Error(codes.ResourceExhausted, err.Error())
+	}
 	if errors.Is(err, storage.ErrInvalidPageToken) {
 		return nil, status.Errorf(codes.InvalidArgument, "list hazards failed: %v", err)
 	}
@@ -170,7 +175,11 @@ func (s *Server) ListHazards(ctx context.Context, req *aggregatorv1.ListHazardsR
 		}
 		freshness = append(freshness, info.ToProto())
 	}
-	return &aggregatorv1.ListHazardsResponse{Items: items, NextPageToken: page.NextToken, Freshness: freshness, Partial: partial, UnavailableUnits: page.UnavailableUnits}, nil
+	response := &aggregatorv1.ListHazardsResponse{Items: items, NextPageToken: page.NextToken, Freshness: freshness, Partial: partial, UnavailableUnits: page.UnavailableUnits}
+	if proto.Size(response) > storage.MaxHazardProjectionBytes {
+		return nil, status.Error(codes.ResourceExhausted, "complete hazard response exceeds the transport byte budget")
+	}
+	return response, nil
 }
 
 func (s *Server) GetHazard(ctx context.Context, req *aggregatorv1.GetHazardRequest) (*aggregatorv1.GetHazardResponse, error) {

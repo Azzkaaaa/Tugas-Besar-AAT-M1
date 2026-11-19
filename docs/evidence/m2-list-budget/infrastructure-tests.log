@@ -1,0 +1,13 @@
+m2: data directory is empty and 10.0.0.5 (rack node-a) is in the ring: replacing it
+Waiting for authenticated gitops/dev/verified commit report at aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa (maximum 0s)
+Verified dev: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+Waiting for authenticated gitops/dev/verified commit report at aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa (maximum 0s)
+Waiting for authenticated gitops/dev/verified commit report at aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa (maximum 0s)
+dev: encrypted M2 inputs added: aat-m2-source-secrets, aat-audit, telemetry-grafana-admin
+dev: M2 inputs already exist; preserved.
+dev: shared-store input already exists; preserved without rotating passwords.
+...................................................................................................s......................
+----------------------------------------------------------------------
+Ran 122 tests in 57.666s
+
+OK (skipped=1)

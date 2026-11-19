@@ -38,7 +38,8 @@ type HazardStore interface {
 	Get(ctx context.Context, hazardID string) (*domain.HazardRecord, error)
 
 	// List returns records matching q, ordered by OccurredAt descending then HazardID ascending.
-	// page.Size must be positive (callers clamp it). NextToken is empty on the last page.
+	// page.Size must be positive (callers clamp it). Pages can be shorter under
+	// their payload-byte budget; only an empty NextToken means the last page.
 	List(ctx context.Context, q HazardQuery, page PageRequest) (HazardPage, error)
 
 	// HasData reports whether any record of source is stored.
@@ -58,6 +59,9 @@ type HazardQuery struct {
 	Severity   string
 	Since      time.Time
 	Until      time.Time
+	// SummaryOnly omits detail fields at the storage boundary, before payload
+	// hydration. It does not change matching, order or cursor interpretation.
+	SummaryOnly bool
 }
 
 // PageRequest asks for up to Size records after Token (empty for the first page). Tokens are

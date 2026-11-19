@@ -1,0 +1,22 @@
+=== RUN   TestListLargeSatelliteRPCBudget
+2026/11/19 06:21:26 INFO created keyspace keyspace=agg_test_list_bulk_cb39974b replication="{'class': 'SimpleStrategy', 'replication_factor': 1}"
+    list_bulk_integration_test.go:67: seed projection 6 gocql: failed to read uncompressed frame, err: read tcp 127.0.0.1:54352->127.0.0.1:9042: read: connection reset by peer
+--- FAIL: TestListLargeSatelliteRPCBudget (41.75s)
+FAIL
+2026/11/19 06:21:33 INFO applied migration migration=0001_baseline.cql
+2026/11/19 06:21:34 INFO applied migration migration=0002_bucket_schedule.cql
+2026/11/19 06:21:36 INFO applied migration migration=0003_leader_and_revision.cql
+2026/11/19 06:21:40 INFO applied migration migration=0004_derived_hazard_ids.cql
+2026/11/19 06:21:40 INFO applied migration migration="0005_rekey_hazard_ids (go)"
+2026/11/19 06:21:42 INFO applied migration migration=0006_drop_hazard_by_source_ref.cql
+2026/11/19 06:21:43 INFO applied migration migration=0007_problem3.cql
+2026/11/19 06:21:44 INFO applied migration migration=0008_m2_streams.cql
+2026/11/19 06:21:45 INFO applied migration migration=0009_audit_indexes.cql
+2026/11/19 06:21:46 INFO applied migration migration=0010_analytics_metadata.cql
+2026/11/19 06:21:51 INFO applied migration migration=0011_write_authority.cql
+2026/11/19 06:21:56 INFO applied migration migration=0012_critical_journal.cql
+2026/11/19 06:21:56 INFO applied migration migration=0013_stream_snapshots.cql
+2026/11/19 06:21:57 INFO applied migration migration=0014_sharded_projection.cql
+2026/11/19 06:21:57 INFO applied migration migration="0015_backfill_sharded_projection (go)"
+2026/11/19 06:21:58 INFO applied migration migration=0016_streaming_snapshots.cql
+2026/11/19 06:21:59 INFO applied migration migration=0017_list_metadata.cql

@@ -1,0 +1,44 @@
+=== RUN   TestListLargeSatelliteRPCBudget
+2026/11/19 06:28:57 INFO created keyspace keyspace=agg_test_list_bulk_cf77b32d replication="{'class': 'SimpleStrategy', 'replication_factor': 1}"
+    list_bulk_integration_test.go:153: records=32 keys_per_record=200000 shards=[4 4 4 4 4 4 4 4] summary_bytes=2547 full_pages=32 max_rpc_bytes=9600451 peak_rss=176488 kB container_peak_bytes=187011072 elapsed=13.917822484s
+--- PASS: TestListLargeSatelliteRPCBudget (49.69s)
+=== RUN   TestListMetadataHandlesMissingAndRollingWriterCache
+=== RUN   TestListMetadataHandlesMissingAndRollingWriterCache/SubMillisecondBounds
+--- PASS: TestListMetadataHandlesMissingAndRollingWriterCache (37.41s)
+    --- PASS: TestListMetadataHandlesMissingAndRollingWriterCache/SubMillisecondBounds (0.01s)
+PASS
+2026/11/19 06:29:02 INFO applied migration migration=0001_baseline.cql
+2026/11/19 06:29:03 INFO applied migration migration=0002_bucket_schedule.cql
+2026/11/19 06:29:05 INFO applied migration migration=0003_leader_and_revision.cql
+2026/11/19 06:29:07 INFO applied migration migration=0004_derived_hazard_ids.cql
+2026/11/19 06:29:07 INFO applied migration migration="0005_rekey_hazard_ids (go)"
+2026/11/19 06:29:08 INFO applied migration migration=0006_drop_hazard_by_source_ref.cql
+2026/11/19 06:29:10 INFO applied migration migration=0007_problem3.cql
+2026/11/19 06:29:12 INFO applied migration migration=0008_m2_streams.cql
+2026/11/19 06:29:13 INFO applied migration migration=0009_audit_indexes.cql
+2026/11/19 06:29:13 INFO applied migration migration=0010_analytics_metadata.cql
+2026/11/19 06:29:20 INFO applied migration migration=0011_write_authority.cql
+2026/11/19 06:29:25 INFO applied migration migration=0012_critical_journal.cql
+2026/11/19 06:29:26 INFO applied migration migration=0013_stream_snapshots.cql
+2026/11/19 06:29:27 INFO applied migration migration=0014_sharded_projection.cql
+2026/11/19 06:29:27 INFO applied migration migration="0015_backfill_sharded_projection (go)"
+2026/11/19 06:29:27 INFO applied migration migration=0016_streaming_snapshots.cql
+2026/11/19 06:29:29 INFO applied migration migration=0017_list_metadata.cql
+2026/11/19 06:29:51 INFO created keyspace keyspace=agg_test_list_meta_ce3f86ff replication="{'class': 'SimpleStrategy', 'replication_factor': 1}"
+2026/11/19 06:29:56 INFO applied migration migration=0001_baseline.cql
+2026/11/19 06:29:57 INFO applied migration migration=0002_bucket_schedule.cql
+2026/11/19 06:29:59 INFO applied migration migration=0003_leader_and_revision.cql
+2026/11/19 06:30:00 INFO applied migration migration=0004_derived_hazard_ids.cql
+2026/11/19 06:30:00 INFO applied migration migration="0005_rekey_hazard_ids (go)"
+2026/11/19 06:30:02 INFO applied migration migration=0006_drop_hazard_by_source_ref.cql
+2026/11/19 06:30:04 INFO applied migration migration=0007_problem3.cql
+2026/11/19 06:30:05 INFO applied migration migration=0008_m2_streams.cql
+2026/11/19 06:30:06 INFO applied migration migration=0009_audit_indexes.cql
+2026/11/19 06:30:06 INFO applied migration migration=0010_analytics_metadata.cql
+2026/11/19 06:30:12 INFO applied migration migration=0011_write_authority.cql
+2026/11/19 06:30:16 INFO applied migration migration=0012_critical_journal.cql
+2026/11/19 06:30:17 INFO applied migration migration=0013_stream_snapshots.cql
+2026/11/19 06:30:20 INFO applied migration migration=0014_sharded_projection.cql
+2026/11/19 06:30:20 INFO applied migration migration="0015_backfill_sharded_projection (go)"
+2026/11/19 06:30:21 INFO applied migration migration=0016_streaming_snapshots.cql
+2026/11/19 06:30:22 INFO applied migration migration=0017_list_metadata.cql

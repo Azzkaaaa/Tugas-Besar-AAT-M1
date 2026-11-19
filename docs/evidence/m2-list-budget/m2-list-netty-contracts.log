@@ -1,0 +1,68 @@
+=== RUN   TestContract
+=== RUN   TestContract/1m0s
+2026/11/19 13:32:40 INFO created keyspace keyspace=agg_test_contract_1m replication="{'class': 'SimpleStrategy', 'replication_factor': 1}"
+2026/11/19 13:32:45 INFO applied migration migration=0001_baseline.cql
+2026/11/19 13:32:46 INFO applied migration migration=0002_bucket_schedule.cql
+2026/11/19 13:32:49 INFO applied migration migration=0003_leader_and_revision.cql
+2026/11/19 13:32:50 INFO applied migration migration=0004_derived_hazard_ids.cql
+2026/11/19 13:32:50 INFO applied migration migration="0005_rekey_hazard_ids (go)"
+2026/11/19 13:32:54 INFO applied migration migration=0006_drop_hazard_by_source_ref.cql
+2026/11/19 13:32:56 INFO applied migration migration=0007_problem3.cql
+2026/11/19 13:32:58 INFO applied migration migration=0008_m2_streams.cql
+2026/11/19 13:32:59 INFO applied migration migration=0009_audit_indexes.cql
+2026/11/19 13:32:59 INFO applied migration migration=0010_analytics_metadata.cql
+2026/11/19 13:33:05 INFO applied migration migration=0011_write_authority.cql
+2026/11/19 13:33:10 INFO applied migration migration=0012_critical_journal.cql
+2026/11/19 13:33:11 INFO applied migration migration=0013_stream_snapshots.cql
+2026/11/19 13:33:11 INFO applied migration migration=0014_sharded_projection.cql
+2026/11/19 13:33:11 INFO applied migration migration="0015_backfill_sharded_projection (go)"
+2026/11/19 13:33:12 INFO applied migration migration=0016_streaming_snapshots.cql
+2026/11/19 13:33:14 INFO applied migration migration=0017_list_metadata.cql
+=== RUN   TestContract/1m0s/List/OrderAndPaging
+=== RUN   TestContract/1m0s/List/Filters
+=== RUN   TestContract/1m0s/List/TimeRange
+=== RUN   TestContract/1m0s/List/MovedRecord
+=== RUN   TestContract/1m0s/List/InvalidToken
+=== RUN   TestContract/1m0s/List/PayloadBudgetAndSummary
+=== RUN   TestContract/24h0m0s
+2026/11/19 13:33:43 INFO created keyspace keyspace=agg_test_contract_24h replication="{'class': 'SimpleStrategy', 'replication_factor': 1}"
+2026/11/19 13:33:49 INFO applied migration migration=0001_baseline.cql
+2026/11/19 13:33:50 INFO applied migration migration=0002_bucket_schedule.cql
+2026/11/19 13:33:52 INFO applied migration migration=0003_leader_and_revision.cql
+2026/11/19 13:33:54 INFO applied migration migration=0004_derived_hazard_ids.cql
+2026/11/19 13:33:54 INFO applied migration migration="0005_rekey_hazard_ids (go)"
+2026/11/19 13:33:55 INFO applied migration migration=0006_drop_hazard_by_source_ref.cql
+2026/11/19 13:33:57 INFO applied migration migration=0007_problem3.cql
+2026/11/19 13:33:58 INFO applied migration migration=0008_m2_streams.cql
+2026/11/19 13:33:59 INFO applied migration migration=0009_audit_indexes.cql
+2026/11/19 13:34:00 INFO applied migration migration=0010_analytics_metadata.cql
+2026/11/19 13:34:08 INFO applied migration migration=0011_write_authority.cql
+2026/11/19 13:34:13 INFO applied migration migration=0012_critical_journal.cql
+2026/11/19 13:34:14 INFO applied migration migration=0013_stream_snapshots.cql
+2026/11/19 13:34:15 INFO applied migration migration=0014_sharded_projection.cql
+2026/11/19 13:34:15 INFO applied migration migration="0015_backfill_sharded_projection (go)"
+2026/11/19 13:34:15 INFO applied migration migration=0016_streaming_snapshots.cql
+2026/11/19 13:34:17 INFO applied migration migration=0017_list_metadata.cql
+=== RUN   TestContract/24h0m0s/List/OrderAndPaging
+=== RUN   TestContract/24h0m0s/List/Filters
+=== RUN   TestContract/24h0m0s/List/TimeRange
+=== RUN   TestContract/24h0m0s/List/MovedRecord
+=== RUN   TestContract/24h0m0s/List/InvalidToken
+=== RUN   TestContract/24h0m0s/List/PayloadBudgetAndSummary
+--- PASS: TestContract (118.08s)
+    --- PASS: TestContract/1m0s (56.22s)
+        --- PASS: TestContract/1m0s/List/OrderAndPaging (2.89s)
+        --- PASS: TestContract/1m0s/List/Filters (3.24s)
+        --- PASS: TestContract/1m0s/List/TimeRange (3.02s)
+        --- PASS: TestContract/1m0s/List/MovedRecord (2.75s)
+        --- PASS: TestContract/1m0s/List/InvalidToken (2.54s)
+        --- PASS: TestContract/1m0s/List/PayloadBudgetAndSummary (3.07s)
+    --- PASS: TestContract/24h0m0s (61.87s)
+        --- PASS: TestContract/24h0m0s/List/OrderAndPaging (2.46s)
+        --- PASS: TestContract/24h0m0s/List/Filters (2.89s)
+        --- PASS: TestContract/24h0m0s/List/TimeRange (2.87s)
+        --- PASS: TestContract/24h0m0s/List/MovedRecord (2.65s)
+        --- PASS: TestContract/24h0m0s/List/InvalidToken (2.49s)
+        --- PASS: TestContract/24h0m0s/List/PayloadBudgetAndSummary (3.11s)
+PASS
+ok  	github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/aggregator/internal/storage/cassandra	118.218s

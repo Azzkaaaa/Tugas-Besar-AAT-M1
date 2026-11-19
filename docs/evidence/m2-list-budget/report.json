@@ -1,0 +1,69 @@
+{
+  "date": "2026-11-19",
+  "scope": "Bounded catalog metadata/payload selection and RPC serialization; synthetic single-node RF=1",
+  "implementation": {
+    "page_target_wire_bytes": 8388608,
+    "complete_response_transport_bytes": 16777216,
+    "metadata_row_cap": 1000,
+    "cassandra_migration": 17,
+    "summary": "Metadata only for valid cached/new rows; bounded legacy fallback when required",
+    "continuation": "Before every unreturned metadata candidate; partial reads retry the incoming interval"
+  },
+  "before": {
+    "application": "Cassandra retained full attribute pages from eight shards before merging; PostgreSQL returned complete attribute pages even for SUMMARY",
+    "server_repeat": "The first capped RPC run passed. After the broader contract/schema suite, repeating it failed during seed projection 6; Docker reported server exit 137, OOMKilled=true under the 1GiB cap. Preserved failed client log and final server log excerpt.",
+    "allocation_attribution": "The exact responsible allocations were not isolated. Netty's separate direct allowance and arena sizes were subsequently reduced/unified; the complete repeated sequence then passed."
+  },
+  "after": {
+    "sequence": [
+      "512MiB native RPC + 200000-key legacy metadata repair",
+      "Both List contract bucket layouts, schedule changes, backfill and upgrade tests on the same Cassandra server",
+      "Repeat 512MiB native RPC + large legacy repair + 32-event large outbox backlog on that server"
+    ],
+    "post_suite_rpc": {
+      "records": 32,
+      "keys_per_record": 200000,
+      "records_per_shard": [4, 4, 4, 4, 4, 4, 4, 4],
+      "summary_response_bytes": 2547,
+      "full_pages": 32,
+      "max_full_rpc_bytes": 9600451,
+      "all_detection_keys_compared": true,
+      "peak_rss_kib": 176756,
+      "peak_charged_bytes": 185315328,
+      "application_seconds": 11.690087428,
+      "including_schema_seconds": 49.95
+    },
+    "post_suite_legacy_repair_seconds": 40.20,
+    "post_suite_outbox": {
+      "pending_events": 32,
+      "event_bytes": 9600418,
+      "pending_payload_bytes": 307213376,
+      "setup_retries": 0,
+      "process_peak_rss_kib_after_all_three_cases": 221960,
+      "container_peak_charged_bytes_after_all_three_cases": 232116224
+    },
+    "client_cap_bytes": 536870912,
+    "go_soft_limit": "384MiB",
+    "server_cap_bytes": 1073741824,
+    "server_heap_mib": 256,
+    "server_shared_jdk_direct_limit_mib": 256,
+    "server_restarts": 0,
+    "server_cgroup_oom_and_kill_counters": 0,
+    "server_internal_oom_or_crc_errors": 0,
+    "cassandra_contracts_seconds": 118.218,
+    "cassandra_schedule_contracts_seconds": 58.578,
+    "cassandra_upgrade_backfill_move_seconds": 122.209,
+    "postgres_full_integration_seconds": 11.522,
+    "aggregator_full_untagged_suite": "passed",
+    "infrastructure_tests": 122,
+    "infrastructure_skips": 1,
+    "infrastructure_seconds": 57.666,
+    "fixtures_removed": true
+  },
+  "limits": [
+    "Server memory still reaches its configured ceiling; raw memory.events/peak/RSS are preserved in runtime.json",
+    "RPC fixture injects trusted test caller scopes and seeds read projections, not the complete canonical ingest path",
+    "No public HTTP/gateway, concurrent full replies, Get(SUMMARY), disk processor or broker/consumer combination",
+    "No intended separate-kernel k3s RF=3, full-feed p95/60x catch-up or complete reference acceptance"
+  ]
+}

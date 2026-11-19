@@ -77,7 +77,9 @@ and final runs pass. The early failure is retained alongside the passing logs
 and buffer/GC failures in [the evidence report](evidence/m2-outbox-budget/report.json).
 
 These synthetic single-node RF=1 fixtures do not establish RF=3 throughput or
-official-feed catch-up. Bulk catalog List reads, concurrent RPC/HTTP work and
-the combined processor/storage/broker/consumer memory path remain F15 work.
+official-feed catch-up. The subsequent [List payload-budget work](m2-list-payload-budget.md)
+bounds catalog pages and normal summary reads. Get(SUMMARY), global admission
+for concurrent full/cold-cache RPC/HTTP work and the combined processor/storage/
+broker/consumer memory path remain F15 work.
 The full implementation checklist and intended-topology gates remain in the
 sibling infrastructure repository's `docs/m2-completion.md`.

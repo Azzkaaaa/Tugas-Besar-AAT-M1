@@ -1,0 +1,65 @@
+=== RUN   TestMoveAfterScheduleChange
+2026/11/19 13:35:45 INFO created keyspace keyspace=agg_test_move_sched replication="{'class': 'SimpleStrategy', 'replication_factor': 1}"
+2026/11/19 13:35:50 INFO applied migration migration=0001_baseline.cql
+2026/11/19 13:35:51 INFO applied migration migration=0002_bucket_schedule.cql
+2026/11/19 13:35:53 INFO applied migration migration=0003_leader_and_revision.cql
+2026/11/19 13:35:55 INFO applied migration migration=0004_derived_hazard_ids.cql
+2026/11/19 13:35:55 INFO applied migration migration="0005_rekey_hazard_ids (go)"
+2026/11/19 13:35:56 INFO applied migration migration=0006_drop_hazard_by_source_ref.cql
+2026/11/19 13:35:58 INFO applied migration migration=0007_problem3.cql
+2026/11/19 13:36:02 INFO applied migration migration=0008_m2_streams.cql
+2026/11/19 13:36:03 INFO applied migration migration=0009_audit_indexes.cql
+2026/11/19 13:36:04 INFO applied migration migration=0010_analytics_metadata.cql
+2026/11/19 13:36:09 INFO applied migration migration=0011_write_authority.cql
+2026/11/19 13:36:14 INFO applied migration migration=0012_critical_journal.cql
+2026/11/19 13:36:15 INFO applied migration migration=0013_stream_snapshots.cql
+2026/11/19 13:36:15 INFO applied migration migration=0014_sharded_projection.cql
+2026/11/19 13:36:15 INFO applied migration migration="0015_backfill_sharded_projection (go)"
+2026/11/19 13:36:16 INFO applied migration migration=0016_streaming_snapshots.cql
+2026/11/19 13:36:18 INFO applied migration migration=0017_list_metadata.cql
+--- PASS: TestMoveAfterScheduleChange (40.71s)
+=== RUN   TestListMetadataHandlesMissingAndRollingWriterCache
+2026/11/19 13:36:27 INFO created keyspace keyspace=agg_test_list_meta_288fa52d replication="{'class': 'SimpleStrategy', 'replication_factor': 1}"
+2026/11/19 13:36:32 INFO applied migration migration=0001_baseline.cql
+2026/11/19 13:36:33 INFO applied migration migration=0002_bucket_schedule.cql
+2026/11/19 13:36:35 INFO applied migration migration=0003_leader_and_revision.cql
+2026/11/19 13:36:36 INFO applied migration migration=0004_derived_hazard_ids.cql
+2026/11/19 13:36:36 INFO applied migration migration="0005_rekey_hazard_ids (go)"
+2026/11/19 13:36:38 INFO applied migration migration=0006_drop_hazard_by_source_ref.cql
+2026/11/19 13:36:40 INFO applied migration migration=0007_problem3.cql
+2026/11/19 13:36:41 INFO applied migration migration=0008_m2_streams.cql
+2026/11/19 13:36:42 INFO applied migration migration=0009_audit_indexes.cql
+2026/11/19 13:36:42 INFO applied migration migration=0010_analytics_metadata.cql
+2026/11/19 13:36:48 INFO applied migration migration=0011_write_authority.cql
+2026/11/19 13:36:53 INFO applied migration migration=0012_critical_journal.cql
+2026/11/19 13:36:54 INFO applied migration migration=0013_stream_snapshots.cql
+2026/11/19 13:36:54 INFO applied migration migration=0014_sharded_projection.cql
+2026/11/19 13:36:54 INFO applied migration migration="0015_backfill_sharded_projection (go)"
+2026/11/19 13:36:55 INFO applied migration migration=0016_streaming_snapshots.cql
+2026/11/19 13:36:56 INFO applied migration migration=0017_list_metadata.cql
+=== RUN   TestListMetadataHandlesMissingAndRollingWriterCache/SubMillisecondBounds
+--- PASS: TestListMetadataHandlesMissingAndRollingWriterCache (38.75s)
+    --- PASS: TestListMetadataHandlesMissingAndRollingWriterCache/SubMillisecondBounds (0.01s)
+=== RUN   TestShardedProjectionBackfillFromLegacyRows
+2026/11/19 13:37:04 INFO created keyspace keyspace=agg_test_projection_backfill replication="{'class': 'SimpleStrategy', 'replication_factor': 1}"
+2026/11/19 13:37:12 INFO applied migration migration=0001_baseline.cql
+2026/11/19 13:37:13 INFO applied migration migration=0002_bucket_schedule.cql
+2026/11/19 13:37:15 INFO applied migration migration=0003_leader_and_revision.cql
+2026/11/19 13:37:16 INFO applied migration migration=0004_derived_hazard_ids.cql
+2026/11/19 13:37:16 INFO applied migration migration="0005_rekey_hazard_ids (go)"
+2026/11/19 13:37:18 INFO applied migration migration=0006_drop_hazard_by_source_ref.cql
+2026/11/19 13:37:20 INFO applied migration migration=0007_problem3.cql
+2026/11/19 13:37:21 INFO applied migration migration=0008_m2_streams.cql
+2026/11/19 13:37:22 INFO applied migration migration=0009_audit_indexes.cql
+2026/11/19 13:37:23 INFO applied migration migration=0010_analytics_metadata.cql
+2026/11/19 13:37:28 INFO applied migration migration=0011_write_authority.cql
+2026/11/19 13:37:33 INFO applied migration migration=0012_critical_journal.cql
+2026/11/19 13:37:34 INFO applied migration migration=0013_stream_snapshots.cql
+2026/11/19 13:37:35 INFO applied migration migration=0014_sharded_projection.cql
+2026/11/19 13:37:35 INFO applied migration migration="0015_backfill_sharded_projection (go)"
+2026/11/19 13:37:36 INFO applied migration migration=0016_streaming_snapshots.cql
+2026/11/19 13:37:37 INFO applied migration migration=0017_list_metadata.cql
+2026/11/19 13:37:39 INFO copied List rows into sharded projection rows=40 shards=8
+--- PASS: TestShardedProjectionBackfillFromLegacyRows (42.61s)
+PASS
+ok  	github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/aggregator/internal/storage/cassandra	122.209s

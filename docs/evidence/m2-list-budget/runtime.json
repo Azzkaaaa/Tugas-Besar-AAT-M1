@@ -1,0 +1,24 @@
+{
+  "client": {
+    "exit_code": 0,
+    "limit_bytes": 536870912,
+    "oom_killed": false
+  },
+  "server": {
+    "process_hwm": "VmHWM:\t 1039296 kB",
+    "image_id": "sha256:9920e40fc47062891e4539487b8c996a10b59699eb82e34f327c83f67f48680e",
+    "restart_count": 0,
+    "memory_events": [
+      "low 0",
+      "high 0",
+      "max 20019",
+      "oom 0",
+      "oom_kill 0",
+      "oom_group_kill 0"
+    ],
+    "lifetime_memory_peak_bytes": 1074888704,
+    "oom_killed": false,
+    "limit_bytes": 1073741824
+  },
+  "recorded_at": "2026-11-19T13:46:19.6925682+07:00"
+}

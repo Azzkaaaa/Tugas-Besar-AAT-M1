@@ -69,6 +69,17 @@ func msUTC(t time.Time) time.Time {
 	return t.UTC().Truncate(time.Millisecond)
 }
 
+// PostgreSQL parameters have microsecond precision. Rounding a nanosecond
+// exclusive bound down would exclude a row that should still match. Ceiling
+// both bounds preserves >= Since and < Until for stored timestamp values.
+func queryTime(t time.Time) time.Time {
+	bound := t.UTC().Truncate(time.Microsecond)
+	if bound.Before(t) {
+		bound = bound.Add(time.Microsecond)
+	}
+	return bound
+}
+
 // ApplyRevision runs the lookup, the write and the outbox insert in one transaction.
 func (s hazards) ApplyRevision(ctx context.Context, rev *domain.HazardRecord,
 	newEvent func(saved *domain.HazardRecord) (storage.OutboxEvent, error),
@@ -187,7 +198,8 @@ func (s hazards) Get(ctx context.Context, hazardID string) (*domain.HazardRecord
 }
 
 func (s hazards) List(ctx context.Context, q storage.HazardQuery, page storage.PageRequest) (storage.HazardPage, error) {
-	where := []string{"COALESCE(attributes->>'withdrawn', 'false') <> 'true'"}
+	page.Size = storage.HazardPageSize(page.Size)
+	where := []string{"attributes->'withdrawn' IS DISTINCT FROM 'true'::jsonb"}
 	args := []any{}
 	arg := func(v any) string {
 		args = append(args, v)
@@ -203,10 +215,10 @@ func (s hazards) List(ctx context.Context, q storage.HazardQuery, page storage.P
 		where = append(where, "severity = "+arg(q.Severity))
 	}
 	if !q.Since.IsZero() {
-		where = append(where, "occurred_at >= "+arg(q.Since))
+		where = append(where, "occurred_at >= "+arg(queryTime(q.Since)))
 	}
 	if !q.Until.IsZero() {
-		where = append(where, "occurred_at < "+arg(q.Until))
+		where = append(where, "occurred_at < "+arg(queryTime(q.Until)))
 	}
 
 	cursor, err := decodeCursor(page.Token)
@@ -220,29 +232,41 @@ func (s hazards) List(ctx context.Context, q storage.HazardQuery, page storage.P
 	}
 
 	// One extra row tells whether there is a next page.
-	query := `SELECT ` + hazardColumns + ` FROM hazard_events WHERE ` + strings.Join(where, " AND ") +
+	query := `SELECT hazard_id,source,hazard_type,severity,area_name,occurred_at,ingested_at,revision FROM hazard_events WHERE ` + strings.Join(where, " AND ") +
 		` ORDER BY occurred_at DESC, hazard_id ASC LIMIT ` + arg(page.Size+1)
 	rows, err := s.db.Pool.Query(ctx, query, args...)
 	if err != nil {
 		return storage.HazardPage{}, fmt.Errorf("failed executing hazard list query: %w", err)
 	}
-	defer rows.Close()
-
-	var out storage.HazardPage
+	var candidates []storage.HazardCandidate
 	for rows.Next() {
-		h, err := scanHazard(rows)
-		if err != nil {
+		var h domain.HazardRecord
+		if err := rows.Scan(&h.HazardID, &h.Source, &h.HazardType, &h.Severity, &h.AreaName, &h.OccurredAt, &h.IngestedAt, &h.Revision); err != nil {
+			rows.Close()
 			return storage.HazardPage{}, err
 		}
-		out.Items = append(out.Items, h)
+		h.OccurredAt, h.IngestedAt = h.OccurredAt.UTC(), h.IngestedAt.UTC()
+		candidates = append(candidates, storage.HazardCandidate{Header: &h})
 	}
-	if err := rows.Err(); err != nil {
-		return out, err
-	}
-	if len(out.Items) > page.Size {
-		last := out.Items[page.Size-1]
+	metadataErr := rows.Err()
+	rows.Close() // Release the metadata connection before fetching any body.
+	var out storage.HazardPage
+	if len(candidates) > page.Size {
+		last := candidates[page.Size-1].Header
 		out.NextToken = encodeCursor(last.OccurredAt, last.HazardID)
-		out.Items = out.Items[:page.Size]
+		candidates = candidates[:page.Size]
+	}
+	items, consumed, loadErr := storage.LoadHazardPayloads(ctx, q, candidates, func(h *domain.HazardRecord) (*domain.HazardRecord, error) {
+		return s.Get(ctx, h.HazardID)
+	})
+	out.Items = items
+	if consumed > 0 && consumed < len(candidates) {
+		last := candidates[consumed-1].Header
+		out.NextToken = encodeCursor(last.OccurredAt, last.HazardID)
+	}
+	if err := errors.Join(metadataErr, loadErr); err != nil {
+		out.Partial, out.UnavailableUnits, out.NextToken = true, []string{"canonical"}, page.Token
+		return out, err
 	}
 	return out, nil
 }

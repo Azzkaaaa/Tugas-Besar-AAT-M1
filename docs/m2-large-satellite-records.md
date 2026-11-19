@@ -68,5 +68,7 @@ The subsequent [outbox payload-budget work](m2-outbox-payload-budget.md) replace
 bulk body scans with metadata selection and bounded hydration on both stores.
 Its backlog fixture also exposed Cassandra heap/direct-buffer failures that a
 single large mutation did not reveal; the chart's internal buffer/GC profile
-was revised within the same pod limit. Bulk List reads and the combined path
-still need verification under the actual pod budgets before closing F15.
+was revised within the same pod limit. The later [List payload-budget work](m2-list-payload-budget.md)
+bounds pages and normal summary hydration, with real capped RPC evidence.
+Get(SUMMARY), global concurrent-read admission and the combined path still
+need verification under the actual pod budgets before closing F15.

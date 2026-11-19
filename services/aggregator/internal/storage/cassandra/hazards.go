@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/aggregator/internal/domain"
@@ -348,10 +349,11 @@ func (s hazards) addProjectionMetadata(b *gocql.Batch, h *domain.HazardRecord, b
 
 func (s hazards) addProjectionRow(b *gocql.Batch, h *domain.HazardRecord, bucket time.Time) {
 	b.Query(`INSERT INTO hazards_by_bucket_shard (bucket, shard, occurred_at, hazard_id, source, source_ref_id, hazard_type,
-			severity, area_name, latitude, longitude, ingested_at, attributes, revision)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			severity, area_name, latitude, longitude, ingested_at, attributes, revision, list_active, list_revision, list_wire_bytes)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		bucket, projectionShard(h.HazardID), h.OccurredAt, h.HazardID, h.Source, h.SourceRefID, h.HazardType,
-		h.Severity, h.AreaName, h.Latitude, h.Longitude, h.IngestedAt, mustJSON(h.Attributes), h.Revision)
+		h.Severity, h.AreaName, h.Latitude, h.Longitude, h.IngestedAt, mustJSON(h.Attributes), h.Revision,
+		!domain.Withdrawn(h), h.Revision, int64(domain.FullProjectionSize(h)))
 }
 
 // contentHash identifies the content a revision can change (see sameContent in the Postgres
@@ -427,11 +429,15 @@ func decodeCursor(s string) (*pageCursor, error) {
 // bucket's rows newest first, until it has a page. Source/type/severity are filtered in memory:
 // a selective filter over a long history reads many buckets.
 func (s hazards) List(ctx context.Context, q storage.HazardQuery, page storage.PageRequest) (storage.HazardPage, error) {
+	page.Size = storage.HazardPageSize(page.Size)
 	cursor, err := decodeCursor(page.Token)
 	if err != nil {
 		return storage.HazardPage{}, fmt.Errorf("%w: %v", storage.ErrInvalidPageToken, err)
 	}
 	since, until := msUTC(q.Since), msUTC(q.Until) // zero stays zero
+	if !q.Until.IsZero() && !q.Until.Equal(until) {
+		until = until.Add(time.Millisecond)
+	}
 
 	scope := scopeAll
 	if q.Source != "" {
@@ -456,11 +462,45 @@ func (s hazards) List(ctx context.Context, q storage.HazardQuery, page storage.P
 	}
 	buckets := s.db.session.Query(stmt, args...).WithContext(ctx).PageSize(200).Iter()
 
-	return collectBuckets(ctx, buckets, scope, page, func(bucket time.Time, want int) ([]*domain.HazardRecord, error) {
+	// Only headers are retained for fanout/merge. Legacy fallbacks are serial
+	// within this request so eight shards cannot each hydrate a large body.
+	var sizes sync.Map
+	legacySlots := make(chan struct{}, 1)
+	out := collectBuckets(ctx, buckets, scope, page, func(bucket time.Time, want int) ([]*domain.HazardRecord, error) {
 		unitCtx, cancel := context.WithTimeout(ctx, 250*time.Millisecond)
 		defer cancel()
-		return s.readBucket(unitCtx, bucket, q, since, until, cursor, want)
-	}), nil
+		remember := func(h *domain.HazardRecord, n int) { sizes.Store(h, listMetadata{bytes: n, bucket: bucket}) }
+		return s.readBucket(unitCtx, bucket, q, since, until, cursor, want, remember, legacySlots)
+	})
+	candidates := make([]storage.HazardCandidate, len(out.Items))
+	for i, h := range out.Items {
+		n, _ := sizes.Load(h)
+		metadata, _ := n.(listMetadata)
+		candidates[i] = storage.HazardCandidate{Header: h, FullBytes: metadata.bytes}
+	}
+	items, consumed, err := storage.LoadHazardPayloads(ctx, q, candidates, func(h *domain.HazardRecord) (*domain.HazardRecord, error) {
+		n, _ := sizes.Load(h)
+		return s.readProjection(ctx, h, n.(listMetadata).bucket)
+	})
+	out.Items = items
+	if consumed > 0 && consumed < len(candidates) && !out.Partial {
+		out.NextToken = encodeCursor(candidates[consumed-1].Header)
+	}
+	if err != nil {
+		out.Partial = true
+		out.UnavailableUnits = append(out.UnavailableUnits, "hazard-payload")
+		out.NextToken = page.Token
+		if out.NextToken == "" {
+			out.NextToken = restartCursor()
+		}
+		return out, err
+	}
+	return out, nil
+}
+
+func restartCursor() string {
+	b, _ := json.Marshal(pageCursor{Restart: true})
+	return base64.RawURLEncoding.EncodeToString(b)
 }
 
 type bucketIterator interface {
@@ -494,8 +534,7 @@ func collectBuckets(ctx context.Context, buckets bucketIterator, scope string, p
 	if out.Partial {
 		out.NextToken = page.Token
 		if out.NextToken == "" {
-			b, _ := json.Marshal(pageCursor{Restart: true})
-			out.NextToken = base64.RawURLEncoding.EncodeToString(b)
+			out.NextToken = restartCursor()
 		}
 	}
 	return out
@@ -504,18 +543,19 @@ func collectBuckets(ctx context.Context, buckets bucketIterator, scope string, p
 // readBucket returns up to want matching rows of one bucket, in List order,
 // merged from every shard partition of the bucket.
 func (s hazards) readBucket(ctx context.Context, bucket time.Time, q storage.HazardQuery, since, until time.Time,
-	cursor *pageCursor, want int,
+	cursor *pageCursor, want int, remember func(*domain.HazardRecord, int), legacySlots chan struct{},
 ) ([]*domain.HazardRecord, error) {
 	return readBucketShards(ctx, want, func(ctx context.Context, shard int) ([]*domain.HazardRecord, error) {
-		return s.readShard(ctx, bucket, shard, q, since, until, cursor, want)
+		return s.readShard(ctx, bucket, shard, q, since, until, cursor, want, remember, legacySlots)
 	})
 }
 
 // readShard returns up to want matching rows of one bucket shard, in List order.
 func (s hazards) readShard(ctx context.Context, bucket time.Time, shard int, q storage.HazardQuery, since, until time.Time,
-	cursor *pageCursor, want int,
+	cursor *pageCursor, want int, remember func(*domain.HazardRecord, int), legacySlots chan struct{},
 ) ([]*domain.HazardRecord, error) {
-	stmt := `SELECT ` + hazardColumns + ` FROM hazards_by_bucket_shard WHERE bucket = ? AND shard = ?`
+	stmt := `SELECT hazard_id,source,hazard_type,severity,area_name,occurred_at,ingested_at,revision,
+		list_active,list_revision,list_wire_bytes FROM hazards_by_bucket_shard WHERE bucket = ? AND shard = ?`
 	args := []any{bucket, shard}
 	// CQL allows one upper bound: the cursor's (inclusive; rows at exactly its time are filtered
 	// by hazard_id below) or Until's (exclusive), whichever is tighter.
@@ -531,30 +571,59 @@ func (s hazards) readShard(ctx context.Context, bucket time.Time, shard int, q s
 		stmt += ` AND occurred_at >= ?`
 		args = append(args, since)
 	}
-	iter := s.db.session.Query(stmt, args...).WithContext(ctx).PageSize(max(want, 50)).Iter()
+	iter := s.db.session.Query(stmt, args...).WithContext(ctx).PageSize(min(want, 64)).Iter()
 	scanner := iter.Scanner()
 
 	var out []*domain.HazardRecord
-	for len(out) < want && scanner.Next() {
-		h, err := scanHazard(scanner.Scan)
-		if err != nil {
+	for len(out) < want && ctx.Err() == nil && scanner.Next() {
+		var h domain.HazardRecord
+		var revision, cachedRevision *int
+		var active *bool
+		var wireBytes *int64
+		if err := scanner.Scan(&h.HazardID, &h.Source, &h.HazardType, &h.Severity, &h.AreaName, &h.OccurredAt, &h.IngestedAt,
+			&revision, &active, &cachedRevision, &wireBytes); err != nil {
 			_ = scanner.Err()
 			return nil, err
+		}
+		h.OccurredAt, h.IngestedAt = h.OccurredAt.UTC(), h.IngestedAt.UTC()
+		h.Revision = 1
+		if revision != nil {
+			h.Revision = max(1, *revision)
 		}
 		if cursor != nil && h.OccurredAt.Equal(cursor.OccurredAt) && h.HazardID <= cursor.HazardID {
 			continue
 		}
-		if (q.Source != "" && h.Source != q.Source) ||
-			(q.HazardType != "" && h.HazardType != q.HazardType) ||
-			(q.Severity != "" && h.Severity != q.Severity) {
+		if !storage.MatchesHazardQuery(&h, q) {
 			continue
 		}
-		if !domain.Withdrawn(h) {
-			out = append(out, h)
+		n := 0
+		valid := revision != nil && cachedRevision != nil && *revision == *cachedRevision && active != nil
+		if valid && !*active {
+			continue
 		}
+		if valid && wireBytes != nil && *wireBytes > 0 {
+			n = int(*wireBytes)
+		}
+		if !valid || (!q.SummaryOnly && n == 0) {
+			full, bytes, err := s.resolveListMetadata(ctx, &h, bucket, revision, legacySlots)
+			if err != nil {
+				_ = scanner.Err()
+				return out, err
+			}
+			if full == nil || !storage.MatchesHazardQuery(full, q) {
+				continue
+			}
+			h = *storage.HazardSummaryHeader(full)
+			n = bytes
+		}
+		remember(&h, n)
+		out = append(out, &h)
 	}
 	if err := scanner.Err(); err != nil {
 		return out, fmt.Errorf("failed reading hazard bucket: %w", err)
+	}
+	if err := ctx.Err(); err != nil {
+		return out, err
 	}
 	return out, nil
 }
