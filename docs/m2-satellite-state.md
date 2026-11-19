@@ -29,6 +29,21 @@ unknown key was silently ignored.
 
 ## Recovery
 
+The spatial index now derives pairwise neighbours when needed instead of
+retaining all graph edges. A dense component no longer stores quadratic edge
+maps. A new detection only merges touched components; update/retraction still
+recomputes connectivity when it can split a component. Snapshot restore builds
+the spatial index directly without recomputing every pair. An independent
+all-pairs oracle checks indexed membership after mixed coordinate/confidence
+updates and retractions, alongside the existing identity and snapshot tests.
+It also caught a historical-ID collision during a split: assigning a new
+component could overwrite an untouched component that already owned that ID.
+Both touched and untouched live identifiers are now reserved. Snapshot format
+version 2 rejects older engine state and performs one full journal replay on
+upgrade, so a previously corrupted component map is not reused.
+Point/component state is still in memory; this improvement alone does not close
+the remaining disk-backed working-state requirement.
+
 Each committed `SATELLITE_SNAPSHOT_EVERY` inputs, the leader stores the
 engine's deterministic, gzip-compressed state at that journal sequence
 (`m2_stream_snapshots` in PostgreSQL, chunked `m2_stream_snapshot_*` tables in

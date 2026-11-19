@@ -15,10 +15,10 @@ import (
 // fireStateVersion changes whenever the encoded layout or the engine's
 // deterministic semantics change; older snapshots are then ignored and state
 // is rebuilt from the journal.
-const fireStateVersion = 1
+const fireStateVersion = 2
 
-// fireState is the serialisable part of FireEngine. The spatial grid and the
-// edge sets are a pure function of the point set and are rebuilt on restore.
+// fireState is the serialisable part of FireEngine. The spatial grid is rebuilt
+// on restore; pairwise edges are derived on demand and never retained.
 type fireState struct {
 	Version       int                             `json:"version"`
 	Lateness      time.Duration                   `json:"lateness"`
@@ -84,9 +84,8 @@ func RestoreFireEngine(b []byte, lateness, retention time.Duration, maxPoints in
 	if s.Version != fireStateVersion || s.Lateness != e.Lateness || s.Retention != e.Retention || s.MaxDetections != e.MaxDetections {
 		return nil, fmt.Errorf("%w: version %d lateness %s retention %s max %d", ErrIncompatibleState, s.Version, s.Lateness, s.Retention, s.MaxDetections)
 	}
-	ignored := keyset{}
 	for _, d := range s.Points {
-		e.add(d, ignored)
+		e.indexPoint(d)
 	}
 	if s.Seen != nil {
 		e.seen = s.Seen

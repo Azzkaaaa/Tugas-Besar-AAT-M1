@@ -26,7 +26,6 @@ type FireEngine struct {
 	points    map[string]Detection
 	seen      map[string]time.Time
 	grid      map[cell]keyset
-	edges     map[string]keyset
 	owner     map[string]string
 	groups    map[string]keyset
 	published map[string]bool
@@ -73,7 +72,7 @@ func NewFireEngineRetention(lateness, retention time.Duration, maxPoints int) *F
 		retention = lateness + linkWindow
 	}
 	return &FireEngine{
-		points: map[string]Detection{}, seen: map[string]time.Time{}, grid: map[cell]keyset{}, edges: map[string]keyset{}, owner: map[string]string{},
+		points: map[string]Detection{}, seen: map[string]time.Time{}, grid: map[cell]keyset{}, owner: map[string]string{},
 		groups: map[string]keyset{}, published: map[string]bool{}, latest: map[string]*domain.HazardRecord{}, Lateness: lateness, Retention: retention,
 		MaxDetections: maxPoints, final: map[string]*domain.HazardRecord{},
 	}
@@ -117,41 +116,55 @@ func (e *FireEngine) remove(key string) {
 		if len(e.grid[c]) == 0 {
 			delete(e.grid, c)
 		}
-		for k := range e.edges[key] {
-			delete(e.edges[k], key)
-		}
-		delete(e.edges, key)
 	}
 	delete(e.points, key)
 }
 func (e *FireEngine) add(d Detection, affected keyset) {
-	e.points[d.Key] = d
 	if d.Confidence == "l" {
+		e.points[d.Key] = d
 		return
 	}
+	touched := keyset{}
+	e.neighbours(d, func(k string) {
+		if id := e.owner[k]; id != "" && !touched[id] {
+			e.touch(k, affected)
+			touched[id] = true
+		}
+	})
+	e.indexPoint(d)
+	affected[d.Key] = true
+}
+
+// Neighbours are derived from the spatial/time index. Retaining every pairwise
+// edge makes a dense N-point component consume O(N^2) live memory.
+func (e *FireEngine) neighbours(d Detection, visit func(string)) {
 	c := position(d)
-	e.edges[d.Key] = keyset{}
 	for x := int64(-1); x <= 1; x++ {
 		for y := int64(-1); y <= 1; y++ {
 			for z := int64(-1); z <= 1; z++ {
 				for t := int64(-1); t <= 1; t++ {
 					for k := range e.grid[cell{c[0] + x, c[1] + y, c[2] + z, c[3] + t}] {
 						other := e.points[k]
-						if d.Time.Sub(other.Time).Abs() <= 6*time.Hour && distance(d.Latitude, d.Longitude, other.Latitude, other.Longitude) <= 1 {
-							e.touch(k, affected)
-							e.edges[d.Key][k] = true
-							e.edges[k][d.Key] = true
+						if k != d.Key && d.Time.Sub(other.Time).Abs() <= linkWindow && distance(d.Latitude, d.Longitude, other.Latitude, other.Longitude) <= 1 {
+							visit(k)
 						}
 					}
 				}
 			}
 		}
 	}
+}
+
+func (e *FireEngine) indexPoint(d Detection) {
+	e.points[d.Key] = d
+	if d.Confidence == "l" {
+		return
+	}
+	c := position(d)
 	if e.grid[c] == nil {
 		e.grid[c] = keyset{}
 	}
 	e.grid[c][d.Key] = true
-	affected[d.Key] = true
 }
 
 // Apply accepts flat VIIRS rows or {detection: row}, updates with a full row or
@@ -174,6 +187,7 @@ func (e *FireEngine) Apply(kind string, raw []byte, sequence int64, received tim
 		key, _ = textField(o, "detection_key")
 	}
 	var d Detection
+	insertOnly := false
 	switch kind {
 	case "detection", "update":
 		row := o
@@ -215,6 +229,7 @@ func (e *FireEngine) Apply(kind string, raw []byte, sequence int64, received tim
 			return nil, errors.New("detection_key_mismatch")
 		}
 		_, known := e.points[key]
+		insertOnly = kind == "detection" && !known && d.Confidence != "l"
 		if _, dup := e.seen[key]; kind == "detection" && dup {
 			return nil, nil
 		}
@@ -298,21 +313,31 @@ func (e *FireEngine) Apply(kind string, raw []byte, sequence int64, received tim
 	used := keyset{}
 	newIDs := keyset{}
 	for _, root := range sortedKeys(affected) {
-		if visited[root] || e.edges[root] == nil {
+		point, exists := e.points[root]
+		if visited[root] || !exists || point.Confidence == "l" {
 			continue
 		}
 		members := keyset{root: true}
-		todo := []string{root}
-		visited[root] = true
-		for len(todo) > 0 {
-			k := todo[len(todo)-1]
-			todo = todo[:len(todo)-1]
-			for n := range e.edges[k] {
-				if !visited[n] {
-					visited[n] = true
-					members[n] = true
-					todo = append(todo, n)
-				}
+		if insertOnly {
+			// A new point can only join/merge the components it touches. No edge
+			// was removed, so rebuilding the whole dense component is unnecessary.
+			members = affected
+			for k := range members {
+				visited[k] = true
+			}
+		} else {
+			todo := []string{root}
+			visited[root] = true
+			for len(todo) > 0 {
+				k := todo[len(todo)-1]
+				todo = todo[:len(todo)-1]
+				e.neighbours(e.points[k], func(n string) {
+					if !visited[n] {
+						visited[n] = true
+						members[n] = true
+						todo = append(todo, n)
+					}
+				})
 			}
 		}
 		candidates := keyset{}
@@ -329,8 +354,9 @@ func (e *FireEngine) Apply(kind string, raw []byte, sequence int64, received tim
 		} else {
 			id = stableID("fire-", sortedKeys(members)[0])
 		}
-		// A split must not reuse an identifier already assigned to another component.
-		if used[id] {
+		// A historical identifier may now belong to an untouched component. A
+		// split must not overwrite it, even when it was not assigned this input.
+		if used[id] || e.groups[id] != nil {
 			id = stableID("fire-", sortedKeys(members)[0]+"|split|"+strconv.FormatInt(sequence, 10))
 		}
 		used[id] = true
