@@ -20,6 +20,10 @@ const ServiceConfig = `{"loadBalancingConfig":[{"round_robin":{}}],"methodConfig
     "backoffMultiplier":2,"retryableStatusCodes":["UNAVAILABLE"]}
 }]}`
 
+// A required WILDFIRE detection-key list can exceed gRPC's default 4MiB.
+// Keep an explicit finite receive budget within the gateway's 256MiB pod.
+const maxBackendResponseBytes = 16 << 20
+
 // Dial connects to address (host:port). The name is resolved through DNS and looked up again
 // every refresh, so replicas that start or stop are picked up without waiting for a connection
 // to fail. In Kubernetes the backend needs a headless Service, so DNS lists every ready pod; a
@@ -36,6 +40,7 @@ func Dial(address string, refresh time.Duration, extra ...grpc.DialOption) (*grp
 		grpc.WithDisableServiceConfig(),
 		grpc.WithDefaultServiceConfig(ServiceConfig),
 		grpc.WithStatsHandler(otelgrpc.NewClientHandler()),
+		grpc.WithDefaultCallOptions(grpc.MaxCallRecvMsgSize(maxBackendResponseBytes)),
 	}
 	return grpc.NewClient(refreshScheme+":///"+address, append(options, extra...)...)
 }
