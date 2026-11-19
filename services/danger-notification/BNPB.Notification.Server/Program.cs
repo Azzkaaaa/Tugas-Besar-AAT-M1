@@ -27,6 +27,18 @@ using IOutboundSourceProvider = BNPB.Notification.Server.Core.Ports.Outbound.ISo
 
 var builder = WebApplication.CreateBuilder(args);
 
+// Structured stdout remains usable through kubectl even when the collector is
+// unavailable. Activity scopes correlate API, AMQP and push work with traces.
+builder.Logging.ClearProviders();
+builder.Logging.Configure(options => options.ActivityTrackingOptions =
+  ActivityTrackingOptions.TraceId | ActivityTrackingOptions.SpanId | ActivityTrackingOptions.ParentId);
+builder.Logging.AddJsonConsole(options =>
+{
+  options.IncludeScopes = true;
+  options.TimestampFormat = "yyyy-MM-ddTHH:mm:ss.fffZ";
+  options.UseUtcTimestamp = true;
+});
+
 // Telemetry
 var otel = builder.Services
   .AddOpenTelemetry()

@@ -39,9 +39,14 @@ impl<S: ReplayStore, V: ActorVerifier, R: TokenRenewer> EventFeedService for Fee
     type SubscribeEventsStream = FeedStream;
 
     async fn subscribe_events(&self, request: Request<SubscribeEventsRequest>) -> Result<Response<FeedStream>, Status> {
-        let span = tracing::info_span!("bnpb.feed.v1.EventFeedService/SubscribeEvents", otel.kind = "server", rpc.system = "grpc");
+        let span = tracing::info_span!("bnpb.feed.v1.EventFeedService/SubscribeEvents", otel.kind = "server", rpc.system = "grpc",
+            trace_id = tracing::field::Empty, correlation_id = tracing::field::Empty);
         let _ = span.set_parent(telemetry::grpc_parent(request.metadata()));
         let correlation_id = request.metadata().get(CORRELATION_HEADER).cloned();
+        span.record("trace_id", tracing::field::display(span.context().span().span_context().trace_id()));
+        if let Some(value) = correlation_id.as_ref().and_then(|value| value.to_str().ok()) {
+            span.record("correlation_id", value);
+        }
 
         let actor = match self.verifier.verify(bearer(request.metadata())?).instrument(span.clone()).await {
             Ok(actor) => actor,
@@ -176,8 +181,10 @@ impl Forward {
             feed.lag_ms = u64::try_from(entry.stored_at.elapsed().unwrap_or_default().as_millis()).unwrap_or(u64::MAX),
             event.id = %entry.publication.event_id,
             hazard.id = %entry.publication.hazard.hazard_id,
+            trace_id = tracing::field::Empty,
         );
         let _ = span.set_parent(telemetry::carrier_parent(&entry.publication.trace));
+        span.record("trace_id", tracing::field::display(span.context().span().span_context().trace_id()));
         if stream.is_valid() {
             span.add_link(stream.clone());
         }

@@ -1,0 +1,2 @@
+{"timestamp":"2026-11-19T15:26:48+00:00","service":"spa-server","trace_id":"0af7651916cd43dd8448eb211c80319c","span_id":"1dfd5480e0f15afc","correlation_id":"acceptance-logging","method":"GET","path":"/index.html","status":200,"duration_seconds":0.000,"bytes_sent":598}
+{"timestamp":"2026-11-19T15:28:54+00:00","service":"aat-frontend","trace_id":"0af7651916cd43dd8448eb211c80319c","span_id":"2d9288ba84106ffc","correlation_id":"acceptance-chart","method":"GET","path":"/index.html","status":200,"duration_seconds":0.000,"bytes_sent":598}

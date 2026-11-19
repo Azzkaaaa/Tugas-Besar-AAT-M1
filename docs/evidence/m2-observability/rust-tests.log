@@ -1,0 +1,49 @@
+   Compiling tracing-opentelemetry v0.32.1
+   Compiling bnpb-feed v0.1.0 (/workspace/packages/bnpb-feed-rust/bnpb-feed)
+   Compiling bnpb-event v0.1.0 (/workspace/packages/bnpb-event-rust/bnpb-event)
+   Compiling tonic-health v0.14.6
+   Compiling event-live-feed v0.1.0 (/workspace/services/event-live-feed)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 5m 08s
+     Running unittests src/main.rs (/cache/target/debug/deps/event_live_feed-95cf3d87c54fb5c0)
+
+running 38 tests
+test adapters::inbound::cursor::tests::earlier_epoch_is_expired ... ok
+test adapters::inbound::cursor::tests::round_trip_and_bindings ... ok
+test adapters::inbound::cursor::tests::same_epoch_with_another_key_is_invalid ... ok
+test adapters::inbound::grpc::memory_tests::full_admission_preserves_summary_and_checks_scope_before_capacity ... ok
+test adapters::inbound::grpc::memory_tests::serve_stream_memory_fixture ... ignored, external streaming fixture; FEED_TEST_SERVE=1, stop with /tmp/m2-stream-stop
+test adapters::inbound::grpc::tests::delivery_joins_the_event_trace_and_links_the_stream ... ok
+test adapters::inbound::grpc::tests::ends_with_unauthenticated_at_token_expiry_while_idle ... ok
+test adapters::inbound::grpc::tests::rejects_before_streaming ... ok
+test adapters::inbound::grpc::tests::slow_subscriber_does_not_read_the_next_full_payload_before_capacity_is_available ... ok
+test adapters::inbound::grpc::tests::streams_filtered_projection_and_resumes_from_cursor ... ok
+test adapters::inbound::hazard::tests::filter_matching ... ok
+test adapters::inbound::hazard::tests::filter_validation ... ok
+test adapters::inbound::hazard::tests::summary_projection_is_an_allowlist ... ok
+test adapters::inbound::hazard::tests::views_and_scopes ... ok
+test adapters::inbound::rabbitmq::tests::accepts_valid_envelopes ... ok
+test adapters::inbound::rabbitmq::tests::rejects_invalid_envelopes ... ok
+test adapters::inbound::session::tests::lifetime_cap_applies_with_renewal ... ok
+test adapters::inbound::session::tests::renewed_token_must_keep_subject_and_scopes ... ok
+test adapters::inbound::session::tests::renews_before_expiry_until_rejected ... ok
+test adapters::inbound::session::tests::transient_failures_retry_then_fail_closed_at_expiry ... ok
+test adapters::inbound::session::tests::without_renewer_ends_at_expiry ... ok
+test adapters::inbound::stream_admission::tests::queued_and_split_bytes_hold_credit_after_response_and_body_drop ... ok
+test adapters::outbound::memory_store::tests::byte_eviction_drops_payloads_held_by_old_summary_snapshots_and_notices ... ok
+test adapters::outbound::memory_store::tests::cursor_bounds ... ok
+test adapters::outbound::memory_store::tests::deduplicates_and_assigns_increasing_sequences ... ok
+test adapters::outbound::memory_store::tests::evicts_by_retention_and_forgets_event_ids ... ok
+test adapters::outbound::memory_store::tests::lagging_past_the_buffer_is_expired ... ok
+test adapters::outbound::memory_store::tests::lagging_subscriber_refills_from_replay ... ok
+test adapters::outbound::memory_store::tests::live_only_subscription_starts_at_head ... ok
+test adapters::outbound::memory_store::tests::positions_of_another_epoch_are_expired ... ok
+test adapters::outbound::memory_store::tests::replay_joins_live_without_gaps ... ok
+test adapters::outbound::redis_store::memory_tests::bounded_large_replay_and_legacy_repair ... ignored, requires an empty disposable Redis via FEED_TEST_REDIS_URL; stress with FEED_TEST_LARGE_KEYS=200000
+test adapters::outbound::redis_store::tests::decodes_what_append_writes ... ok
+test adapters::outbound::redis_store::tests::missing_publication_time_decodes_as_none_and_garbage_is_skipped ... ok
+test core::feed::tests::stale_notices_do_not_repeat_storage_reads ... ok
+test telemetry::tests::amqp_parent_reads_trace_context_and_baggage ... ok
+test telemetry::tests::carrier_round_trips_span_context_and_baggage ... ok
+test telemetry::tests::malformed_amqp_trace_context_starts_a_new_trace ... ok
+
+test result: ok. 36 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.06s
