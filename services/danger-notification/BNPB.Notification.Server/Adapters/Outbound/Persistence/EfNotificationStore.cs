@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Linq.Expressions;
 using System.Security.Cryptography;
 using System.Text;
 using BNPB.Common.V1;
@@ -79,7 +80,7 @@ public class EfNotificationStore : IMessageStore, IPushOutbox, IMessageProvider,
     await using var db = await _contextFactory.CreateDbContextAsync(cancellationToken);
     await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
 
-    var record = await db.Notifications.FindAsync([message.Id], cancellationToken);
+    var record = await FindMetadataAsync(db, message.Id, cancellationToken);
 
     if (record == null)
       record = await InsertAsync(db, message, cancellationToken);
@@ -97,6 +98,7 @@ public class EfNotificationStore : IMessageStore, IPushOutbox, IMessageProvider,
     int limit,
     CancellationToken cancellationToken)
   {
+    if (limit < 1) return [];
     var now = Now;
     var token = Guid.NewGuid();
     var leaseExpiresAt = now + (long)_options.LeaseDuration.TotalMilliseconds;
@@ -150,6 +152,7 @@ public class EfNotificationStore : IMessageStore, IPushOutbox, IMessageProvider,
       .Where(r => r.LeaseToken == token)
       .OrderBy(r => r.CreatedAt)
       .ThenBy(r => r.Id)
+      .Select(Metadata)
       .ToListAsync(cancellationToken);
 
     return records.Select(record => ToClaimedNotification(record, token)).ToList();
@@ -185,7 +188,10 @@ public class EfNotificationStore : IMessageStore, IPushOutbox, IMessageProvider,
           ORDER BY ("Source" = {coastal}) DESC, "CreatedAt", "Id"
           LIMIT {limit}
           FOR UPDATE SKIP LOCKED)
-        RETURNING *, xmin
+        RETURNING "Id", "HazardId", "Source", "HazardType", "Severity", "AreaName",
+          "OccurredAt", "PublishedAt", "CreatedAt", "IsCurrent", "PushStatus",
+          "FailedPushAttempts", "NextPushAttemptAt", "LeaseToken", "LeaseExpiresAt",
+          "TraceParent", ''::bytea AS "Hazard", xmin
         """)
       .AsNoTracking()
       .ToListAsync(cancellationToken);
@@ -196,6 +202,37 @@ public class EfNotificationStore : IMessageStore, IPushOutbox, IMessageProvider,
       .ThenBy(r => r.Id, StringComparer.Ordinal)
       .ToList();
   }
+
+  // Pushes contain only notification metadata. Never detoast/transfer/parse a
+  // stored hazard merely to claim a push or change its status. PostgreSQL's xmin
+  // remains part of the tracked snapshot so concurrent outcome updates retry.
+  private static async Task<NotificationRecord?> FindMetadataAsync(
+    NotificationDbContext db, string id, CancellationToken cancellationToken)
+  {
+    if (db.Database.IsNpgsql())
+      return await db.Notifications.FromSql($"""
+        SELECT "Id", "HazardId", "Source", "HazardType", "Severity", "AreaName",
+          "OccurredAt", "PublishedAt", "CreatedAt", "IsCurrent", "PushStatus",
+          "FailedPushAttempts", "NextPushAttemptAt", "LeaseToken", "LeaseExpiresAt",
+          "TraceParent", ''::bytea AS "Hazard", xmin
+        FROM notifications WHERE "Id" = {id}
+        """).SingleOrDefaultAsync(cancellationToken);
+
+    var record = await db.Notifications.AsNoTracking().Where(r => r.Id == id)
+      .Select(Metadata).SingleOrDefaultAsync(cancellationToken);
+    if (record != null) db.Attach(record);
+    return record;
+  }
+
+  private static readonly Expression<Func<NotificationRecord, NotificationRecord>> Metadata = r => new NotificationRecord
+  {
+    Id = r.Id, HazardId = r.HazardId, Source = r.Source, HazardType = r.HazardType,
+    Severity = r.Severity, AreaName = r.AreaName, OccurredAt = r.OccurredAt,
+    PublishedAt = r.PublishedAt, CreatedAt = r.CreatedAt, IsCurrent = r.IsCurrent,
+    PushStatus = r.PushStatus, FailedPushAttempts = r.FailedPushAttempts,
+    NextPushAttemptAt = r.NextPushAttemptAt, LeaseToken = r.LeaseToken,
+    LeaseExpiresAt = r.LeaseExpiresAt, TraceParent = r.TraceParent,
+  };
 
   public async Task ReleasePushesAsync(
     IEnumerable<HazardNotification> messages,
@@ -461,14 +498,49 @@ public class EfNotificationStore : IMessageStore, IPushOutbox, IMessageProvider,
 
   private static HazardNotification ToClaimedNotification(NotificationRecord record, Guid token)
   {
-    var message = ToNotification(record, View.Full);
-    var extraData = message.ExtraData.SetItem(typeof(PushLease), new PushLease(token));
+    var extraData = ImmutableDictionary<Type, object>.Empty
+      .Add(typeof(NotificationCreatedAt), new NotificationCreatedAt(DateTimeOffset.FromUnixTimeMilliseconds(record.CreatedAt)))
+      .Add(typeof(PushLease), new PushLease(token));
 
     if (record.TraceParent != null
       && ActivityContext.TryParse(record.TraceParent, null, out var parent))
       extraData = extraData.SetItem(typeof(ActivityContext), parent);
 
-    return message with { ExtraData = extraData };
+    return new HazardNotification(
+      record.Id,
+      record.Source switch
+      {
+        Source.Bmkg => HazardSource.BMKG,
+        Source.Pvmbg => HazardSource.PVMBG,
+        Source.Satelite => HazardSource.Satellite,
+        Source.CoastSensor => HazardSource.CoastSensor,
+        _ => HazardSource.Unknown,
+      },
+      record.HazardType switch
+      {
+        EHazardType.Seismic => HazardType.Seismic,
+        EHazardType.Volcanic => HazardType.Volcanic,
+        EHazardType.Wildfire => HazardType.Wildfire,
+        EHazardType.Coastal => HazardType.Coastal,
+        _ => HazardType.Unknown,
+      },
+      record.Severity switch
+      {
+        Severity.Siaga => HazardSeverity.Siaga,
+        Severity.Awas => HazardSeverity.Awas,
+        _ => HazardSeverity.Other,
+      },
+      record.AreaName,
+      DateTimeOffset.FromUnixTimeMilliseconds(record.OccurredAt),
+      "",
+      record.PushStatus switch
+      {
+        EPushStatus.Pending => PushStatus.Pending,
+        EPushStatus.Failed => PushStatus.Failed,
+        EPushStatus.Delivered => PushStatus.Delivered,
+        _ => PushStatus.Unspecified,
+      },
+      extraData);
   }
 
   private static HazardNotification ToNotification(NotificationRecord record, View view)

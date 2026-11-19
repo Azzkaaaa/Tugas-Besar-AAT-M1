@@ -10,6 +10,7 @@ public interface IPushOutbox
   // Claims up to limit notifications that need a push attempt. Claimed notifications
   // are hidden from other claimers until they are upserted, released, or the claim
   // lapses. Hand the returned notifications back unchanged apart from PushStatus.
+  // Claims contain push metadata/lease/trace only, never the stored hazard blob.
   public Task<IReadOnlyList<HazardNotification>> ClaimDuePushesAsync(
     int limit,
     CancellationToken cancellationToken);

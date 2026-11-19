@@ -116,7 +116,6 @@ public class RabbitMqConsumer : BackgroundService
 
     consumer.ReceivedAsync += async (model, ea) =>
     {
-      var body = ea.Body.ToArray();
       string? eventId = null;
 
       // Child of the aggregator's rabbitmq.publish span. Baggage.Current is an AsyncLocal,
@@ -140,7 +139,9 @@ public class RabbitMqConsumer : BackgroundService
       {
         _logger.LogInformation("Processing message");
 
-        var externalEvent = HazardEventPublished.Parser.ParseFrom(body);
+        // RabbitMQ owns the delivery memory until this callback completes.
+        // Parse directly; a second complete wire buffer is unnecessary.
+        var externalEvent = HazardEventPublished.Parser.ParseFrom(ea.Body.Span);
         eventId = externalEvent.EventId;
 
         activity?.SetTag("event.id", eventId);

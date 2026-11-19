@@ -1,0 +1,43 @@
+{
+  "date": "2026-11-19",
+  "services_parent": "1829787",
+  "scope": "Notification push claims, redelivery and outcome writes avoid full hazard hydration; direct RabbitMQ span parsing",
+  "verification": {
+    "dotnet_sdk": "10.0.301",
+    "complete_notification_unit_suite_passed": 79,
+    "sqlite_opaque_snapshot_regression": "Claims/outcomes/redelivery preserve exact bytes without parsing",
+    "native_probe_memory_and_swap_cap_bytes": 268435456,
+    "native_probe_cpus": 2,
+    "test_only_gc_heap_override": false,
+    "records": 10,
+    "detection_keys_per_record": 200000,
+    "concurrent_postgres_claimers": 4,
+    "claims_unique": 10,
+    "application_role_denied_hazard_column_select": true,
+    "stale_claim_rejected": true,
+    "blocked_push_batch": 10,
+    "completed_pushes": 10,
+    "overlapping_and_delivered_redelivery_no_repeat": true,
+    "all_snapshot_lengths_and_md5_preserved": true,
+    "final_full_keys_compared_exactly": 200000,
+    "application_peak_rss_kib": 207360,
+    "application_peak_charged_bytes": 264437760,
+    "application_memory_events_max_oom_and_kill": 0,
+    "postgres_version": "17.10 Alpine",
+    "postgres_memory_and_swap_cap_bytes": 536870912,
+    "postgres_peak_charged_bytes": 150691840,
+    "postgres_memory_events_max_oom_and_kill": 0,
+    "oom_killed": false,
+    "restarts": 0
+  },
+  "not_proven": [
+    "Complete hosted ASP.NET/RabbitMQ/FCM process under concurrent pod load",
+    "Metadata-only SUMMARY notification reads",
+    "Byte-bounded FULL notification pages and RPC output lifetimes",
+    "Webhook subscription fanout and slow-client delivery memory",
+    "Combined processor/storage/broker/RPC/HTTP/SSE/consumer memory",
+    "Official feed or separate-kernel k3s/RF=3 acceptance"
+  ],
+  "f15_a_complete": false,
+  "push_performed": false
+}

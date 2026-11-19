@@ -80,7 +80,35 @@ public class EfNotificationStoreTests : IAsyncLifetime
     Assert.Equal("e1", claimed.Id);
     Assert.Equal(PushStatus.Pending, claimed.PushStatus);
     Assert.True(claimed.ExtraData.ContainsKey(typeof(PushLease)));
-    Assert.True(claimed.ExtraData.ContainsKey(typeof(EHazardEvent)));
+    Assert.False(claimed.ExtraData.ContainsKey(typeof(EHazardEvent)));
+  }
+
+  [Fact]
+  public async Task Claim_AndOutcome_NeverDecodeOrRewriteTheImmutableHazard()
+  {
+    var publication = TestData.Published("e1", "h1", source: Source.Satelite);
+    await Ingest(publication);
+    // A malformed opaque snapshot detects accidental parsing. Status handling
+    // must still work, while FULL reads remain responsible for validating it.
+    byte[] opaque = [0x12, 0xff, 0xff, 0xff, 0xff];
+    await using (var db = await _contextFactory.CreateDbContextAsync())
+      await db.Notifications.Where(r => r.Id == "e1")
+        .ExecuteUpdateAsync(setters => setters.SetProperty(r => r.Hazard, opaque));
+
+    var claimed = Assert.Single(await Claim());
+    Assert.Equal(HazardSource.Satellite, claimed.Source);
+    Assert.Equal(publication.AreaName, claimed.AreaName);
+    Assert.Equal(publication.OccurredAt, claimed.OccurredAt);
+    Assert.False(claimed.ExtraData.ContainsKey(typeof(EHazardEvent)));
+    Assert.False(claimed.ExtraData.ContainsKey(typeof(HazardSummary)));
+
+    await Report(claimed, PushStatus.Delivered);
+    await Ingest(publication); // Redelivery must not load/rewrite the snapshot either.
+    var stored = await Record("e1");
+    Assert.Equal(opaque, stored.Hazard);
+    Assert.Equal(EPushStatus.Delivered, stored.PushStatus);
+    Assert.Null(stored.LeaseToken);
+    Assert.Empty(await Claim());
   }
 
   [Fact]
