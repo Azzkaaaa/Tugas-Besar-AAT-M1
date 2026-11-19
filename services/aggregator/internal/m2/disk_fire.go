@@ -113,13 +113,13 @@ func graphNeighboursAffected(ctx context.Context, tx *sql.Tx, in fireInput) erro
 	if in.point.Confidence == "l" {
 		return nil
 	}
-	c := position(in.point)
+	c := graphPosition(in.point)
 	return execGraph(ctx, tx, `INSERT OR IGNORE INTO affected SELECT key FROM owners WHERE component_id IN (
 		SELECT o.component_id FROM points p INDEXED BY points_grid JOIN owners o ON o.key=p.key
 		WHERE p.confidence<>'l' AND p.key<>? AND p.key<>?
 		AND p.cx BETWEEN ? AND ? AND p.cy BETWEEN ? AND ? AND p.cz BETWEEN ? AND ? AND p.slot BETWEEN ? AND ?
 		AND ABS(p.at_ms-?)<=21600000 AND bnpb_fire_distance(p.latitude,p.longitude,?,?)<=1)`,
-		in.key, in.point.Key, c[0]-1, c[0]+1, c[1]-1, c[1]+1, c[2]-1, c[2]+1, c[3]-1, c[3]+1,
+		in.key, in.point.Key, c[0]-5, c[0]+5, c[1]-5, c[1]+5, c[2]-5, c[2]+5, c[3]-3, c[3]+3,
 		in.point.Time.UnixMilli(), in.point.Latitude, in.point.Longitude)
 }
 

@@ -1,0 +1,52 @@
+{
+  "date": "2026-11-19",
+  "synthetic_only": true,
+  "acceptance_gates_satisfied": [],
+  "source_base_commit": "f34bcf7",
+  "additional_changes": "Exact clique-cell traversal and dense-memory fixture, versioned in the same commit as this report",
+  "environment": {
+    "topology": "one disposable Linux amd64 Docker test process, not an assessed cluster",
+    "memory_limit_bytes": 536870912,
+    "go_memory_soft_limit": "384MiB",
+    "cpus": 2,
+    "network": "none",
+    "root_filesystem": "read-only",
+    "working_filesystem": "native Linux local Docker volume",
+    "go_version": "1.26",
+    "runtime_image_id": "sha256:3ea06e4cb95e726ea6c6cc4377570ac4c4050d78710004cbd631ca809daf7e8e",
+    "exit_code": 0,
+    "oom_killed": false
+  },
+  "profiles": [
+    {
+      "case": "independent detections, snapshot and restore",
+      "points": 200000,
+      "sqlite_bytes": 220811264,
+      "compressed_snapshot_bytes": 11103418,
+      "heap_after_gc_bytes": 544640,
+      "peak_process_rss_kib": 41096,
+      "peak_container_charged_memory_bytes": 286191616,
+      "elapsed_seconds": 256.06,
+      "passed": true
+    },
+    {
+      "case": "seeded dense component, one real retraction and canonical revision",
+      "points": 200000,
+      "emitted_records": 1,
+      "remaining_members": 199999,
+      "identity_preserved": true,
+      "peak_process_rss_kib": 156184,
+      "peak_container_charged_memory_bytes": 536870912,
+      "correction_seconds": 8.295590649,
+      "elapsed_seconds": 39.80,
+      "passed": true
+    }
+  ],
+  "limits": [
+    "The dense component is seeded directly into derived state; full-prefix ingestion is not timed.",
+    "No replicated database write, broker publication, RPC response or full-feed network intake is measured.",
+    "Container charged memory includes reclaimable file cache and reached the configured cap during the dense test, without an OOM.",
+    "The second test runs in the same process, so its peak counters include the first test.",
+    "These results do not prove quorum p95, 60x catch-up, live-feed or assistant-reference acceptance."
+  ]
+}

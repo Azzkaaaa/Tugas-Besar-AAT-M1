@@ -1,0 +1,27 @@
+=== RUN   TestDiskProcessorMemoryEnvelope
+    disk_stress_test.go:52: processed=10000 elapsed=10.495763958s
+    disk_stress_test.go:52: processed=20000 elapsed=21.580368536s
+    disk_stress_test.go:52: processed=30000 elapsed=31.789678661s
+    disk_stress_test.go:52: processed=40000 elapsed=42.021747462s
+    disk_stress_test.go:52: processed=50000 elapsed=52.690423478s
+    disk_stress_test.go:52: processed=60000 elapsed=1m3.285174452s
+    disk_stress_test.go:52: processed=70000 elapsed=1m14.265778821s
+    disk_stress_test.go:52: processed=80000 elapsed=1m24.959136708s
+    disk_stress_test.go:52: processed=90000 elapsed=1m36.507806032s
+    disk_stress_test.go:52: processed=100000 elapsed=1m48.979411119s
+    disk_stress_test.go:52: processed=110000 elapsed=2m0.899639761s
+    disk_stress_test.go:52: processed=120000 elapsed=2m12.031684095s
+    disk_stress_test.go:52: processed=130000 elapsed=2m23.308134686s
+    disk_stress_test.go:52: processed=140000 elapsed=2m34.507204818s
+    disk_stress_test.go:52: processed=150000 elapsed=2m46.444152018s
+    disk_stress_test.go:52: processed=160000 elapsed=2m57.79504779s
+    disk_stress_test.go:52: processed=170000 elapsed=3m9.292716982s
+    disk_stress_test.go:52: processed=180000 elapsed=3m21.042212014s
+    disk_stress_test.go:52: processed=190000 elapsed=3m32.594488121s
+    disk_stress_test.go:52: processed=200000 elapsed=3m44.407510123s
+    disk_stress_test.go:89: points=200000 sqlite_bytes=220811264 snapshot_bytes=11103418 heap_bytes=544640 peak_rss=41096 kB container_peak_bytes=286191616 elapsed=4m16.009591967s
+--- PASS: TestDiskProcessorMemoryEnvelope (256.06s)
+=== RUN   TestDiskDenseCorrectionMemoryEnvelope
+    disk_stress_test.go:196: dense_points=200000 emitted=1 peak_rss=156184 kB container_peak_bytes=536870912 correction=8.295590649s elapsed=39.754523773s
+--- PASS: TestDiskDenseCorrectionMemoryEnvelope (39.80s)
+PASS

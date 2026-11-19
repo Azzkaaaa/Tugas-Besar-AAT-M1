@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"sync"
@@ -74,6 +75,16 @@ func openWorkingGraph(ctx context.Context, root string) (*workingGraph, error) {
 			cz INTEGER NOT NULL, slot INTEGER NOT NULL, confidence TEXT NOT NULL,
 			satellite TEXT NOT NULL,frp REAL NOT NULL)`,
 		`CREATE INDEX points_grid ON points (cx,cy,cz,slot,key) WHERE confidence<>'l'`,
+		`CREATE TABLE cells (cx INTEGER,cy INTEGER,cz INTEGER,slot INTEGER,PRIMARY KEY(cx,cy,cz,slot)) WITHOUT ROWID`,
+		`CREATE TRIGGER graph_cell_insert AFTER INSERT ON points WHEN new.confidence<>'l' BEGIN
+			INSERT OR IGNORE INTO cells VALUES(new.cx,new.cy,new.cz,new.slot); END`,
+		`CREATE TRIGGER graph_cell_delete AFTER DELETE ON points WHEN old.confidence<>'l' BEGIN
+			DELETE FROM cells WHERE cx=old.cx AND cy=old.cy AND cz=old.cz AND slot=old.slot
+			AND NOT EXISTS(SELECT 1 FROM points WHERE confidence<>'l' AND cx=old.cx AND cy=old.cy AND cz=old.cz AND slot=old.slot); END`,
+		`CREATE TRIGGER graph_cell_update AFTER UPDATE ON points BEGIN
+			DELETE FROM cells WHERE cx=old.cx AND cy=old.cy AND cz=old.cz AND slot=old.slot
+			AND NOT EXISTS(SELECT 1 FROM points WHERE confidence<>'l' AND cx=old.cx AND cy=old.cy AND cz=old.cz AND slot=old.slot);
+			INSERT OR IGNORE INTO cells SELECT new.cx,new.cy,new.cz,new.slot WHERE new.confidence<>'l'; END`,
 		`CREATE TABLE seen (key TEXT PRIMARY KEY,at_ms INTEGER NOT NULL)`,
 		`CREATE TABLE owners (key TEXT PRIMARY KEY,component_id TEXT NOT NULL)`,
 		`CREATE INDEX owners_component ON owners (component_id,key)`,
@@ -116,12 +127,26 @@ func (g *workingGraph) Close() error {
 	return err
 }
 
+// Fine cells are guaranteed cliques: a 250m ECEF cube has a geodesic diameter
+// below 434m, and a three-hour bucket is shorter than the six-hour edge window.
+// Traversal can visit occupied cells once instead of every dense point pair.
+// Edges BETWEEN cells still use exact geodesic distance and event time.
+func graphPosition(point Detection) cell {
+	lat, lon := point.Latitude*math.Pi/180, point.Longitude*math.Pi/180
+	slot := point.Time.UnixMilli() / 10800000
+	if point.Time.UnixMilli() < 0 && point.Time.UnixMilli()%10800000 != 0 {
+		slot--
+	}
+	return cell{int64(math.Floor(4 * earthKM * math.Cos(lat) * math.Cos(lon))),
+		int64(math.Floor(4 * earthKM * math.Cos(lat) * math.Sin(lon))), int64(math.Floor(4 * earthKM * math.Sin(lat))), slot}
+}
+
 func putGraphPoint(ctx context.Context, tx *sql.Tx, d Detection) error {
 	encoded, err := json.Marshal(d)
 	if err != nil {
 		return err
 	}
-	c := position(d)
+	c := graphPosition(d)
 	_, err = tx.ExecContext(ctx, `INSERT INTO points
 		(key,detection,at_ms,latitude,longitude,cx,cy,cz,slot,confidence,satellite,frp) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
 		ON CONFLICT(key) DO UPDATE SET detection=excluded.detection,at_ms=excluded.at_ms,
@@ -132,22 +157,27 @@ func putGraphPoint(ctx context.Context, tx *sql.Tx, d Detection) error {
 }
 
 // buildGraphComponent computes exact connected membership without retaining an
-// adjacency matrix/list or a Go traversal queue. UNION deduplicates visited
-// keys in SQLite's disk-backed temporary B-tree. The index narrows candidates,
-// and the same Haversine function as the reference engine decides every edge.
+// adjacency matrix/list or a Go traversal queue. UNION deduplicates occupied
+// clique cells in SQLite's disk-backed temporary B-tree. The same Haversine
+// function as the reference engine decides every edge between distinct cells.
 func buildGraphComponent(ctx context.Context, tx *sql.Tx, root string) error {
 	if _, err := tx.ExecContext(ctx, `DELETE FROM component`); err != nil {
 		return err
 	}
-	_, err := tx.ExecContext(ctx, `WITH RECURSIVE connected(key) AS (
-		SELECT key FROM points WHERE key=? AND confidence<>'l'
+	_, err := tx.ExecContext(ctx, `WITH RECURSIVE connected(cx,cy,cz,slot) AS (
+		SELECT cx,cy,cz,slot FROM points WHERE key=? AND confidence<>'l'
 		UNION
-		SELECT p.key FROM connected c JOIN points a ON a.key=c.key
-		JOIN points p INDEXED BY points_grid ON p.cx BETWEEN a.cx-1 AND a.cx+1
-			AND p.cy BETWEEN a.cy-1 AND a.cy+1 AND p.cz BETWEEN a.cz-1 AND a.cz+1
-			AND p.slot BETWEEN a.slot-1 AND a.slot+1
-		WHERE p.confidence<>'l' AND ABS(p.at_ms-a.at_ms)<=21600000
-			AND bnpb_fire_distance(a.latitude,a.longitude,p.latitude,p.longitude)<=1
-	) INSERT INTO component SELECT key FROM connected`, root)
+		SELECT b.cx,b.cy,b.cz,b.slot FROM connected a JOIN cells b
+			ON b.cx BETWEEN a.cx-5 AND a.cx+5 AND b.cy BETWEEN a.cy-5 AND a.cy+5
+			AND b.cz BETWEEN a.cz-5 AND a.cz+5 AND b.slot BETWEEN a.slot-3 AND a.slot+3
+		WHERE (a.cx<>b.cx OR a.cy<>b.cy OR a.cz<>b.cz OR a.slot<>b.slot) AND EXISTS(
+			SELECT 1 FROM points p INDEXED BY points_grid CROSS JOIN points q INDEXED BY points_grid
+			WHERE p.confidence<>'l' AND q.confidence<>'l'
+			AND p.cx=a.cx AND p.cy=a.cy AND p.cz=a.cz AND p.slot=a.slot
+			AND q.cx=b.cx AND q.cy=b.cy AND q.cz=b.cz AND q.slot=b.slot
+			AND ABS(p.at_ms-q.at_ms)<=21600000
+			AND bnpb_fire_distance(p.latitude,p.longitude,q.latitude,q.longitude)<=1)
+	) INSERT INTO component SELECT p.key FROM connected c JOIN points p INDEXED BY points_grid
+		ON p.cx=c.cx AND p.cy=c.cy AND p.cz=c.cz AND p.slot=c.slot WHERE p.confidence<>'l'`, root)
 	return err
 }

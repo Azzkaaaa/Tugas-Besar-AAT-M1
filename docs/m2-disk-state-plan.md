@@ -8,6 +8,12 @@ F15 remains unchecked for dense/full-feed and assessed-topology measurements.
 The working database uses one connection, an 8MiB main pager cache, a 4MiB
 temp cache, on-disk temp tables, dirty-page spill and no mmap. The spatial/time
 index and exact Haversine predicate preserve the reference graph semantics.
+Traversal visits occupied 250m ECEF/three-hour cells. Every point pair inside
+one such cell is within 434m and three hours, so a cell is an exact clique.
+Between cells, adjacency still requires an actual point pair within 1km and
+six hours. This avoids enumerating a dense cell's quadratic point pairs.
+SQLite triggers maintain occupied cells through inserts, moves, confidence
+changes and deletes; snapshots rebuild that derived index from point rows.
 Traversal, affected sets, owners, published identities, deduplication and
 latest records reside on disk. Counts update only affected components instead
 of scanning the complete catalog per input. Minute-resolution satellite times
@@ -42,6 +48,11 @@ use OS temporary disk. Compose's M2 overlay uses writable container disk.
 - Every revision, counter and ID matches the corrected reference over several
   days of mixed input, coordinate/confidence changes, split/merge, historical
   ID collisions, time boundaries and capacity pressure.
+- Cell traversal also matches an independent 400-point all-pairs oracle over
+  dateline/polar coordinates, low confidence and times crossing Unix epoch.
+  A 6,000-point single-cell traversal takes about 4ms; index lifecycle checks
+  cover move/delete/confidence transitions. The full Aggregator suite passes
+  after this change (M2 package 12.663s).
 - Snapshots at multiple journal cut points resume identically and re-encode to
   identical bytes. Corrupt/truncated state, missing/duplicate rows, wrong
   policy/sequence and output failures are rejected.
@@ -69,8 +80,18 @@ use OS temporary disk. Compose's M2 overlay uses writable container disk.
 
 ## Remaining verification before checking F15
 
-- Extend the opt-in TestDiskProcessorMemoryEnvelope measurement to 200,000
-  independent detections and dense components; optimize traversal if needed.
+- The latest 200,000-point independent run passes snapshot/restore in 256.06s:
+  41,096KiB peak process RSS, 286,191,616 bytes peak container charged memory,
+  220,811,264-byte database and 11,103,418-byte compressed snapshot. A seeded
+  200,000-point dense fire retracts one point in 8.30s with one correct revision,
+  unchanged identity and 156,184KiB peak RSS. Charged file cache reaches the
+  512MiB cap in that dense test, without OOM. Both are synthetic local tests;
+  the dense test seeds its prefix and excludes remote canonical storage.
+  Raw output, methodology and caveats are saved in
+  [the profile evidence](evidence/m2-satellite-disk/README.md).
+- Verify the largest required canonical record through real storage, outbox,
+  publication and RPC under the intended pod budgets; the seeded local test
+  does not exercise those downstream serialization/transport limits.
 - Measure the entire available official/practice stream, largest component,
   peak RSS and snapshot overhead, plus quorum-storage p95 and 60x catch-up.
   Synthetic replay is useful regression evidence, not a substitute for these
