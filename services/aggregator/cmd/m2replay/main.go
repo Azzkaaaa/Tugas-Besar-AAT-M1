@@ -1,73 +1,60 @@
-// m2replay checks a captured official feed without credentials or external services.
+// m2replay checks a captured feed with the production disk processor.
 package main
 
 import (
-	"bufio"
+	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"os"
-	"sort"
+	"path/filepath"
 	"time"
 
 	"github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/aggregator/internal/m2"
-	"github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/aggregator/internal/storage"
 )
 
-func main() {
-	input := flag.String("input", "", "captured journal JSONL")
-	output := flag.String("output", "", "write report JSON")
-	lateness := flag.Duration("lateness", 24*time.Hour, "allowed event-time lateness (SATELLITE_ALLOWED_LATENESS)")
-	retention := flag.Duration("retention", m2.DefaultRetention, "correction horizon (SATELLITE_STATE_RETENTION)")
-	maxPoints := flag.Int("max-detections", 200000, "soft in-memory bound (SATELLITE_MAX_DETECTIONS)")
+func run() error {
+	input := flag.String("input", "", "captured journal JSONL, starting at sequence 1")
+	output := flag.String("output", "", "write report JSON (default stdout)")
+	workDir := flag.String("work-dir", "", "parent for temporary disk state (default OS temporary directory)")
+	lateness := flag.Duration("lateness", 24*time.Hour, "allowed event-time lateness")
+	retention := flag.Duration("retention", m2.DefaultRetention, "correction horizon")
+	maxPoints := flag.Int("max-detections", 200000, "soft detection pressure threshold; state remains on disk")
 	flag.Parse()
 	f, err := os.Open(*input)
 	if err != nil {
-		panic(err)
+		return err
 	}
 	defer f.Close()
-	e := m2.NewFireEngineRetention(*lateness, *retention, *maxPoints)
-	e.KeepFinal = true
-	peak := 0
-	s := bufio.NewScanner(f)
-	s.Buffer(make([]byte, 4096), 4<<20)
-	errors := map[string]int{}
-	var durations []float64
-	count := 0
-	started := time.Now()
-	for s.Scan() {
-		var row storage.StreamEntry
-		if err := json.Unmarshal(s.Bytes(), &row); err != nil {
-			panic(err)
-		}
-		t := time.Now()
-		_, err := e.Apply(row.Kind, row.Payload, row.Sequence, row.ReceivedAt)
-		durations = append(durations, time.Since(t).Seconds())
-		peak = max(peak, e.Active())
-		if err != nil {
-			errors[err.Error()]++
-		}
-		count++
-	}
-	if err := s.Err(); err != nil {
-		panic(err)
-	}
-	sort.Float64s(durations)
-	p95 := 0.0
-	if len(durations) > 0 {
-		p95 = durations[(len(durations)-1)*95/100]
-	}
-	fires, singletons := e.Counts()
-	report := map[string]any{"input_events": count, "active_fires": fires, "singletons": singletons, "excluded_low": e.Low, "late": e.Late, "expired_corrections": e.Expired, "over_capacity": e.OverCapacity, "peak_active_detections": peak, "retention": e.Retention.String(), "parked_reasons": errors, "processing_seconds": time.Since(started).Seconds(), "p95_compute_seconds": p95, "items": e.Snapshot(), "measurement": "offline CPU processing only; not ingest-to-storage or notification latency"}
-	b, _ := json.MarshalIndent(report, "", "  ")
+	var out io.Writer = os.Stdout
+	var temporary *os.File
 	if *output != "" {
-		if err := os.WriteFile(*output, b, 0600); err != nil {
-			panic(err)
+		temporary, err = os.CreateTemp(filepath.Dir(*output), ".m2replay-*.json")
+		if err != nil {
+			return err
 		}
-	} else {
-		fmt.Println(string(b))
+		defer func() { temporary.Close(); os.Remove(temporary.Name()) }()
+		out = temporary
 	}
-	delete(report, "items")
-	summary, _ := json.Marshal(report)
-	fmt.Fprintln(os.Stderr, string(summary))
+	summary, err := m2.ReplayJournal(context.Background(), f, out, m2.ReplayOptions{WorkDir: *workDir, Lateness: *lateness, Retention: *retention, MaxDetections: *maxPoints})
+	if err != nil {
+		return err
+	}
+	if temporary != nil {
+		if err := temporary.Close(); err != nil {
+			return err
+		}
+		if err := os.Rename(temporary.Name(), *output); err != nil {
+			return err
+		}
+	}
+	return json.NewEncoder(os.Stderr).Encode(summary)
+}
+
+func main() {
+	if err := run(); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
 }
