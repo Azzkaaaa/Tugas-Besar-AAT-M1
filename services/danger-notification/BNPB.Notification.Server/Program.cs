@@ -122,6 +122,7 @@ switch (storeProvider)
 builder.Services.AddSingleton(TimeProvider.System);
 builder.Services.AddSingleton(outboxOptions);
 builder.Services.AddSingleton<PushOutboxSignal>();
+builder.Services.AddSingleton<NotificationReadBudget>();
 builder.Services.AddSingleton(sp => ActivatorUtilities.CreateInstance<EfNotificationStore>(sp, View.Full));
 builder.Services.AddSingleton<IMessageStore>(sp => sp.GetRequiredService<EfNotificationStore>());
 builder.Services.AddSingleton<IPushOutbox>(sp => sp.GetRequiredService<EfNotificationStore>());

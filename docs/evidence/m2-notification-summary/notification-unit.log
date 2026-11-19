@@ -1,0 +1,10 @@
+  BNPB.Common -> C:\Users\rizac\sigma\aat\tugas-besar\services\packages\bnpb-common-dotnet\BNPB.Common\bin\Debug\net10.0\BNPB.Common.dll
+  BNPB.Notification -> C:\Users\rizac\sigma\aat\tugas-besar\services\packages\bnpb-notification-dotnet\BNPB.Notification\bin\Debug\net10.0\BNPB.Notification.dll
+  BNPB.Aggregator -> C:\Users\rizac\sigma\aat\tugas-besar\services\packages\bnpb-aggregator-dotnet\BNPB.Aggregator\bin\Debug\net10.0\BNPB.Aggregator.dll
+  BNPB.Event -> C:\Users\rizac\sigma\aat\tugas-besar\services\packages\bnpb-event-dotnet\BNPB.Event\bin\Debug\net10.0\BNPB.Event.dll
+  BNPB.Notification.Server -> C:\Users\rizac\sigma\aat\tugas-besar\services\services\danger-notification\BNPB.Notification.Server\bin\Debug\net10.0\BNPB.Notification.Server.dll
+  BNPB.Notification.Server.Tests -> C:\Users\rizac\sigma\aat\tugas-besar\services\services\danger-notification\BNPB.Notification.Server.Tests\bin\Debug\net10.0\BNPB.Notification.Server.Tests.dll
+Test run for C:\Users\rizac\sigma\aat\tugas-besar\services\services\danger-notification\BNPB.Notification.Server.Tests\bin\Debug\net10.0\BNPB.Notification.Server.Tests.dll (.NETCoreApp,Version=v10.0)
+A total of 1 test files matched the specified pattern.
+
+Passed!  - Failed:     0, Passed:    86, Skipped:     0, Total:    86, Duration: 1 s - BNPB.Notification.Server.Tests.dll (net10.0)

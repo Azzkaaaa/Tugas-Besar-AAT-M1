@@ -11,6 +11,7 @@ using BNPB.Notification.Server.Core.Ports.Outbound;
 using BNPB.Notification.Server.Core.Services;
 using Google.Protobuf.WellKnownTypes;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.Logging.Abstractions;
 using Npgsql;
 using ProtoHazardType = BNPB.Common.V1.HazardType;
@@ -36,6 +37,12 @@ await using var admin = new NpgsqlConnection(adminString);
 await admin.OpenAsync();
 var before = await Hashes(admin);
 Require(before.Count == count && before.Values.All(v => v.Length > 9000000), "Large snapshots were not stored");
+
+if (Environment.GetEnvironmentVariable("NOTIFICATION_TEST_MODE") == "summary")
+{
+  Console.WriteLine(JsonSerializer.Serialize(await SummaryProbe.Run(adminString, options, admin, before, keys)));
+  return;
+}
 
 // A column ACL makes an accidental full SELECT/RETURNING fail independently
 // of parser behavior, process allocation counters or query string assertions.
@@ -110,27 +117,45 @@ foreach (var claim in claims)
 Require((await store.ClaimDuePushesAsync(count, timeout.Token)).Count == 0, "Redelivery regressed delivered status");
 var after = await Hashes(admin);
 Require(before.OrderBy(k => k.Key).SequenceEqual(after.OrderBy(k => k.Key)), "Status writes changed an immutable snapshot");
+await using (var command = new NpgsqlCommand("SELECT count(*) FROM notifications WHERE \"Summary\" IS NOT NULL", admin))
+  Require(Convert.ToInt64(await command.ExecuteScalarAsync()) == count, "Metadata outcome writes cleared summary caches");
 await CheckFull(adminStore, "event-9");
 
 var rss = File.ReadAllLines("/proc/self/status").First(line => line.StartsWith("VmHWM:"));
-Console.WriteLine(JsonSerializer.Serialize(new {
-  records = count, keys_per_record = keys, concurrent_claimers = 4, blocked_push_batch = count,
-  snapshot_column_select_denied = true, stale_claim_rejected = true, snapshots_unchanged = true,
-  completed_pushes = push.Sent, exact_full_keys_compared = keys,
-  peak_rss = rss, cgroup_peak_bytes = File.ReadAllText("/sys/fs/cgroup/memory.peak").Trim(),
+Console.WriteLine(JsonSerializer.Serialize(new
+{
+  records = count,
+  keys_per_record = keys,
+  concurrent_claimers = 4,
+  blocked_push_batch = count,
+  snapshot_column_select_denied = true,
+  stale_claim_rejected = true,
+  snapshots_unchanged = true,
+  completed_pushes = push.Sent,
+  exact_full_keys_compared = keys,
+  summary_caches_preserved = true,
+  peak_rss = rss,
+  cgroup_peak_bytes = File.ReadAllText("/sys/fs/cgroup/memory.peak").Trim(),
   memory_events = File.ReadAllText("/sys/fs/cgroup/memory.events")
 }));
 
 static EfNotificationStore Store(Factory factory, OutboxOptions options) => new(
-  NullLogger<EfNotificationStore>.Instance, factory, new PushOutboxSignal(), options, TimeProvider.System, View.Full);
+  NullLogger<EfNotificationStore>.Instance, factory, new PushOutboxSignal(), options, TimeProvider.System, new NotificationReadBudget(), View.Full);
 
 static async Task Seed(EfNotificationStore store)
 {
-  var hazard = new HazardEvent {
-    Source = Source.Satelite, SourceRefId = "test-reference", HazardType = ProtoHazardType.Wildfire,
-    Severity = Severity.Awas, AreaName = "memory fixture", Latitude = -6.1, Longitude = 106.1,
+  var hazard = new HazardEvent
+  {
+    Source = Source.Satelite,
+    SourceRefId = "test-reference",
+    HazardType = ProtoHazardType.Wildfire,
+    Severity = Severity.Awas,
+    AreaName = "memory fixture",
+    Latitude = -6.1,
+    Longitude = 106.1,
     OccurredAt = Timestamp.FromDateTimeOffset(DateTimeOffset.UtcNow),
-    IngestedAt = Timestamp.FromDateTimeOffset(DateTimeOffset.UtcNow), Attributes = new Struct()
+    IngestedAt = Timestamp.FromDateTimeOffset(DateTimeOffset.UtcNow),
+    Attributes = new Struct()
   };
   var detections = new ListValue();
   for (var i = 0; i < keys; i++) detections.Values.Add(Value.ForString(Key(i)));
@@ -138,9 +163,14 @@ static async Task Seed(EfNotificationStore store)
   for (var i = 0; i < count; i++)
   {
     hazard.HazardId = $"fire-{i}";
-    var envelope = new HazardEventPublished {
-      EventId = $"event-{i}", SchemaVersion = 1, Source = Source.Satelite, Publisher = "memory-probe",
-      OccurredAt = hazard.IngestedAt, Payload = hazard
+    var envelope = new HazardEventPublished
+    {
+      EventId = $"event-{i}",
+      SchemaVersion = 1,
+      Source = Source.Satelite,
+      Publisher = "memory-probe",
+      OccurredAt = hazard.IngestedAt,
+      Payload = hazard
     };
     var message = new HazardNotification(envelope.EventId, HazardSource.Satellite,
       BNPB.Notification.Server.Core.Models.HazardType.Wildfire, HazardSeverity.Awas, hazard.AreaName,
@@ -182,10 +212,14 @@ static void Require(bool condition, string failure)
   if (!condition) throw new InvalidOperationException(failure);
 }
 
-sealed class Factory(string connection) : IDbContextFactory<NotificationDbContext>
+sealed class Factory(string connection, DbCommandInterceptor? interceptor = null) : IDbContextFactory<NotificationDbContext>
 {
-  public NotificationDbContext CreateDbContext() => new PostgresNotificationDbContext(
-    new DbContextOptionsBuilder<PostgresNotificationDbContext>().UseNpgsql(connection).Options);
+  public NotificationDbContext CreateDbContext()
+  {
+    var options = new DbContextOptionsBuilder<PostgresNotificationDbContext>().UseNpgsql(connection);
+    if (interceptor != null) options.AddInterceptors(interceptor);
+    return new PostgresNotificationDbContext(options.Options);
+  }
 }
 
 sealed class SlowPush : IPushProvider

@@ -24,12 +24,14 @@ public class EfNotificationStore : IMessageStore, IPushOutbox, IMessageProvider,
 {
   private const char CursorDelimiter = '.';
   private const int MaxUpsertAttempts = 5;
+  private const int MaxCachedSummaryBytes = 64 * 1024;
 
   private readonly ILogger<EfNotificationStore> _logger;
   private readonly IDbContextFactory<NotificationDbContext> _contextFactory;
   private readonly PushOutboxSignal _signal;
   private readonly OutboxOptions _options;
   private readonly TimeProvider _timeProvider;
+  private readonly NotificationReadBudget _readBudget;
   private readonly View _view;
 
   public EfNotificationStore(
@@ -38,6 +40,7 @@ public class EfNotificationStore : IMessageStore, IPushOutbox, IMessageProvider,
     PushOutboxSignal signal,
     OutboxOptions options,
     TimeProvider timeProvider,
+    NotificationReadBudget readBudget,
     View view = View.Summary)
   {
     _logger = logger;
@@ -45,6 +48,7 @@ public class EfNotificationStore : IMessageStore, IPushOutbox, IMessageProvider,
     _signal = signal;
     _options = options;
     _timeProvider = timeProvider;
+    _readBudget = readBudget;
     _view = view;
   }
 
@@ -191,7 +195,7 @@ public class EfNotificationStore : IMessageStore, IPushOutbox, IMessageProvider,
         RETURNING "Id", "HazardId", "Source", "HazardType", "Severity", "AreaName",
           "OccurredAt", "PublishedAt", "CreatedAt", "IsCurrent", "PushStatus",
           "FailedPushAttempts", "NextPushAttemptAt", "LeaseToken", "LeaseExpiresAt",
-          "TraceParent", ''::bytea AS "Hazard", xmin
+          "TraceParent", ''::bytea AS "Hazard", NULL::bytea AS "Summary", xmin
         """)
       .AsNoTracking()
       .ToListAsync(cancellationToken);
@@ -214,7 +218,7 @@ public class EfNotificationStore : IMessageStore, IPushOutbox, IMessageProvider,
         SELECT "Id", "HazardId", "Source", "HazardType", "Severity", "AreaName",
           "OccurredAt", "PublishedAt", "CreatedAt", "IsCurrent", "PushStatus",
           "FailedPushAttempts", "NextPushAttemptAt", "LeaseToken", "LeaseExpiresAt",
-          "TraceParent", ''::bytea AS "Hazard", xmin
+          "TraceParent", ''::bytea AS "Hazard", NULL::bytea AS "Summary", xmin
         FROM notifications WHERE "Id" = {id}
         """).SingleOrDefaultAsync(cancellationToken);
 
@@ -232,6 +236,17 @@ public class EfNotificationStore : IMessageStore, IPushOutbox, IMessageProvider,
     PushStatus = r.PushStatus, FailedPushAttempts = r.FailedPushAttempts,
     NextPushAttemptAt = r.NextPushAttemptAt, LeaseToken = r.LeaseToken,
     LeaseExpiresAt = r.LeaseExpiresAt, TraceParent = r.TraceParent,
+  };
+
+  private static readonly Expression<Func<NotificationRecord, NotificationRecord>> SummaryMetadata = r => new NotificationRecord
+  {
+    Id = r.Id, HazardId = r.HazardId, Source = r.Source, HazardType = r.HazardType,
+    Severity = r.Severity, AreaName = r.AreaName, OccurredAt = r.OccurredAt,
+    PublishedAt = r.PublishedAt, CreatedAt = r.CreatedAt, IsCurrent = r.IsCurrent,
+    PushStatus = r.PushStatus,
+    // Reject unexpectedly large cache values in SQL before transferring them.
+    // An intact large public summary can still use the serialized fallback.
+    Summary = r.Summary != null && r.Summary.Length <= MaxCachedSummaryBytes ? r.Summary : null,
   };
 
   public async Task ReleasePushesAsync(
@@ -270,11 +285,12 @@ public class EfNotificationStore : IMessageStore, IPushOutbox, IMessageProvider,
   {
     await using var db = await _contextFactory.CreateDbContextAsync(cancellationToken);
 
-    var record = await db.Notifications
-      .AsNoTracking()
-      .FirstOrDefaultAsync(r => r.Id == messageId && r.IsCurrent, cancellationToken);
+    var query = db.Notifications.AsNoTracking().Where(r => r.Id == messageId && r.IsCurrent);
+    var record = await (_view == View.Full ? query : query.Select(SummaryMetadata))
+      .SingleOrDefaultAsync(cancellationToken);
 
-    return record == null ? null : ToNotification(record, _view);
+    if (record == null) return null;
+    return _view == View.Full ? ToNotification(record, _view) : await SummaryNotificationAsync(record, cancellationToken);
   }
 
   public async Task<(IList<HazardNotification>, string)> GetMessageListAsync(
@@ -333,7 +349,7 @@ public class EfNotificationStore : IMessageStore, IPushOutbox, IMessageProvider,
         || (r.CreatedAt == createdAt && string.Compare(r.Id, id) > 0));
     }
 
-    var records = await query
+    var records = await (_view == View.Full ? query : query.Select(SummaryMetadata))
       .OrderByDescending(r => r.CreatedAt)
       .ThenBy(r => r.Id)
       .Take(pageSize + 1)
@@ -348,7 +364,67 @@ public class EfNotificationStore : IMessageStore, IPushOutbox, IMessageProvider,
       nextPageToken = FormatCursor(last.CreatedAt, last.Id, fingerprint);
     }
 
-    return (records.Select(record => ToNotification(record, _view)).ToList(), nextPageToken);
+    if (_view == View.Full)
+      return (records.Select(record => ToNotification(record, _view)).ToList(), nextPageToken);
+
+    var messages = new List<HazardNotification>(records.Count);
+    foreach (var record in records)
+      if (await SummaryNotificationAsync(record, cancellationToken) is { } message)
+        messages.Add(message);
+    return (messages, nextPageToken);
+  }
+
+  private async Task<HazardNotification?> SummaryNotificationAsync(NotificationRecord record, CancellationToken cancellationToken)
+  {
+    if (ReadSummary(record) is { } cached) return ToNotification(record, View.Summary, cached);
+
+    await _readBudget.LegacySummary.WaitAsync(cancellationToken);
+    try
+    {
+      await using var db = await _contextFactory.CreateDbContextAsync(cancellationToken);
+      // A repair that finished while this caller waited must not load the same
+      // full snapshot again. Recheck current status before reading any body.
+      record = (await db.Notifications.AsNoTracking().Where(r => r.Id == record.Id && r.IsCurrent)
+        .Select(SummaryMetadata).SingleOrDefaultAsync(cancellationToken))!;
+      if (record == null) return null;
+      if (ReadSummary(record) is { } repaired) return ToNotification(record, View.Summary, repaired);
+
+      var header = await LegacySummaryAsync(db, record.Id, cancellationToken);
+      if (header == null) return null;
+      var bytes = header.ToByteArray();
+      var changed = await db.Notifications.Where(r => r.Id == record.Id && r.IsCurrent)
+        .ExecuteUpdateAsync(setters => setters.SetProperty(r => r.Summary, bytes), cancellationToken);
+      // Never recreate or expose an outdated row because a repair finished late.
+      return changed == 0 ? null : ToNotification(record, View.Summary, header);
+    }
+    finally { _readBudget.LegacySummary.Release(); }
+  }
+
+  private static async Task<HazardSummary?> LegacySummaryAsync(NotificationDbContext db, string id, CancellationToken cancellationToken)
+  {
+    var bytes = await db.Notifications.AsNoTracking().Where(r => r.Id == id && r.IsCurrent)
+      .Select(r => r.Hazard).SingleOrDefaultAsync(cancellationToken);
+    // The full object tree remains inside a synchronous allowlist copy. Only
+    // the small result escapes this helper, never private fields or full bytes.
+    return bytes == null ? null : ToSummary(EHazardEvent.Parser.ParseFrom(bytes));
+  }
+
+  private static HazardSummary? ReadSummary(NotificationRecord record)
+  {
+    if (record.Summary == null) return null;
+    try
+    {
+      var header = HazardSummary.Parser.ParseFrom(record.Summary);
+      if (header.HazardId != record.HazardId || header.Source != record.Source || header.HazardType != record.HazardType
+        || header.Severity != record.Severity || header.AreaName != record.AreaName || header.OccurredAt == null
+        || header.IngestedAt == null || header.OccurredAt.ToDateTimeOffset().ToUnixTimeMilliseconds() != record.OccurredAt)
+        return null;
+      _ = header.IngestedAt.ToDateTimeOffset();
+      return header;
+    }
+    catch (InvalidProtocolBufferException) { return null; }
+    catch (InvalidOperationException) { return null; }
+    catch (ArgumentException) { return null; }
   }
 
   private async Task<NotificationRecord> InsertAsync(
@@ -412,6 +488,7 @@ public class EfNotificationStore : IMessageStore, IPushOutbox, IMessageProvider,
       PublishedAt = publishedAt,
       CreatedAt = Now,
       Hazard = hazard.ToByteArray(),
+      Summary = ToSummary(hazard).ToByteArray(),
       IsCurrent = !outdated,
       PushStatus = outdated ? EPushStatus.Unspecified : ToProtoPushStatus(message.PushStatus),
       TraceParent = Activity.Current?.Id,
@@ -543,9 +620,14 @@ public class EfNotificationStore : IMessageStore, IPushOutbox, IMessageProvider,
       extraData);
   }
 
-  private static HazardNotification ToNotification(NotificationRecord record, View view)
+  private static HazardNotification ToNotification(NotificationRecord record, View view, HazardSummary? summary = null)
   {
-    var hazard = EHazardEvent.Parser.ParseFrom(record.Hazard);
+    var hazard = view == View.Full ? EHazardEvent.Parser.ParseFrom(record.Hazard) : new EHazardEvent
+    {
+      HazardId = summary!.HazardId, Source = summary.Source, HazardType = summary.HazardType,
+      Severity = summary.Severity, AreaName = summary.AreaName,
+      OccurredAt = summary.OccurredAt, IngestedAt = summary.IngestedAt,
+    };
 
     var extraDataBuilder = ImmutableDictionary.CreateBuilder<Type, object>();
     extraDataBuilder.Add(
@@ -602,8 +684,10 @@ public class EfNotificationStore : IMessageStore, IPushOutbox, IMessageProvider,
     HazardType = hazard.HazardType,
     Severity = hazard.Severity,
     AreaName = hazard.AreaName,
-    OccurredAt = hazard.OccurredAt,
-    IngestedAt = hazard.IngestedAt,
+    OccurredAt = hazard.OccurredAt is { } occurred
+      ? new Google.Protobuf.WellKnownTypes.Timestamp { Seconds = occurred.Seconds, Nanos = occurred.Nanos } : null,
+    IngestedAt = hazard.IngestedAt is { } ingested
+      ? new Google.Protobuf.WellKnownTypes.Timestamp { Seconds = ingested.Seconds, Nanos = ingested.Nanos } : null,
   };
 
   private static EPushStatus ToProtoPushStatus(PushStatus status) => status switch

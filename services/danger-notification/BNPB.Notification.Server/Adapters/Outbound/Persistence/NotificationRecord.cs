@@ -21,6 +21,9 @@ public class NotificationRecord
   public long CreatedAt { get; set; }
   // Full HazardEvent at notification creation, as protobuf.
   public byte[] Hazard { get; set; } = [];
+  // Allowlisted HazardSummary with original timestamp precision. Null on legacy
+  // rows until a bounded read repairs it; never copy a full hazard into this field.
+  public byte[]? Summary { get; set; }
   // False once a newer revision of the same hazard is stored.
   public bool IsCurrent { get; set; }
   public PushStatus PushStatus { get; set; }

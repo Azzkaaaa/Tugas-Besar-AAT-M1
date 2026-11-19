@@ -1,0 +1,3 @@
+Cannot load library libgssapi_krb5.so.2
+Error: libgssapi_krb5.so.2: cannot open shared object file: No such file or directory
+{"records":10,"keys_per_record":200000,"concurrent_claimers":4,"blocked_push_batch":10,"snapshot_column_select_denied":true,"stale_claim_rejected":true,"snapshots_unchanged":true,"completed_pushes":10,"exact_full_keys_compared":200000,"summary_caches_preserved":true,"peak_rss":"VmHWM:\t  205208 kB","cgroup_peak_bytes":"159227904","memory_events":"low 0\nhigh 0\nmax 0\noom 0\noom_kill 0\noom_group_kill 0\n"}

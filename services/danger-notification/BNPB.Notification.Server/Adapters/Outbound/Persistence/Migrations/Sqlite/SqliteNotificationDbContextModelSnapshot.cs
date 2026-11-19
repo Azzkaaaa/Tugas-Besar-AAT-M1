@@ -70,6 +70,9 @@ namespace BNPB.Notification.Server.Adapters.Outbound.Persistence.Migrations.Sqli
                     b.Property<int>("Source")
                         .HasColumnType("INTEGER");
 
+                    b.Property<byte[]>("Summary")
+                        .HasColumnType("BLOB");
+
                     b.Property<string>("TraceParent")
                         .HasColumnType("TEXT");
 

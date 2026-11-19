@@ -81,6 +81,9 @@ namespace BNPB.Notification.Server.Adapters.Outbound.Persistence.Migrations.Post
                     b.Property<int>("Source")
                         .HasColumnType("integer");
 
+                    b.Property<byte[]>("Summary")
+                        .HasColumnType("bytea");
+
                     b.Property<string>("TraceParent")
                         .HasColumnType("text");
 

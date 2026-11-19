@@ -1,6 +1,10 @@
 using System.Diagnostics;
+using System.Data.Common;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
+using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.Extensions.Logging.Abstractions;
 using BNPB.Common.V1;
 using BNPB.Notification.Server.Adapters.Exceptions;
@@ -11,6 +15,7 @@ using BNPB.Notification.Server.Core.Models;
 using EHazardEvent = BNPB.Common.V1.HazardEvent;
 using EPushStatus = BNPB.Notification.V1.DangerNotification.Types.PushStatus;
 using PushStatus = BNPB.Notification.Server.Core.Models.PushStatus;
+using Google.Protobuf;
 
 namespace BNPB.Notification.Server.Tests.Adapters;
 
@@ -29,13 +34,15 @@ public class EfNotificationStoreTests : IAsyncLifetime
   private readonly IDbContextFactory<NotificationDbContext> _contextFactory;
   private readonly ManualTimeProvider _time = new();
   private readonly PushOutboxSignal _signal = new();
+  private readonly NotificationReadBudget _readBudget = new();
+  private readonly PauseLegacyReads _legacyReads = new();
   private readonly EfNotificationStore _full;
   private readonly EfNotificationStore _summary;
 
   public EfNotificationStoreTests()
   {
     _keepAlive = new SqliteConnection(_connectionString);
-    _contextFactory = new ContextFactory(_connectionString);
+    _contextFactory = new ContextFactory(_connectionString, _legacyReads);
     _full = Store(View.Full);
     _summary = Store(View.Summary);
   }
@@ -50,7 +57,7 @@ public class EfNotificationStoreTests : IAsyncLifetime
   public async Task DisposeAsync() => await _keepAlive.DisposeAsync();
 
   private EfNotificationStore Store(View view)
-    => new(NullLogger<EfNotificationStore>.Instance, _contextFactory, _signal, Options, _time, view);
+    => new(NullLogger<EfNotificationStore>.Instance, _contextFactory, _signal, Options, _time, _readBudget, view);
 
   private async Task<NotificationRecord> Record(string id)
   {
@@ -374,12 +381,175 @@ public class EfNotificationStoreTests : IAsyncLifetime
     Assert.True(summary.ExtraData.ContainsKey(typeof(NotificationCreatedAt)));
   }
 
-  private sealed class ContextFactory(string connectionString) : IDbContextFactory<NotificationDbContext>
+  [Fact]
+  public async Task Summary_CacheAvoidsOpaqueFullSnapshotsAndPreservesNanoseconds()
+  {
+    var published = TestData.Published("e1", "h1");
+    var hazard = (EHazardEvent)published.ExtraData[typeof(EHazardEvent)];
+    hazard.OccurredAt.Nanos = 123456789;
+    hazard.IngestedAt.Nanos = 987654321;
+    await Ingest(published);
+    await using (var db = await _contextFactory.CreateDbContextAsync())
+      await db.Notifications.Where(r => r.Id == "e1")
+        .ExecuteUpdateAsync(setters => setters.SetProperty(r => r.Hazard, new byte[] { 0x12, 0xff }));
+
+    var summary = (await _summary.GetMessageAsync("e1", CancellationToken.None))!.Value;
+    var projection = (HazardSummary)summary.ExtraData[typeof(HazardSummary)];
+    Assert.Equal(hazard.OccurredAt, projection.OccurredAt);
+    Assert.Equal(hazard.IngestedAt, projection.IngestedAt);
+    var (page, _) = await _summary.GetMessageListAsync(null, null, null, null, null, 10, null, CancellationToken.None);
+    Assert.Equal(projection, Assert.Single(page).ExtraData[typeof(HazardSummary)]);
+  }
+
+  [Fact]
+  public async Task Schema_UpgradePreservesLegacySnapshotsAndRepairsSummaryOnDemand()
+  {
+    var hazard = TestData.Full("legacy");
+    var wire = hazard.ToByteArray();
+    await using (var db = await _contextFactory.CreateDbContextAsync())
+    {
+      await db.GetService<IMigrator>().MigrateAsync(db.Database.GetMigrations().First());
+      await db.Database.ExecuteSqlInterpolatedAsync($"""
+        INSERT INTO notifications ("Id", "HazardId", "Source", "HazardType", "Severity", "AreaName",
+          "OccurredAt", "PublishedAt", "CreatedAt", "Hazard", "IsCurrent", "PushStatus", "FailedPushAttempts")
+        VALUES ({"legacy-event"}, {hazard.HazardId}, {(int)hazard.Source}, {(int)hazard.HazardType}, {(int)hazard.Severity},
+          {hazard.AreaName}, {hazard.OccurredAt.ToDateTimeOffset().ToUnixTimeMilliseconds()}, {0L}, {0L}, {wire}, {true}, {1}, {0})
+        """);
+      await db.Database.MigrateAsync();
+    }
+    Assert.Null((await Record("legacy-event")).Summary);
+    Assert.NotNull(await _summary.GetMessageAsync("legacy-event", CancellationToken.None));
+    var upgraded = await Record("legacy-event");
+    Assert.Equal(wire, upgraded.Hazard);
+    Assert.Equal("legacy", HazardSummary.Parser.ParseFrom(upgraded.Summary!).HazardId);
+  }
+
+  [Theory]
+  [InlineData(false)]
+  [InlineData(true)]
+  public async Task Summary_RepairsLegacyOrCorruptCacheDurably(bool corrupt)
+  {
+    await Ingest(TestData.Published("e1", "h1"));
+    await using (var db = await _contextFactory.CreateDbContextAsync())
+      await db.Notifications.Where(r => r.Id == "e1")
+        .ExecuteUpdateAsync(setters => setters.SetProperty(r => r.Summary, corrupt ? new byte[] { 0x12, 0xff } : null));
+    var summary = (await _summary.GetMessageAsync("e1", CancellationToken.None))!.Value;
+    var projection = (HazardSummary)summary.ExtraData[typeof(HazardSummary)];
+    Assert.Equal("h1", projection.HazardId);
+    Assert.Equal(projection.ToByteArray(), (await Record("e1")).Summary);
+
+    await using (var db = await _contextFactory.CreateDbContextAsync())
+      await db.Notifications.Where(r => r.Id == "e1")
+        .ExecuteUpdateAsync(setters => setters.SetProperty(r => r.Hazard, new byte[] { 0x12, 0xff }));
+    Assert.NotNull(await _summary.GetMessageAsync("e1", CancellationToken.None));
+  }
+
+  [Fact]
+  public async Task Summary_DropsUnknownCachedFieldsAndRepairsWrongIdentity()
+  {
+    await Ingest(TestData.Published("e1", "h1"));
+    var original = (await Record("e1")).Summary!;
+    // Unknown field 11 contains a private marker. Cached protobuf unknown fields
+    // must not be echoed as part of a SUMMARY projection.
+    var poisoned = original.Concat(new byte[] { 0x5a, 0x07 }).Concat("private"u8.ToArray()).ToArray();
+    await using (var db = await _contextFactory.CreateDbContextAsync())
+      await db.Notifications.Where(r => r.Id == "e1")
+        .ExecuteUpdateAsync(setters => setters.SetProperty(r => r.Summary, poisoned));
+    var safe = (await _summary.GetMessageAsync("e1", CancellationToken.None))!.Value;
+    Assert.Equal(original, ((HazardSummary)safe.ExtraData[typeof(HazardSummary)]).ToByteArray());
+
+    var nested = HazardSummary.Parser.ParseFrom(original);
+    var timestamp = nested.OccurredAt.ToByteArray().Concat(new byte[] { 0x5a, 0x07 }).Concat("private"u8.ToArray()).ToArray();
+    nested.OccurredAt = Google.Protobuf.WellKnownTypes.Timestamp.Parser.ParseFrom(timestamp);
+    await using (var db = await _contextFactory.CreateDbContextAsync())
+      await db.Notifications.Where(r => r.Id == "e1")
+        .ExecuteUpdateAsync(setters => setters.SetProperty(r => r.Summary, nested.ToByteArray()));
+    safe = (await _summary.GetMessageAsync("e1", CancellationToken.None))!.Value;
+    Assert.Equal(original, ((HazardSummary)safe.ExtraData[typeof(HazardSummary)]).ToByteArray());
+
+    var wrong = HazardSummary.Parser.ParseFrom(original);
+    wrong.HazardId = "another-hazard";
+    await using (var db = await _contextFactory.CreateDbContextAsync())
+      await db.Notifications.Where(r => r.Id == "e1")
+        .ExecuteUpdateAsync(setters => setters.SetProperty(r => r.Summary, wrong.ToByteArray()));
+    var repaired = (await _summary.GetMessageAsync("e1", CancellationToken.None))!.Value;
+    Assert.Equal("h1", ((HazardSummary)repaired.ExtraData[typeof(HazardSummary)]).HazardId);
+  }
+
+  [Fact]
+  public async Task Summary_RepairWaiterDoesNotResurrectSupersededRows()
+  {
+    await Ingest(TestData.Published("e1", "h1"));
+    await using (var db = await _contextFactory.CreateDbContextAsync())
+      await db.Notifications.Where(r => r.Id == "e1")
+        .ExecuteUpdateAsync(setters => setters.SetProperty(r => r.Summary, (byte[]?)null));
+    await _readBudget.LegacySummary.WaitAsync();
+    var pending = _summary.GetMessageAsync("e1", CancellationToken.None);
+    try
+    {
+      Assert.False(pending.IsCompleted);
+      await Ingest(TestData.Published("e2", "h1", publishedMinutes: 1));
+      // Warm headers bypass a held repair slot, including the new revision.
+      Assert.NotNull(await _summary.GetMessageAsync("e2", CancellationToken.None));
+    }
+    finally { _readBudget.LegacySummary.Release(); }
+    Assert.Null(await pending);
+    Assert.Null((await Record("e1")).Summary);
+  }
+
+  [Fact]
+  public async Task Summary_CancelledQueryKeepsRepairSlotUntilItsReadActuallyEnds()
+  {
+    await Ingest(TestData.Published("e1", "h1"));
+    await Ingest(TestData.Published("e2", "h2"));
+    await using (var db = await _contextFactory.CreateDbContextAsync())
+      await db.Notifications.Where(r => r.Id == "e1")
+        .ExecuteUpdateAsync(setters => setters.SetProperty(r => r.Summary, (byte[]?)null));
+    _legacyReads.Armed = true;
+    using var cancel = new CancellationTokenSource();
+    var first = _summary.GetMessageAsync("e1", cancel.Token);
+    await _legacyReads.Entered.Task.WaitAsync(TimeSpan.FromSeconds(2));
+    cancel.Cancel();
+    var second = _summary.GetMessageAsync("e1", CancellationToken.None);
+    try
+    {
+      Assert.NotNull(await _summary.GetMessageAsync("e2", CancellationToken.None));
+      Assert.False(second.IsCompleted);
+      Assert.Equal(1, _legacyReads.Reads);
+    }
+    finally { _legacyReads.Release.TrySetResult(); }
+    await Assert.ThrowsAnyAsync<OperationCanceledException>(() => first);
+    Assert.NotNull(await second);
+  }
+
+  private sealed class ContextFactory(string connectionString, DbCommandInterceptor interceptor) : IDbContextFactory<NotificationDbContext>
   {
     public NotificationDbContext CreateDbContext()
       => new SqliteNotificationDbContext(new DbContextOptionsBuilder<SqliteNotificationDbContext>()
         .UseSqlite(connectionString)
+        .AddInterceptors(interceptor)
         .Options);
+  }
+
+  private sealed class PauseLegacyReads : DbCommandInterceptor
+  {
+    public bool Armed { get; set; }
+    public int Reads { get; private set; }
+    public TaskCompletionSource Entered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    public TaskCompletionSource Release { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    public override async ValueTask<InterceptionResult<DbDataReader>> ReaderExecutingAsync(
+      DbCommand command, CommandEventData eventData, InterceptionResult<DbDataReader> result,
+      CancellationToken cancellationToken = default)
+    {
+      if (Armed && command.CommandText.StartsWith("SELECT") && command.CommandText.Split('\n')[0].Contains("\"Hazard\""))
+      {
+        Reads++;
+        Entered.TrySetResult();
+        // Deliberately model a driver that has not completed cancellation yet.
+        await Release.Task;
+      }
+      return result;
+    }
   }
 
   private sealed class ManualTimeProvider : TimeProvider
