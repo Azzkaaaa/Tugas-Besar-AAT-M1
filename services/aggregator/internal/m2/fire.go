@@ -4,7 +4,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
-	"errors"
 	"math"
 	"reflect"
 	"sort"
@@ -171,99 +170,22 @@ func (e *FireEngine) indexPoint(d Detection) {
 // {key, changes}, and retractions with {key} / {detection_key}. Unknown shapes
 // return an error and are durably parked by the runner, never guessed silently.
 func (e *FireEngine) Apply(kind string, raw []byte, sequence int64, received time.Time) ([]*domain.HazardRecord, error) {
-	o, err := decodeObject(raw)
+	in, err := prepareFireInput(e, kind, raw, len(e.points),
+		func(key string) (Detection, bool, error) { d, ok := e.points[key]; return d, ok, nil },
+		func(key string) (time.Time, bool, error) { at, ok := e.seen[key]; return at, ok, nil })
 	if err != nil {
 		return nil, err
 	}
-	if kind == "heartbeat" {
-		if t, err := timestamp(o, "virtual_now"); err == nil && t.After(e.MaxTime) {
-			e.MaxTime = t
-			e.maybeCompact()
-		}
+	if in.advance {
+		defer e.maybeCompact()
+	}
+	if in.remember {
+		e.seen[in.key] = in.point.Time
+	}
+	if in.skip {
 		return nil, nil
 	}
-	key, _ := textField(o, "key")
-	if key == "" {
-		key, _ = textField(o, "detection_key")
-	}
-	var d Detection
-	insertOnly := false
-	switch kind {
-	case "detection", "update":
-		row := o
-		if b := o["detection"]; len(b) > 0 {
-			row, err = decodeObject(b)
-			if err != nil {
-				return nil, err
-			}
-		}
-		if b := o["changes"]; kind == "update" && len(b) > 0 {
-			prev, ok := e.points[key]
-			if !ok {
-				if _, seen := e.seen[key]; !seen && !e.compacted.IsZero() {
-					e.Expired++
-					return nil, errors.New("correction_beyond_state_retention")
-				}
-				return nil, errors.New("update_unknown_key")
-			}
-			changes, err := decodeObject(b)
-			if err != nil {
-				return nil, err
-			}
-			row = map[string]json.RawMessage{}
-			for k, v := range prev.Raw {
-				row[k] = v
-			}
-			for k, v := range changes {
-				row[k] = v
-			}
-		}
-		d, err = parseDetection(row)
-		if err != nil {
-			return nil, err
-		}
-		if key == "" {
-			key = d.Key
-		}
-		if kind == "detection" && key != d.Key {
-			return nil, errors.New("detection_key_mismatch")
-		}
-		_, known := e.points[key]
-		insertOnly = kind == "detection" && !known && d.Confidence != "l"
-		if _, dup := e.seen[key]; kind == "detection" && dup {
-			return nil, nil
-		}
-		if !known && d.Time.Before(e.MaxTime.Add(-e.Lateness)) {
-			e.Late++
-			return nil, errors.New("late_beyond_allowed_lateness")
-		}
-		if !known && e.MaxDetections > 0 && len(e.points) >= e.MaxDetections {
-			e.OverCapacity++
-		}
-		if d.Time.After(e.seen[key]) {
-			e.seen[key] = d.Time
-		}
-		if d.Time.After(e.MaxTime) {
-			e.MaxTime = d.Time
-			defer e.maybeCompact()
-		}
-		if old, ok := e.points[key]; ok && d.Key == key && reflect.DeepEqual(old, d) {
-			return nil, nil
-		}
-	case "retract":
-		if key == "" {
-			return nil, errors.New("retract_missing_key")
-		}
-		if _, ok := e.points[key]; !ok {
-			if _, seen := e.seen[key]; !seen && !e.compacted.IsZero() {
-				e.Expired++
-				return nil, errors.New("retract_beyond_state_retention")
-			}
-			return nil, nil
-		}
-	default:
-		return nil, errors.New("unknown_stream_event")
-	}
+	key, d, insertOnly := in.key, in.point, in.insertOnly
 	oldOwners := map[string]string{}
 	affected := keyset{}
 	e.touch(key, affected)

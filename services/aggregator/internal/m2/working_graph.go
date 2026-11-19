@@ -71,20 +71,24 @@ func openWorkingGraph(ctx context.Context, root string) (*workingGraph, error) {
 		`PRAGMA threads=1`, `PRAGMA busy_timeout=1000`,
 		`CREATE TABLE points (key TEXT PRIMARY KEY, detection BLOB NOT NULL, at_ms INTEGER NOT NULL,
 			latitude REAL NOT NULL, longitude REAL NOT NULL, cx INTEGER NOT NULL, cy INTEGER NOT NULL,
-			cz INTEGER NOT NULL, slot INTEGER NOT NULL, confidence TEXT NOT NULL)`,
+			cz INTEGER NOT NULL, slot INTEGER NOT NULL, confidence TEXT NOT NULL,
+			satellite TEXT NOT NULL,frp REAL NOT NULL)`,
 		`CREATE INDEX points_grid ON points (cx,cy,cz,slot,key) WHERE confidence<>'l'`,
 		`CREATE TABLE seen (key TEXT PRIMARY KEY,at_ms INTEGER NOT NULL)`,
 		`CREATE TABLE owners (key TEXT PRIMARY KEY,component_id TEXT NOT NULL)`,
 		`CREATE INDEX owners_component ON owners (component_id,key)`,
 		`CREATE TABLE components (id TEXT PRIMARY KEY,members INTEGER NOT NULL)`,
 		`CREATE TABLE published (id TEXT PRIMARY KEY)`,
-		`CREATE TABLE latest (id TEXT PRIMARY KEY,payload BLOB NOT NULL)`,
+		`CREATE TABLE latest (id TEXT PRIMARY KEY,payload BLOB NOT NULL,occurred_ms INTEGER NOT NULL,withdrawn INTEGER NOT NULL)`,
 		`CREATE TABLE final (id TEXT PRIMARY KEY,payload BLOB NOT NULL)`,
 		`CREATE TEMP TABLE affected (key TEXT PRIMARY KEY)`,
 		`CREATE TEMP TABLE old_owners (key TEXT PRIMARY KEY,component_id TEXT NOT NULL)`,
 		`CREATE TEMP TABLE visited (key TEXT PRIMARY KEY)`,
 		`CREATE TEMP TABLE new_components (id TEXT PRIMARY KEY)`,
 		`CREATE TEMP TABLE component (key TEXT PRIMARY KEY)`,
+		`CREATE TEMP TABLE old_ids (id TEXT PRIMARY KEY)`,
+		`CREATE TEMP TABLE changed (id TEXT PRIMARY KEY,payload BLOB NOT NULL)`,
+		`CREATE TEMP TABLE expired_components (id TEXT PRIMARY KEY)`,
 	} {
 		if _, err = db.ExecContext(ctx, statement); err != nil {
 			_ = g.Close()
@@ -119,11 +123,11 @@ func putGraphPoint(ctx context.Context, tx *sql.Tx, d Detection) error {
 	}
 	c := position(d)
 	_, err = tx.ExecContext(ctx, `INSERT INTO points
-		(key,detection,at_ms,latitude,longitude,cx,cy,cz,slot,confidence) VALUES (?,?,?,?,?,?,?,?,?,?)
+		(key,detection,at_ms,latitude,longitude,cx,cy,cz,slot,confidence,satellite,frp) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
 		ON CONFLICT(key) DO UPDATE SET detection=excluded.detection,at_ms=excluded.at_ms,
 		latitude=excluded.latitude,longitude=excluded.longitude,cx=excluded.cx,cy=excluded.cy,
-		cz=excluded.cz,slot=excluded.slot,confidence=excluded.confidence`,
-		d.Key, encoded, d.Time.UnixMilli(), d.Latitude, d.Longitude, c[0], c[1], c[2], c[3], d.Confidence)
+		cz=excluded.cz,slot=excluded.slot,confidence=excluded.confidence,satellite=excluded.satellite,frp=excluded.frp`,
+		d.Key, encoded, d.Time.UnixMilli(), d.Latitude, d.Longitude, c[0], c[1], c[2], c[3], d.Confidence, d.Satellite, d.FRP)
 	return err
 }
 
