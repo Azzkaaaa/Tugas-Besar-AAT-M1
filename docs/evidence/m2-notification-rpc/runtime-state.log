@@ -1,0 +1,4 @@
+/m2-notification-rpc-server cap=268435456 swap=268435456 cpus=2000000000 exit=0 oom=false restarts=0
+/m2-notification-rpc-client cap=268435456 swap=268435456 cpus=2000000000 exit=0 oom=false restarts=0
+/m2-notification-rpc-postgres cap=536870912 swap=536870912 cpus=2000000000 exit=0 oom=false restarts=0
+/m2-notification-rpc-postgres exit=0 oom=false restarts=0

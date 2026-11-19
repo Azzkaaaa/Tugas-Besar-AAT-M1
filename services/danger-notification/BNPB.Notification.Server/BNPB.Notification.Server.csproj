@@ -9,6 +9,12 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <!-- Leave half of the 256MiB container budget for JIT, native networking,
+         database clients and transport buffers outside the managed heap. -->
+    <RuntimeHostConfigurationOption Include="System.GC.HeapHardLimitPercent" Value="50" />
+  </ItemGroup>
+
+  <ItemGroup>
     <PackageReference Include="Cronos" Version="0.13.0" />
     <PackageReference Include="FirebaseAdmin" Version="3.7.0" />
     <PackageReference Include="Grpc.AspNetCore" Version="2.64.0" />
@@ -39,6 +45,7 @@
 
   <ItemGroup>
     <InternalsVisibleTo Include="BNPB.Notification.Server.Tests" />
+    <InternalsVisibleTo Include="BNPB.Notification.MemoryProbe" />
   </ItemGroup>
 
   <ItemGroup>

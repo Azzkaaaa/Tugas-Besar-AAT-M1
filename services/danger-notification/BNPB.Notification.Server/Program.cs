@@ -152,7 +152,7 @@ builder.Services.AddHostedService<RabbitMqConsumer>();
 builder.Services.AddHostedService<PushOutboxWorker>();
 
 // gRPC
-builder.Services.AddGrpc();
+builder.AddNotificationReadBounds();
 builder.Services
   .AddGrpcHealthChecks()
   .AddCheck("self", () => HealthCheckResult.Healthy());
@@ -182,6 +182,7 @@ var app = builder.Build();
 
 app.UseAuthentication();
 app.UseAuthorization();
+app.UseNotificationReadBounds();
 
 app.MapGrpcService<NotificationV1GrpcService>();
 app.MapGrpcHealthChecksService().AllowAnonymous();

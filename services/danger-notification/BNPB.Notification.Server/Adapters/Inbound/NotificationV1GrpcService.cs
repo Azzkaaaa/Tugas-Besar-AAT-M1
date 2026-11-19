@@ -1,5 +1,4 @@
 using Grpc.Core;
-using Google.Protobuf.WellKnownTypes;
 using BNPB.Common.V1;
 using BNPB.Notification.V1;
 using Microsoft.AspNetCore.Authorization;
@@ -10,12 +9,11 @@ using BNPB.Notification.Server.Core.Ports.Inbound;
 
 using EHazardType = BNPB.Common.V1.HazardType;
 using HazardType = BNPB.Notification.Server.Core.Models.HazardType;
-using EHazardEvent = BNPB.Common.V1.HazardEvent;
-using EPushStatus = BNPB.Notification.V1.DangerNotification.Types.PushStatus;
-using PushStatus = BNPB.Notification.Server.Core.Models.PushStatus;
 using ESourceFreshness = BNPB.Common.V1.SourceFreshness;
 using SourceFreshness = BNPB.Notification.Server.Core.Models.SourceFreshness;
 using AdapterBadInputException = BNPB.Notification.Server.Adapters.Exceptions.BadInputException;
+using BNPB.Notification.Server.Adapters.Exceptions;
+using BNPB.Notification.Server.Adapters.Outbound.Persistence;
 
 namespace BNPB.Notification.Server.Adapters.Inbound;
 
@@ -29,19 +27,22 @@ public class NotificationV1GrpcService : DangerNotificationService.DangerNotific
   private readonly ISubscriptionProvider _subscriptionProvider;
   private readonly ISourceProvider _sourceProvider;
   private readonly string _scopeClaim;
+  private readonly NotificationReadBudget _readBudget;
 
   public NotificationV1GrpcService(
     ILogger<NotificationV1GrpcService> logger,
     IMessageProvider messageProvider,
     ISubscriptionProvider subscriptionProvider,
     ISourceProvider sourceProvider,
-    IConfiguration configuration)
+    IConfiguration configuration,
+    NotificationReadBudget readBudget)
   {
     _logger = logger;
     _messageProvider = messageProvider;
     _subscriptionProvider = subscriptionProvider;
     _sourceProvider = sourceProvider;
     _scopeClaim = configuration["Auth:ScopeClaim"] ?? DefaultScopeClaim;
+    _readBudget = readBudget;
   }
 
   public override Task<ListNotificationsResponse>
@@ -58,6 +59,7 @@ public class NotificationV1GrpcService : DangerNotificationService.DangerNotific
       var source = MapSource(filter.Source);
       var type = MapType(filter.HazardType);
       ValidateSourceType(source, type);
+      EnsureCanList(view, permissions);
 
       var response = new ListNotificationsResponse();
 
@@ -68,6 +70,7 @@ public class NotificationV1GrpcService : DangerNotificationService.DangerNotific
       }
       else
       {
+        if (view == HazardView.Full) NotificationReadScope.Admit(_readBudget);
         var (items, nextPageToken) = await _messageProvider.GetMessageListAsync(
           view,
           source,
@@ -80,7 +83,7 @@ public class NotificationV1GrpcService : DangerNotificationService.DangerNotific
           permissions,
           context.CancellationToken);
 
-        response.Items.AddRange(items.Select(ToDangerNotification));
+        response.Items.AddRange(items.Select(NotificationProjection.ToProto));
         response.NextPageToken = nextPageToken;
       }
 
@@ -90,7 +93,7 @@ public class NotificationV1GrpcService : DangerNotificationService.DangerNotific
 
       response.Freshness.AddRange(freshness);
       response.Partial = partial;
-
+      CheckSize(response);
       return response;
     });
 
@@ -100,10 +103,14 @@ public class NotificationV1GrpcService : DangerNotificationService.DangerNotific
     ServerCallContext context)
     => HandleAsync(async () =>
     {
+      var view = MapView(request.View);
+      var permissions = GetPermissions(context);
+      EnsureCanList(view, permissions);
+      if (view == HazardView.Full) NotificationReadScope.Admit(_readBudget);
       var item = await _messageProvider.GetMessageAsync(
         request.NotificationId,
-        MapView(request.View),
-        GetPermissions(context),
+        view,
+        permissions,
         context.CancellationToken);
 
       if (item is not { } message)
@@ -115,11 +122,11 @@ public class NotificationV1GrpcService : DangerNotificationService.DangerNotific
 
       var response = new GetNotificationResponse
       {
-        Item = ToDangerNotification(message),
+        Item = NotificationProjection.ToProto(message),
         Partial = partial,
       };
       response.Freshness.AddRange(freshness);
-
+      CheckSize(response);
       return response;
     });
 
@@ -170,13 +177,17 @@ public class NotificationV1GrpcService : DangerNotificationService.DangerNotific
     {
       throw new RpcException(new Status(StatusCode.PermissionDenied, ex.Message));
     }
-    catch (BadInputException ex)
+    catch (BNPB.Notification.Server.Core.Exceptions.BadInputException ex)
     {
       throw new RpcException(new Status(StatusCode.InvalidArgument, ex.Message));
     }
     catch (AdapterBadInputException ex)
     {
       throw new RpcException(new Status(StatusCode.InvalidArgument, ex.Message));
+    }
+    catch (NotificationCapacityException ex)
+    {
+      throw new RpcException(new Status(StatusCode.ResourceExhausted, ex.Message));
     }
     catch (OperationCanceledException)
     {
@@ -187,6 +198,12 @@ public class NotificationV1GrpcService : DangerNotificationService.DangerNotific
       _logger.LogError(ex, "Unhandled error while processing request");
       throw new RpcException(new Status(StatusCode.Internal, "Internal error"));
     }
+  }
+
+  private static void CheckSize(Google.Protobuf.IMessage response)
+  {
+    if (response.CalculateSize() > NotificationProjection.MaxResponseBytes)
+      throw new NotificationCapacityException("Notification response exceeds the transport byte budget");
   }
 
   private List<UserPermission> GetPermissions(ServerCallContext context)
@@ -260,36 +277,6 @@ public class NotificationV1GrpcService : DangerNotificationService.DangerNotific
     if ((source == HazardSource.BMKG && type == HazardType.Volcanic)
       || (source == HazardSource.PVMBG && type == HazardType.Seismic))
       throw new AdapterBadInputException("Source and hazard type combination is invalid");
-  }
-
-  private static DangerNotification ToDangerNotification(HazardNotification message)
-  {
-    var notification = new DangerNotification
-    {
-      NotificationId = message.Id,
-      Message = message.Alert,
-      PushStatus = message.PushStatus switch
-      {
-        PushStatus.Pending => EPushStatus.Pending,
-        PushStatus.Delivered => EPushStatus.Delivered,
-        PushStatus.Failed => EPushStatus.Failed,
-        _ => EPushStatus.Unspecified,
-      },
-    };
-
-    if (message.ExtraData.TryGetValue(typeof(NotificationCreatedAt), out var createdAt))
-      notification.CreatedAt = Timestamp.FromDateTimeOffset(((NotificationCreatedAt)createdAt).Value);
-    else
-      throw new InvalidOperationException($"Message {message.Id} carries no creation time");
-
-    if (message.ExtraData.TryGetValue(typeof(EHazardEvent), out var full))
-      notification.Hazard = new HazardProjection { Full = (EHazardEvent)full };
-    else if (message.ExtraData.TryGetValue(typeof(HazardSummary), out var summary))
-      notification.Hazard = new HazardProjection { Summary = (HazardSummary)summary };
-    else
-      throw new InvalidOperationException($"Message {message.Id} carries no hazard projection");
-
-    return notification;
   }
 
   private static HazardView MapView(View view) => view switch

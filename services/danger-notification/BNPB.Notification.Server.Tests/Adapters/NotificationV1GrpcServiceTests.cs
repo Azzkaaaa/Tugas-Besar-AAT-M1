@@ -68,6 +68,35 @@ public class NotificationV1GrpcServiceTests : IClassFixture<NotificationV1GrpcSe
       .GetMessageListAsync(default, default, default, default, default, default, default, default, default!, default)
       .ReturnsForAnyArgs((items.ToList(), "next-token"));
 
+  [Theory]
+  [InlineData(false)]
+  [InlineData(true)]
+  public async Task CompleteResponseBudgetRejectsEnvelopeOverflow(bool list)
+  {
+    var item = TestData.Notification("oversize", extra: TestData.Full("hazard")) with { Alert = new string('x', 16 * 1024 * 1024) };
+    SetupList(item);
+    _messages.GetMessageAsync(default!, default, default!, default).ReturnsForAnyArgs(item);
+    var error = list
+      ? await Assert.ThrowsAsync<RpcException>(() => Client().ListNotificationsAsync(new ListNotificationsRequest { View = View.Full }, As(FullScopes)).ResponseAsync)
+      : await Assert.ThrowsAsync<RpcException>(() => Client().GetNotificationAsync(new GetNotificationRequest { NotificationId = "oversize", View = View.Full }, As(FullScopes)).ResponseAsync);
+    Assert.Equal(StatusCode.ResourceExhausted, error.StatusCode);
+  }
+
+  [Fact]
+  public async Task FullAdmissionChecksScopesBeforeCapacityAndPreservesSummary()
+  {
+    var budget = _factory.Services.GetRequiredService<NotificationReadBudget>();
+    using var occupied = budget.AcquireFull();
+    var forbidden = await Assert.ThrowsAsync<RpcException>(() => Client().GetNotificationAsync(
+      new GetNotificationRequest { NotificationId = "h1", View = View.Full }, As(SummaryScopes)).ResponseAsync);
+    Assert.Equal(StatusCode.PermissionDenied, forbidden.StatusCode);
+    var busy = await Assert.ThrowsAsync<RpcException>(() => Client().GetNotificationAsync(
+      new GetNotificationRequest { NotificationId = "h1", View = View.Full }, As(FullScopes)).ResponseAsync);
+    Assert.Equal(StatusCode.ResourceExhausted, busy.StatusCode);
+    _messages.GetMessageAsync(default!, default, default!, default).ReturnsForAnyArgs(SummaryEvent("h1"));
+    Assert.NotNull(await Client().GetNotificationAsync(new GetNotificationRequest { NotificationId = "h1" }, As(SummaryScopes)));
+  }
+
   [Fact]
   public async Task ListNotifications_MapsItemsAndFiltersFreshnessBySource()
   {

@@ -38,6 +38,12 @@ await admin.OpenAsync();
 var before = await Hashes(admin);
 Require(before.Count == count && before.Values.All(v => v.Length > 9000000), "Large snapshots were not stored");
 
+if (Environment.GetEnvironmentVariable("NOTIFICATION_TEST_MODE") == "rpc")
+{
+  await RpcProbe.Run(adminString, options);
+  return;
+}
+
 if (Environment.GetEnvironmentVariable("NOTIFICATION_TEST_MODE") == "summary")
 {
   Console.WriteLine(JsonSerializer.Serialize(await SummaryProbe.Run(adminString, options, admin, before, keys)));

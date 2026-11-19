@@ -286,11 +286,20 @@ public class EfNotificationStore : IMessageStore, IPushOutbox, IMessageProvider,
     await using var db = await _contextFactory.CreateDbContextAsync(cancellationToken);
 
     var query = db.Notifications.AsNoTracking().Where(r => r.Id == messageId && r.IsCurrent);
-    var record = await (_view == View.Full ? query : query.Select(SummaryMetadata))
-      .SingleOrDefaultAsync(cancellationToken);
+    if (_view == View.Full)
+    {
+      using var admission = await _readBudget.EnterStoreAsync(cancellationToken);
+      var candidate = await query.Select(FullMetadata).SingleOrDefaultAsync(cancellationToken);
+      if (candidate == null) return null;
+      if (CandidateBytes(candidate) > NotificationProjection.ContentBytes) throw TooLarge();
+      var message = await LoadFullAsync(db, candidate, cancellationToken);
+      if (message is { } full && NotificationProjection.ExactItemBytes(full) > NotificationProjection.ContentBytes) throw TooLarge();
+      return message;
+    }
+    var record = await query.Select(SummaryMetadata).SingleOrDefaultAsync(cancellationToken);
 
     if (record == null) return null;
-    return _view == View.Full ? ToNotification(record, _view) : await SummaryNotificationAsync(record, cancellationToken);
+    return await SummaryNotificationAsync(record, cancellationToken);
   }
 
   public async Task<(IList<HazardNotification>, string)> GetMessageListAsync(
@@ -349,7 +358,42 @@ public class EfNotificationStore : IMessageStore, IPushOutbox, IMessageProvider,
         || (r.CreatedAt == createdAt && string.Compare(r.Id, id) > 0));
     }
 
-    var records = await (_view == View.Full ? query : query.Select(SummaryMetadata))
+    if (_view == View.Full)
+    {
+      using var admission = await _readBudget.EnterStoreAsync(cancellationToken);
+      var candidates = query.OrderByDescending(r => r.CreatedAt).ThenBy(r => r.Id)
+        .Take(pageSize + 1).Select(FullMetadata).AsAsyncEnumerable();
+      // A streamed metadata reader and body reader need distinct connections.
+      // Do not collect pageSize+1 potentially large public headers into a list.
+      await using var bodies = await _contextFactory.CreateDbContextAsync(cancellationToken);
+      var items = new List<HazardNotification>();
+      long used = 0;
+      (long Time, string Id)? position = null;
+      var more = false;
+      var scanned = 0;
+      await foreach (var candidate in candidates.WithCancellation(cancellationToken))
+      {
+        if (scanned == pageSize) { more = true; break; }
+        if (CandidateBytes(candidate) > NotificationProjection.ContentBytes - used)
+        {
+          if (items.Count == 0) throw TooLarge();
+          more = true;
+          break;
+        }
+        var item = await LoadFullAsync(bodies, candidate, cancellationToken);
+        if (item is { } message)
+        {
+          used += NotificationProjection.ExactItemBytes(message);
+          if (used > NotificationProjection.ContentBytes) throw TooLarge();
+          items.Add(message);
+        }
+        position = (candidate.Record.CreatedAt, candidate.Record.Id);
+        scanned++;
+      }
+      return (items, more && position is { } last ? FormatCursor(last.Time, last.Id, fingerprint) : "");
+    }
+
+    var records = await query.Select(SummaryMetadata)
       .OrderByDescending(r => r.CreatedAt)
       .ThenBy(r => r.Id)
       .Take(pageSize + 1)
@@ -364,14 +408,36 @@ public class EfNotificationStore : IMessageStore, IPushOutbox, IMessageProvider,
       nextPageToken = FormatCursor(last.CreatedAt, last.Id, fingerprint);
     }
 
-    if (_view == View.Full)
-      return (records.Select(record => ToNotification(record, _view)).ToList(), nextPageToken);
-
     var messages = new List<HazardNotification>(records.Count);
     foreach (var record in records)
       if (await SummaryNotificationAsync(record, cancellationToken) is { } message)
         messages.Add(message);
     return (messages, nextPageToken);
+  }
+
+  private sealed record FullCandidate(NotificationRecord Record, int Bytes);
+  private static readonly Expression<Func<NotificationRecord, FullCandidate>> FullMetadata = r => new FullCandidate(new NotificationRecord
+  {
+    Id = r.Id, HazardId = r.Hazard.Length <= NotificationProjection.ContentBytes ? r.HazardId : "", Source = r.Source, HazardType = r.HazardType,
+    Severity = r.Severity, AreaName = r.Hazard.Length <= NotificationProjection.ContentBytes ? r.AreaName : "", OccurredAt = r.OccurredAt, CreatedAt = r.CreatedAt,
+    PushStatus = r.PushStatus, IsCurrent = r.IsCurrent,
+  }, r.Hazard.Length);
+
+  private static long CandidateBytes(FullCandidate candidate)
+    => candidate.Bytes > NotificationProjection.ContentBytes ? long.MaxValue : NotificationProjection.FullItemUpperBound(ToMetadataNotification(candidate.Record,
+      ImmutableDictionary<Type, object>.Empty.Add(typeof(NotificationCreatedAt),
+        new NotificationCreatedAt(DateTimeOffset.FromUnixTimeMilliseconds(candidate.Record.CreatedAt)))), candidate.Bytes);
+
+  private static NotificationCapacityException TooLarge() => new("A notification exceeds the available response byte budget");
+
+  private static async Task<HazardNotification?> LoadFullAsync(NotificationDbContext db, FullCandidate candidate, CancellationToken cancellationToken)
+  {
+    var bytes = await db.Notifications.AsNoTracking().Where(r => r.Id == candidate.Record.Id && r.IsCurrent && r.Hazard.Length == candidate.Bytes)
+      .Select(r => r.Hazard).SingleOrDefaultAsync(cancellationToken);
+    if (bytes == null) return null;
+    candidate.Record.Hazard = bytes;
+    try { return ToNotification(candidate.Record, View.Full); }
+    finally { candidate.Record.Hazard = []; }
   }
 
   private async Task<HazardNotification?> SummaryNotificationAsync(NotificationRecord record, CancellationToken cancellationToken)
@@ -583,7 +649,11 @@ public class EfNotificationStore : IMessageStore, IPushOutbox, IMessageProvider,
       && ActivityContext.TryParse(record.TraceParent, null, out var parent))
       extraData = extraData.SetItem(typeof(ActivityContext), parent);
 
-    return new HazardNotification(
+    return ToMetadataNotification(record, extraData);
+  }
+
+  private static HazardNotification ToMetadataNotification(NotificationRecord record, ImmutableDictionary<Type, object> extraData)
+    => new(
       record.Id,
       record.Source switch
       {
@@ -618,7 +688,6 @@ public class EfNotificationStore : IMessageStore, IPushOutbox, IMessageProvider,
         _ => PushStatus.Unspecified,
       },
       extraData);
-  }
 
   private static HazardNotification ToNotification(NotificationRecord record, View view, HazardSummary? summary = null)
   {

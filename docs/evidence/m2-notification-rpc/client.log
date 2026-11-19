@@ -1,0 +1,4 @@
+=== RUN   TestNotificationFullRPCMemory
+    notification_memory_test.go:149: NOTIFICATION_RPC pages=10 exact_keys=2000000 shed_full=24 reset_cycles=3 held_pool_references=2 body_reads=13 heap_bytes=54379072 container_peak_bytes=113737728
+--- PASS: TestNotificationFullRPCMemory (6.39s)
+PASS

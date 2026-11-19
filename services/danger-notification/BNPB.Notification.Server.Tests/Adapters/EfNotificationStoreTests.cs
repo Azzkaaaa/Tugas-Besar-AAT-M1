@@ -382,6 +382,44 @@ public class EfNotificationStoreTests : IAsyncLifetime
   }
 
   [Fact]
+  public async Task Full_ListPreflightsBodiesAndLeavesBudgetBoundaryBehindCursor()
+  {
+    var text = new string('x', 9_000_000);
+    for (var i = 1; i <= 3; i++)
+    {
+      var item = TestData.Published($"large-{i}", $"hazard-{i}");
+      ((EHazardEvent)item.ExtraData[typeof(EHazardEvent)]).Attributes.Fields["large"] = Google.Protobuf.WellKnownTypes.Value.ForString(text);
+      await Ingest(item);
+    }
+    // The oldest row is an opaque, equally large lookahead. Neither of the
+    // first two pages may fetch or parse it while deciding their continuation.
+    await using (var db = await _contextFactory.CreateDbContextAsync())
+      await db.Notifications.Where(r => r.Id == "large-1").ExecuteUpdateAsync(
+        setters => setters.SetProperty(r => r.Hazard, new byte[9_000_000]));
+    var before = _legacyReads.Reads;
+    var (first, cursor) = await _full.GetMessageListAsync(null, null, null, null, null, 100, null, CancellationToken.None);
+    Assert.Equal("large-3", Assert.Single(first).Id);
+    Assert.NotEmpty(cursor);
+    Assert.Equal(1, _legacyReads.Reads - before);
+    var (second, next) = await _full.GetMessageListAsync(null, null, null, null, null, 100, cursor, CancellationToken.None);
+    Assert.Equal("large-2", Assert.Single(second).Id);
+    Assert.NotEmpty(next);
+    Assert.Equal(2, _legacyReads.Reads - before);
+  }
+
+  [Fact]
+  public async Task Full_GetRejectsOversizedOpaqueBodyBeforeTransfer()
+  {
+    await Ingest(TestData.Published("oversize", "hazard"));
+    await using (var db = await _contextFactory.CreateDbContextAsync())
+      await db.Notifications.Where(r => r.Id == "oversize").ExecuteUpdateAsync(
+        setters => setters.SetProperty(r => r.Hazard, new byte[17 * 1024 * 1024]));
+    var before = _legacyReads.Reads;
+    await Assert.ThrowsAsync<NotificationCapacityException>(() => _full.GetMessageAsync("oversize", CancellationToken.None));
+    Assert.Equal(before, _legacyReads.Reads);
+  }
+
+  [Fact]
   public async Task Summary_CacheAvoidsOpaqueFullSnapshotsAndPreservesNanoseconds()
   {
     var published = TestData.Published("e1", "h1");
@@ -541,12 +579,12 @@ public class EfNotificationStoreTests : IAsyncLifetime
       DbCommand command, CommandEventData eventData, InterceptionResult<DbDataReader> result,
       CancellationToken cancellationToken = default)
     {
-      if (Armed && command.CommandText.StartsWith("SELECT") && command.CommandText.Split('\n')[0].Contains("\"Hazard\""))
+      if (command.CommandText.StartsWith("SELECT") && command.CommandText.Split('\n')[0].TrimEnd().EndsWith(".\"Hazard\""))
       {
         Reads++;
         Entered.TrySetResult();
         // Deliberately model a driver that has not completed cancellation yet.
-        await Release.Task;
+        if (Armed) await Release.Task;
       }
       return result;
     }
