@@ -184,23 +184,27 @@ func (o *outbox) ttl() string {
 	return strconv.FormatInt(secs, 10)
 }
 
-// finish removes ev from outbox_pending and rewrites its outbox_events row with the retention
-// TTL, plus any extra writes, in one logged batch.
+// finish persists any dead letter, writes the terminal marker with retention
+// TTL, then removes pending work. Large payloads use this recoverable order
+// rather than exceeding Cassandra's cross-partition logged-batch limit.
 func (o *outbox) finish(ctx context.Context, ev *storage.ClaimedEvent, publishedAt, failedAt any, lastErr any,
 	extra func(b *gocql.Batch),
 ) error {
 	b := o.db.session.Batch(gocql.LoggedBatch).WithContext(ctx)
-	b.Query(`DELETE FROM outbox_pending WHERE shard = ? AND created_at = ? AND event_id = ?`,
-		pendingPartition(ev.Source), ev.CreatedAt, ev.EventID)
+	// Persist any dead letter before the terminal marker, then remove pending
+	// last. A failed large write therefore leaves recoverable work, never a
+	// deleted pending row whose receipt/dead letter has not been committed.
+	if extra != nil {
+		extra(b)
+	}
 	b.Query(`INSERT INTO outbox_events (event_id, hazard_id, source, payload, trace_context, created_at, retry_count,
 			last_error, published_at, failed_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) USING TTL `+o.ttl(),
 		ev.EventID, ev.HazardID, ev.Source, ev.Payload, encodeTraceContext(ev.TraceContext), ev.CreatedAt, ev.RetryCount,
 		lastErr, publishedAt, failedAt)
-	if extra != nil {
-		extra(b)
-	}
-	return b.Exec()
+	b.Query(`DELETE FROM outbox_pending WHERE shard = ? AND created_at = ? AND event_id = ?`,
+		pendingPartition(ev.Source), ev.CreatedAt, ev.EventID)
+	return o.db.execRecoverableBatch(ctx, b)
 }
 
 func (o *outbox) Ack(ctx context.Context, eventID string) error {

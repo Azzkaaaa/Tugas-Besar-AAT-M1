@@ -1,0 +1,21 @@
+=== RUN   TestLargeSatelliteRecordAndOutbox
+2026/11/19 02:06:26 INFO created keyspace keyspace=agg_test_large_fire_60a18fa2 replication="{'class': 'SimpleStrategy', 'replication_factor': 1}"
+    large_record_integration_test.go:58: large canonical/projection write failed false claim hazard failed: CQL Message of size 9400508 bytes exceeds allowed maximum of 6710886 bytes
+--- FAIL: TestLargeSatelliteRecordAndOutbox (32.48s)
+FAIL
+2026/11/19 02:06:30 INFO applied migration migration=0001_baseline.cql
+2026/11/19 02:06:31 INFO applied migration migration=0002_bucket_schedule.cql
+2026/11/19 02:06:36 INFO applied migration migration=0003_leader_and_revision.cql
+2026/11/19 02:06:37 INFO applied migration migration=0004_derived_hazard_ids.cql
+2026/11/19 02:06:37 INFO applied migration migration="0005_rekey_hazard_ids (go)"
+2026/11/19 02:06:38 INFO applied migration migration=0006_drop_hazard_by_source_ref.cql
+2026/11/19 02:06:40 INFO applied migration migration=0007_problem3.cql
+2026/11/19 02:06:41 INFO applied migration migration=0008_m2_streams.cql
+2026/11/19 02:06:42 INFO applied migration migration=0009_audit_indexes.cql
+2026/11/19 02:06:39 INFO applied migration migration=0010_analytics_metadata.cql
+2026/11/19 02:06:44 INFO applied migration migration=0011_write_authority.cql
+2026/11/19 02:06:49 INFO applied migration migration=0012_critical_journal.cql
+2026/11/19 02:06:50 INFO applied migration migration=0013_stream_snapshots.cql
+2026/11/19 02:06:50 INFO applied migration migration=0014_sharded_projection.cql
+2026/11/19 02:06:50 INFO applied migration migration="0015_backfill_sharded_projection (go)"
+2026/11/19 02:06:51 INFO applied migration migration=0016_streaming_snapshots.cql

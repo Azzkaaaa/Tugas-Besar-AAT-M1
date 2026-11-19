@@ -306,17 +306,22 @@ func (s hazards) writtenOut(ctx context.Context, st *stored) (bool, error) {
 	return revision >= st.rec.Revision, nil
 }
 
-// writeOut writes the projection of h's committed revision in one logged batch: the List row
-// (moving it from prev when the record moved), the bucket index, and ev when not nil.
+// writeOut applies the derived effects of h's committed revision. Small writes
+// share a logged batch. Large writes use ordered single-partition mutations,
+// with the List revision last as the repair/completion marker.
 func (s hazards) writeOut(ctx context.Context, h *domain.HazardRecord, bucket, prevBucket, prevOccurredAt time.Time,
 	ev *storage.OutboxEvent,
 ) (*domain.HazardRecord, bool, error) {
 	b := s.db.session.Batch(gocql.LoggedBatch).WithContext(ctx)
-	s.addProjection(b, h, bucket, prevBucket, prevOccurredAt)
+	s.addProjectionMetadata(b, h, bucket, prevBucket, prevOccurredAt)
 	if ev != nil {
 		addOutboxEnqueue(b, *ev, time.Now())
 	}
-	if err := b.Exec(); err != nil {
+	// writtenOut uses this row's revision as the completion marker. It must
+	// follow BOTH durable outbox copies when a large write is split. A crash
+	// before it leaves canonical state repairable at the same event/revision.
+	s.addProjectionRow(b, h, bucket)
+	if err := s.db.execRecoverableBatch(ctx, b); err != nil {
 		return nil, false, fmt.Errorf("write hazard failed: %w", err)
 	}
 	return h, true, nil
@@ -325,6 +330,11 @@ func (s hazards) writeOut(ctx context.Context, h *domain.HazardRecord, bucket, p
 // addProjection adds the List row of h, the removal of the previous one if it moved, and the
 // bucket index entries to b.
 func (s hazards) addProjection(b *gocql.Batch, h *domain.HazardRecord, bucket, prevBucket, prevOccurredAt time.Time) {
+	s.addProjectionMetadata(b, h, bucket, prevBucket, prevOccurredAt)
+	s.addProjectionRow(b, h, bucket)
+}
+
+func (s hazards) addProjectionMetadata(b *gocql.Batch, h *domain.HazardRecord, bucket, prevBucket, prevOccurredAt time.Time) {
 	if s.db.fencedSchema {
 		addAuditProjection(b, h)
 	}
@@ -332,13 +342,16 @@ func (s hazards) addProjection(b *gocql.Batch, h *domain.HazardRecord, bucket, p
 		b.Query(`DELETE FROM hazards_by_bucket_shard WHERE bucket = ? AND shard = ? AND occurred_at = ? AND hazard_id = ?`,
 			prevBucket, projectionShard(h.HazardID), prevOccurredAt, h.HazardID)
 	}
+	b.Query(`INSERT INTO hazard_buckets (scope, bucket) VALUES (?, ?)`, scopeAll, bucket)
+	b.Query(`INSERT INTO hazard_buckets (scope, bucket) VALUES (?, ?)`, h.Source, bucket)
+}
+
+func (s hazards) addProjectionRow(b *gocql.Batch, h *domain.HazardRecord, bucket time.Time) {
 	b.Query(`INSERT INTO hazards_by_bucket_shard (bucket, shard, occurred_at, hazard_id, source, source_ref_id, hazard_type,
 			severity, area_name, latitude, longitude, ingested_at, attributes, revision)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		bucket, projectionShard(h.HazardID), h.OccurredAt, h.HazardID, h.Source, h.SourceRefID, h.HazardType,
 		h.Severity, h.AreaName, h.Latitude, h.Longitude, h.IngestedAt, mustJSON(h.Attributes), h.Revision)
-	b.Query(`INSERT INTO hazard_buckets (scope, bucket) VALUES (?, ?)`, scopeAll, bucket)
-	b.Query(`INSERT INTO hazard_buckets (scope, bucket) VALUES (?, ?)`, h.Source, bucket)
 }
 
 // contentHash identifies the content a revision can change (see sameContent in the Postgres

@@ -1,0 +1,21 @@
+=== RUN   TestLargeSatelliteRecordAndOutbox
+2026/11/19 02:12:50 INFO created keyspace keyspace=agg_test_large_fire_d4dfae4d replication="{'class': 'SimpleStrategy', 'replication_factor': 1}"
+    large_record_integration_test.go:141: keys=200000 protobuf_bytes=9600418 peak_rss=285052 kB container_peak_bytes=301047808 elapsed=10.674257639s
+--- PASS: TestLargeSatelliteRecordAndOutbox (46.76s)
+PASS
+2026/11/19 02:12:56 INFO applied migration migration=0001_baseline.cql
+2026/11/19 02:12:57 INFO applied migration migration=0002_bucket_schedule.cql
+2026/11/19 02:13:06 INFO applied migration migration=0003_leader_and_revision.cql
+2026/11/19 02:13:07 INFO applied migration migration=0004_derived_hazard_ids.cql
+2026/11/19 02:13:07 INFO applied migration migration="0005_rekey_hazard_ids (go)"
+2026/11/19 02:13:08 INFO applied migration migration=0006_drop_hazard_by_source_ref.cql
+2026/11/19 02:13:10 INFO applied migration migration=0007_problem3.cql
+2026/11/19 02:13:12 INFO applied migration migration=0008_m2_streams.cql
+2026/11/19 02:13:13 INFO applied migration migration=0009_audit_indexes.cql
+2026/11/19 02:13:13 INFO applied migration migration=0010_analytics_metadata.cql
+2026/11/19 02:13:19 INFO applied migration migration=0011_write_authority.cql
+2026/11/19 02:13:24 INFO applied migration migration=0012_critical_journal.cql
+2026/11/19 02:13:25 INFO applied migration migration=0013_stream_snapshots.cql
+2026/11/19 02:13:26 INFO applied migration migration=0014_sharded_projection.cql
+2026/11/19 02:13:26 INFO applied migration migration="0015_backfill_sharded_projection (go)"
+2026/11/19 02:13:26 INFO applied migration migration=0016_streaming_snapshots.cql

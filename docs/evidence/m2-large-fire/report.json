@@ -1,0 +1,59 @@
+{
+  "date": "2026-11-19",
+  "synthetic_only": true,
+  "runtime_acceptance": false,
+  "source_base_commit": "fb2a272",
+  "additional_changes": "Ordered recoverable Cassandra derived writes and lifecycle regressions in the same commit as this report; explicit chart transport budgets in sibling infrastructure",
+  "before": {
+    "2000_key_fire": "Batch too large after canonical commit",
+    "110000_key_gateway_rpc": "5280088-byte response exceeds default 4194304-byte receive limit",
+    "200000_key_cql": "9400508-byte request exceeds derived 6710886-byte message limit"
+  },
+  "configuration": {
+    "client_memory_limit_bytes": 536870912,
+    "go_memory_soft_limit": "384MiB",
+    "client_cpus": 2,
+    "cassandra_image": "cassandra:5.0.9",
+    "cassandra_memory_limit_bytes": 1073741824,
+    "cassandra_heap": "256MiB",
+    "cassandra_cpus": 2,
+    "replication_factor": 1,
+    "native_transport_max_message_size": "16MiB",
+    "native_transport_max_request_data_in_flight_per_ip": "16MiB",
+    "native_transport_max_request_data_in_flight": "32MiB",
+    "cross_partition_batch_threshold_unchanged": true
+  },
+  "after": {
+    "keys": 200000,
+    "protobuf_event_bytes": 9600418,
+    "peak_client_rss_kib": 285052,
+    "peak_client_charged_memory_bytes": 301047808,
+    "lifecycle_seconds": 10.674257639,
+    "total_test_seconds": 46.76,
+    "exit_code": 0,
+    "client_oom_killed": false,
+    "server_oom_killed": false,
+    "server_fixture_peak_charged_memory_bytes": 1073741824,
+    "server_process_peak_rss_kib": 1096964,
+    "canonical_insert_update_read": true,
+    "complete_protobuf_outbox": true,
+    "ack_retry_release": true,
+    "dead_letter_outage_recovery": true
+  },
+  "other_verification": {
+    "interrupted_outbox_same_revision_recovery": true,
+    "normal_revision_outbox_contract_seconds": 141.372,
+    "gateway_large_response_and_finite_limit": true,
+    "aggregator_untagged_suite": "pass",
+    "gateway_full_suite": "pass",
+    "infrastructure_tests": 121,
+    "infrastructure_tool_availability_skips": 1
+  },
+  "limits": [
+    "Direct synthetic canonical records; combined disk-graph/storage memory is not measured.",
+    "RPC is a separate real-client/stub-server contract, not Cassandra-to-HTTP integration.",
+    "No broker delivery, official feed, reference-result or separate-kernel RF=3 acceptance is claimed.",
+    "The lifecycle has few pending events; large bulk List/outbox payload buffering remains to bound."
+    ,"Server peak counters cover the fixture lifetime (including earlier tests/readiness), not only the large lifecycle; process RSS and cgroup charge are distinct counters."
+  ]
+}
