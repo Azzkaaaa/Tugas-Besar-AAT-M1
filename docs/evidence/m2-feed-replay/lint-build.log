@@ -1,0 +1,11 @@
+   Compiling event-live-feed v0.1.0 (/workspace/services/event-live-feed)
+    Finished `dev` profile [unoptimized] target(s) in 4.62s
+info: component clippy is up to date
+info: component rustfmt is up to date
+    Checking event-live-feed v0.1.0 (/workspace/services/event-live-feed)
+    Finished `dev` profile [unoptimized] target(s) in 4.45s
+   Compiling event-live-feed v0.1.0 (/workspace/services/event-live-feed)
+    Finished `test` profile [unoptimized] target(s) in 7.69s
+  Executable unittests src/main.rs (/build/target/debug/deps/event_live_feed-7f9f4e5c0f6fff12)
+   Compiling event-live-feed v0.1.0 (/workspace/services/event-live-feed)
+    Finished `dev` profile [unoptimized] target(s) in 5.95s

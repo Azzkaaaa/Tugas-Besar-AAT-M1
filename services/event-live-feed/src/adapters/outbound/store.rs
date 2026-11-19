@@ -27,17 +27,17 @@ impl ReplayStore for Store {
         }
     }
 
-    async fn subscribe(&self, after: Option<Position>) -> Result<Snapshot, ReplayError> {
+    async fn subscribe(&self, after: Option<Position>, summary: bool) -> Result<Snapshot, ReplayError> {
         match self {
-            Store::Memory(store) => store.subscribe(after).await,
-            Store::Redis(store) => store.subscribe(after).await,
+            Store::Memory(store) => store.subscribe(after, summary).await,
+            Store::Redis(store) => store.subscribe(after, summary).await,
         }
     }
 
-    async fn read_after(&self, after: Position) -> Result<Vec<SharedEntry>, ReplayError> {
+    async fn read_after(&self, after: Position, summary: bool) -> Result<Vec<SharedEntry>, ReplayError> {
         match self {
-            Store::Memory(store) => store.read_after(after).await,
-            Store::Redis(store) => store.read_after(after).await,
+            Store::Memory(store) => store.read_after(after, summary).await,
+            Store::Redis(store) => store.read_after(after, summary).await,
         }
     }
 }

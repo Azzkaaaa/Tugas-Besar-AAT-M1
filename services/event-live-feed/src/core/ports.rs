@@ -33,13 +33,13 @@ pub struct Position {
     pub sequence: u64,
 }
 
-/// Replay entries after a position plus a live receiver that starts no later than them. The
-/// live stream may repeat backlog entries; subscribers skip sequences they already have.
+/// At most one replay entry, plus small sequence notices. A paused subscriber
+/// must not retain an entire old payload window after the store evicts it.
 pub struct Snapshot {
     pub meta: StreamMeta,
     pub backlog: Vec<SharedEntry>,
     pub head: u64,
-    pub live: broadcast::Receiver<SharedEntry>,
+    pub live: broadcast::Receiver<u64>,
 }
 
 /// Bounded replay storage owned by the feed: deduplication, sequence and buffer.
@@ -50,8 +50,10 @@ pub trait ReplayStore: Send + Sync + 'static {
     fn append(&self, publication: Publication) -> impl Future<Output = Result<Option<SharedEntry>, StoreUnavailable>> + Send;
     /// Entries after `after` (all live entries from the head when `None`), together with a
     /// subscription to later ones, so replay joins the live stream without gaps.
-    fn subscribe(&self, after: Option<Position>) -> impl Future<Output = Result<Snapshot, ReplayError>> + Send;
-    fn read_after(&self, after: Position) -> impl Future<Output = Result<Vec<SharedEntry>, ReplayError>> + Send;
+    fn subscribe(&self, after: Option<Position>, summary: bool) -> impl Future<Output = Result<Snapshot, ReplayError>> + Send;
+    /// Read at most the immediately following record. SUMMARY must avoid full
+    /// payload hydration except for globally serialized legacy cache repair.
+    fn read_after(&self, after: Position, summary: bool) -> impl Future<Output = Result<Vec<SharedEntry>, ReplayError>> + Send;
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -1,0 +1,98 @@
+[
+  {
+    "name": "/m2-feed-redis",
+    "id": "b011af03153f777d4761aecfa3d15cd938a27762162cac33869566d66322d03f",
+    "image": "redis:8-alpine",
+    "memory_bytes": 1073741824,
+    "swap_bytes": 1073741824,
+    "nano_cpus": 2000000000,
+    "state": "running",
+    "exit_code": 0,
+    "oom_killed": false,
+    "restarts": 0
+  },
+  {
+    "name": "/m2-feed-build",
+    "id": "adc28ff6ae5ee9869b0da288dcf52f73995b89b854d44e2f0871ba42a5ae9029",
+    "image": "rust:1.96-alpine",
+    "memory_bytes": 2147483648,
+    "swap_bytes": 2147483648,
+    "nano_cpus": 2000000000,
+    "state": "exited",
+    "exit_code": 137,
+    "oom_killed": false,
+    "restarts": 0
+  },
+  {
+    "name": "/m2-feed-build-fast",
+    "id": "d9e6eb80f8e1520af50ab1e6e433a39ba60aedb0e196a485a58dfa87098067c6",
+    "image": "rust:1.96-alpine",
+    "memory_bytes": 2147483648,
+    "swap_bytes": 2147483648,
+    "nano_cpus": 2000000000,
+    "state": "exited",
+    "exit_code": 0,
+    "oom_killed": false,
+    "restarts": 0
+  },
+  {
+    "name": "/m2-feed-lint-build",
+    "id": "eb0afbe02fce4f7d425e030b614eef9b8ef16d42530d3be539a1fdfa6270f4ba",
+    "image": "rust:1.96-alpine",
+    "memory_bytes": 2147483648,
+    "swap_bytes": 2147483648,
+    "nano_cpus": 2000000000,
+    "state": "exited",
+    "exit_code": 0,
+    "oom_killed": false,
+    "restarts": 0
+  },
+  {
+    "name": "/m2-feed-production-build",
+    "id": "648ab6f83a7ccbd9f31e768b872e4990ab6c383f0a806538bb61bfc1fcb777d7",
+    "image": "rust:1.96-alpine",
+    "memory_bytes": 2147483648,
+    "swap_bytes": 2147483648,
+    "nano_cpus": 2000000000,
+    "state": "exited",
+    "exit_code": 0,
+    "oom_killed": false,
+    "restarts": 0
+  },
+  {
+    "name": "/m2-feed-unit-tests",
+    "id": "89223d1ebe30b510633ef8ec26b37b84d18c19459ab8759be89898967ba2804c",
+    "image": "alpine:3.21",
+    "memory_bytes": 268435456,
+    "swap_bytes": 268435456,
+    "nano_cpus": 2000000000,
+    "state": "exited",
+    "exit_code": 0,
+    "oom_killed": false,
+    "restarts": 0
+  },
+  {
+    "name": "/m2-feed-unit-final",
+    "id": "cad8ad3c92aa568be1382e8d00d1a2ae9ae1c55d091a6958d81052f43ba07776",
+    "image": "alpine:3.21",
+    "memory_bytes": 268435456,
+    "swap_bytes": 268435456,
+    "nano_cpus": 2000000000,
+    "state": "exited",
+    "exit_code": 0,
+    "oom_killed": false,
+    "restarts": 0
+  },
+  {
+    "name": "/m2-feed-replay-tests",
+    "id": "1be2d399cdb1b4e64657e3d60ff8ebc02e576af918bf8e8bfb4707c7dc66e860",
+    "image": "alpine:3.21",
+    "memory_bytes": 268435456,
+    "swap_bytes": 268435456,
+    "nano_cpus": 2000000000,
+    "state": "exited",
+    "exit_code": 0,
+    "oom_killed": false,
+    "restarts": 0
+  }
+]

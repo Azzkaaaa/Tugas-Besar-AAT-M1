@@ -1,0 +1,6 @@
+
+running 1 test
+test adapters::outbound::redis_store::memory_tests::bounded_large_replay_and_legacy_repair ... feed_replay records=32 keys_per_record=200000 wire_bytes=9600075 retained=5 max_stream_bytes=48001548 warm_summary_bytes=5248 cold_repair_bytes=9606221 peak_rss=VmHWM:	   91768 kB container_peak_bytes=96677888 elapsed=7.143930459s
+ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 33 filtered out; finished in 7.17s

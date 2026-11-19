@@ -6,10 +6,13 @@ use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use bnpb_common::bnpb::common::v1::HazardEvent;
 use prost::Message;
 use prost_types::Timestamp;
+#[cfg(test)]
+use redis::AsyncCommands;
 use redis::aio::{ConnectionManager, ConnectionManagerConfig};
-use redis::streams::{StreamId, StreamRangeReply, StreamReadOptions, StreamReadReply};
-use redis::{AsyncCommands, AsyncConnectionConfig, Client, Script};
-use tokio::sync::broadcast;
+#[cfg(test)]
+use redis::streams::StreamId;
+use redis::{AsyncConnectionConfig, Client, Script};
+use tokio::sync::{Mutex, broadcast};
 
 use crate::adapters::outbound::memory_store::LIVE_CAPACITY;
 use crate::core::models::{FeedEntry, Publication, SharedEntry, TraceCarrier};
@@ -17,11 +20,11 @@ use crate::core::ports::{Position, ReplayError, ReplayStore, Snapshot, StoreUnav
 
 const META_KEY: &str = "feed:meta";
 const COMMAND_TIMEOUT: Duration = Duration::from_secs(2);
-/// How long the follower blocks on XREAD; also how quickly it notices a reset.
-const FOLLOW_BLOCK: Duration = Duration::from_secs(1);
-const FOLLOW_BATCH: usize = 512;
+/// Poll only stream identity/head, never a batch of full wildfire payloads.
+const FOLLOW_INTERVAL: Duration = Duration::from_millis(100);
 const RETRY_MIN: Duration = Duration::from_secs(1);
 const RETRY_MAX: Duration = Duration::from_secs(30);
+const MAX_REPLAY_BYTES: usize = 64 << 20;
 
 /// Returns the stored meta, creating it from the candidate (ARGV) when Redis lost it.
 static ENSURE_META: LazyLock<Script> = LazyLock::new(|| {
@@ -51,13 +54,103 @@ if epoch ~= ARGV[1] then
   return {'moved', epoch}
 end
 local prefix = 'feed:' .. epoch .. ':'
-if not redis.call('SET', prefix .. 'seen:' .. ARGV[4], '1', 'NX', 'PX', ARGV[5]) then
+local seen = prefix .. 'seen:' .. ARGV[4]
+if redis.call('EXISTS', seen) == 1 then
   return {'duplicate'}
 end
-local sequence = redis.call('INCR', prefix .. 'head')
-redis.call('XADD', prefix .. 'entries', 'MAXLEN', ARGV[6], sequence .. '-0',
+local entries = prefix .. 'entries'
+local incoming = 2 * (#ARGV[4] + #ARGV[7] + #ARGV[8] + #ARGV[9]) + 8192
+local count = redis.call('XLEN', entries)
+local function trim(keep)
+  local last = tonumber(redis.call('GET', prefix .. 'head') or '0')
+  for sequence = last - count + 1, last - keep do
+    local key = prefix .. 'summary:' .. sequence
+    local id = redis.call('HGET', key, 'event_id')
+    if id then redis.call('DEL', prefix .. 'seen:' .. id) end
+    redis.call('DEL', key)
+  end
+  redis.call('XTRIM', entries, 'MAXLEN', keep)
+  count = keep
+end
+-- Bound retained stream allocations, including rolling writers' old entries.
+-- Halving takes logarithmic trim steps and never materializes old bodies.
+if count >= tonumber(ARGV[6]) then trim(tonumber(ARGV[6]) - 1) end
+while count > 0 and (redis.call('MEMORY', 'USAGE', entries, 'SAMPLES', 0) or 0) + incoming > tonumber(ARGV[11]) do
+  trim(math.floor(count / 2))
+end
+local marked = redis.pcall('SET', seen, '1', 'NX', 'PX', ARGV[5])
+if type(marked) == 'table' and marked.err then return redis.error_reply(marked.err) end
+if not marked then return {'duplicate'} end
+local sequence = redis.pcall('INCR', prefix .. 'head')
+if type(sequence) == 'table' and sequence.err then
+  redis.call('DEL', seen)
+  return redis.error_reply(sequence.err)
+end
+local written = redis.pcall('XADD', entries, sequence .. '-0',
   'event_id', ARGV[4], 'published_at', ARGV[7], 'hazard', ARGV[8], 'trace', ARGV[9], 'stored_at_ms', ARGV[10])
+if type(written) == 'table' and written.err then
+  redis.call('DECR', prefix .. 'head')
+  redis.call('DEL', seen)
+  return redis.error_reply(written.err)
+end
+count = redis.call('XLEN', entries)
+local summary_key = prefix .. 'summary:' .. sequence
+local cached = redis.pcall('HSET', summary_key, 'event_id', ARGV[4], 'published_at', ARGV[7],
+  'hazard', ARGV[12], 'trace', ARGV[9], 'stored_at_ms', ARGV[10])
+if type(cached) ~= 'table' or not cached.err then redis.pcall('PEXPIRE', summary_key, ARGV[5]) end
+while count > 1 and (redis.call('MEMORY', 'USAGE', entries, 'SAMPLES', 0) or 0) > tonumber(ARGV[11]) do
+  trim(math.max(1, math.floor(count / 2)))
+end
 return {'stored', tostring(sequence)}
+",
+    )
+});
+
+static CACHE_SUMMARY: LazyLock<Script> = LazyLock::new(|| {
+    Script::new(
+        r"
+if redis.call('HGET', KEYS[1], 'epoch') ~= ARGV[1] then return 0 end
+local prefix = 'feed:' .. ARGV[1] .. ':'
+local last = tonumber(redis.call('GET', prefix .. 'head') or '0')
+local sequence = tonumber(ARGV[2])
+if sequence > last or sequence <= last - redis.call('XLEN', prefix .. 'entries') then return 0 end
+local key = prefix .. 'summary:' .. ARGV[2]
+redis.call('HSET', key, 'event_id', ARGV[3], 'published_at', ARGV[4], 'hazard', ARGV[5], 'trace', ARGV[6], 'stored_at_ms', ARGV[7])
+redis.call('PEXPIRE', key, ARGV[8])
+return 1
+",
+    )
+});
+
+// New and repaired rows have a small summary hash. Missing hashes are only a
+// hint: acquire the shared fallback slot before asking Redis for any full body.
+// The script checks the epoch/head at the same instant as the selected row.
+static READ_ONE: LazyLock<Script> = LazyLock::new(|| {
+    Script::new(
+        r"
+if redis.call('HGET', KEYS[1], 'epoch') ~= ARGV[1] then return {'expired'} end
+local head = tonumber(redis.call('GET', ARGV[2] .. 'head') or '0')
+local after = tonumber(ARGV[3])
+if after > head then return {'expired'} end
+if after == head then return {'head'} end
+-- A byte trim can shorten the window before max_entries is reached.
+if head - after > redis.call('XLEN', ARGV[2] .. 'entries') then return {'expired'} end
+local sequence = after + 1
+if ARGV[4] == '1' then
+  local fields = redis.call('HMGET', ARGV[2] .. 'summary:' .. sequence,
+    'event_id', 'published_at', 'hazard', 'trace', 'stored_at_ms')
+  if fields[1] and fields[2] and fields[3] and fields[4] and fields[5] then
+    if tonumber(fields[5]) < tonumber(ARGV[7]) then return {'expired'} end
+    return {'summary', tostring(sequence), fields[1], fields[2], fields[3], fields[4], fields[5]}
+  end
+  if ARGV[5] == '0' then return {'legacy'} end
+end
+local rows = redis.call('XRANGE', ARGV[2] .. 'entries', sequence .. '-0', sequence .. '-0', 'COUNT', 1)
+if #rows ~= 1 then return {'expired'} end
+local values = {}
+for i = 1, #rows[1][2], 2 do values[rows[1][2][i]] = rows[1][2][i+1] end
+if not values['stored_at_ms'] or tonumber(values['stored_at_ms']) < tonumber(ARGV[7]) then return {'expired'} end
+return {'full', tostring(sequence), values['event_id'], values['published_at'], values['hazard'], values['trace'], values['stored_at_ms']}
 ",
     )
 });
@@ -68,23 +161,34 @@ return {'stored', tostring(sequence)}
 /// - `feed:{epoch}:head` — the last sequence.
 /// - `feed:{epoch}:seen:{event_id}` — dedup markers, expiring with the replay retention.
 /// - `feed:{epoch}:entries` — the stream, entry IDs `{sequence}-0`, capped at max_entries.
+/// - `feed:{epoch}:summary:{sequence}` — small projection metadata, evicted
+///   with its entry or by retention. Legacy/missing caches are repaired singly.
 ///
-/// Redis runs without persistence. When it loses the keys, the next writer or follower creates
+/// When Redis loses the replay keys, the next writer or follower creates
 /// a new epoch, so earlier cursors expire (OUT_OF_RANGE) instead of pointing into a new stream.
-/// Each replica follows the stream with XREAD and fans entries out to its own subscribers, so a
-/// subscriber sees events consumed by any replica.
+/// Each replica follows small head notices. Subscribers fetch one projection
+/// at a time, including events consumed by other replicas.
+#[derive(Clone)]
 pub struct RedisStore {
+    client: Client,
     commands: ConnectionManager,
     retention: Duration,
     max_entries: usize,
-    live: RwLock<Live>,
+    live: Arc<RwLock<Live>>,
+    summary_fallback: Arc<Mutex<()>>,
 }
 
 /// The epoch this replica follows and the broadcast of its entries. Replaced together, so a
 /// subscription's receiver always belongs to the meta it was given.
 struct Live {
     meta: StreamMeta,
-    sender: broadcast::Sender<SharedEntry>,
+    sender: broadcast::Sender<u64>,
+}
+
+enum ReadOne {
+    Head,
+    Legacy,
+    Entry(Box<FeedEntry>, bool),
 }
 
 impl RedisStore {
@@ -97,7 +201,14 @@ impl RedisStore {
         let meta = ensure_meta(&mut commands).await?;
         let head = head(&mut commands, meta.epoch).await.map_err(|error| error.to_string())?;
         let (sender, _) = broadcast::channel(LIVE_CAPACITY);
-        let store = Arc::new(Self { commands, retention, max_entries: max_entries.max(1), live: RwLock::new(Live { meta, sender }) });
+        let store = Arc::new(Self {
+            client: client.clone(),
+            commands,
+            retention,
+            max_entries: max_entries.max(1),
+            live: Arc::new(RwLock::new(Live { meta, sender })),
+            summary_fallback: Arc::new(Mutex::new(())),
+        });
         tokio::spawn(store.clone().follow(client, head));
         tracing::info!(epoch = format_args!("{:016x}", meta.epoch), head, "replay store connected to Redis");
         Ok(store)
@@ -121,9 +232,8 @@ impl RedisStore {
     }
 
     async fn follow_once(&self, client: &Client, last: &mut u64, backoff: &mut Duration) -> Result<(), String> {
-        let config = AsyncConnectionConfig::new().set_response_timeout(Some(FOLLOW_BLOCK + COMMAND_TIMEOUT));
+        let config = AsyncConnectionConfig::new().set_connection_timeout(Some(COMMAND_TIMEOUT)).set_response_timeout(Some(COMMAND_TIMEOUT));
         let mut connection = client.get_multiplexed_async_connection_with_config(&config).await.map_err(|error| error.to_string())?;
-        let options = StreamReadOptions::default().block(FOLLOW_BLOCK.as_millis() as usize).count(FOLLOW_BATCH);
         loop {
             let meta = ensure_meta(&mut connection).await?;
             *backoff = RETRY_MIN;
@@ -140,38 +250,119 @@ impl RedisStore {
                 *last = 0;
             }
 
-            let stream = entries_key(meta.epoch);
-            let reply: Option<StreamReadReply> =
-                connection.xread_options(&[stream.as_str()], &[format!("{last}-0")], &options).await.map_err(|error| error.to_string())?;
-            let Some(reply) = reply else { continue };
-            let live = self.live();
-            for id in reply.keys.iter().flat_map(|key| &key.ids) {
-                let Some(entry) = decode_entry(id) else { continue };
-                *last = entry.sequence;
-                let _ = live.sender.send(Arc::new(entry));
+            let current_head = head(&mut connection, meta.epoch).await.map_err(|error| error.to_string())?;
+            if current_head > *last {
+                *last = current_head;
+                let _ = self.live().sender.send(current_head);
             }
+            tokio::time::sleep(FOLLOW_INTERVAL).await;
         }
     }
 
-    async fn read_after_in(&self, after: Position) -> Result<Vec<SharedEntry>, ReplayError> {
+    async fn read_one(&self, after: Position, summary: bool, fallback: bool) -> Result<ReadOne, ReplayError> {
+        self.read_one_on(&mut self.commands.clone(), after, summary, fallback).await
+    }
+
+    async fn read_one_on<C: redis::aio::ConnectionLike + Send>(
+        &self,
+        commands: &mut C,
+        after: Position,
+        summary: bool,
+        fallback: bool,
+    ) -> Result<ReadOne, ReplayError> {
+        let cutoff =
+            SystemTime::now().checked_sub(self.retention).unwrap_or(UNIX_EPOCH).duration_since(UNIX_EPOCH).unwrap_or_default().as_millis()
+                as u64;
+        let fields: Vec<Vec<u8>> = READ_ONE
+            .key(META_KEY)
+            .arg(after.epoch.to_string())
+            .arg(format!("feed:{}:", after.epoch))
+            .arg(after.sequence)
+            .arg(if summary { "1" } else { "0" })
+            .arg(if fallback { "1" } else { "0" })
+            .arg(self.max_entries)
+            .arg(cutoff)
+            .invoke_async(&mut *commands)
+            .await
+            .map_err(unavailable)?;
+        match fields.first().map(Vec::as_slice) {
+            Some(b"head") => Ok(ReadOne::Head),
+            Some(b"legacy") => Ok(ReadOne::Legacy),
+            Some(b"summary" | b"full") if fields.len() == 7 => {
+                let cached = fields[0] == b"summary";
+                match decode_fields(&fields) {
+                    Some(entry) => Ok(ReadOne::Entry(Box::new(entry), cached)),
+                    None if cached => {
+                        // Derived cache corruption is repairable from the immutable entry.
+                        let _: () = redis::cmd("DEL")
+                            .arg(summary_key(after.epoch, after.sequence + 1))
+                            .query_async(&mut *commands)
+                            .await
+                            .map_err(unavailable)?;
+                        Ok(ReadOne::Legacy)
+                    }
+                    None => Err(ReplayError::Expired),
+                }
+            }
+            _ => Err(ReplayError::Expired),
+        }
+    }
+
+    async fn cache_summary(&self, epoch: u64, entry: &FeedEntry) {
+        let header = entry.publication.summary();
+        let stored_at_ms = entry.stored_at.duration_since(UNIX_EPOCH).unwrap_or_default().as_millis() as u64;
+        // Cache fill cannot stall ingestion or change the authoritative entry.
         let mut commands = self.commands.clone();
-        let head = head(&mut commands, after.epoch).await.map_err(unavailable)?;
-        if after.sequence > head {
-            return Err(ReplayError::Expired);
+        let mut fill = CACHE_SUMMARY.prepare_invoke();
+        fill.key(META_KEY)
+            .arg(epoch.to_string())
+            .arg(entry.sequence)
+            .arg(&header.event_id)
+            .arg(header.published_at.map(|t| t.encode_to_vec()).unwrap_or_default())
+            .arg(header.hazard.encode_to_vec())
+            .arg(serde_json::to_string(&header.trace).unwrap_or_else(|_| "[]".into()))
+            .arg(stored_at_ms)
+            .arg(self.retention.as_millis() as u64);
+        let _ = tokio::time::timeout(Duration::from_millis(50), fill.invoke_async::<i32>(&mut commands)).await;
+    }
+
+    async fn read_after_in(&self, after: Position, summary: bool) -> Result<Vec<SharedEntry>, ReplayError> {
+        match self.read_one(after, summary, false).await? {
+            ReadOne::Head => Ok(Vec::new()),
+            ReadOne::Entry(entry, _) => Ok(vec![Arc::new(*entry)]),
+            ReadOne::Legacy => {
+                let slot = self.summary_fallback.clone().lock_owned().await;
+                let owned = self.clone();
+                // A cancelled RPC must not return credit while redis-rs is
+                // still reading its queued large response. The owned task
+                // finishes/cleans up even if the caller drops its JoinHandle.
+                tokio::spawn(async move {
+                    let _slot = slot;
+                    let config = AsyncConnectionConfig::new()
+                        .set_connection_timeout(Some(COMMAND_TIMEOUT))
+                        .set_response_timeout(Some(COMMAND_TIMEOUT));
+                    // Last-drop closes this dedicated connection (including
+                    // its driver on timeout) before admission is returned.
+                    let mut connection = owned.client.get_multiplexed_async_connection_with_config(&config).await.map_err(unavailable)?;
+                    match owned.read_one_on(&mut connection, after, true, true).await? {
+                        ReadOne::Head => Ok(Vec::new()),
+                        ReadOne::Entry(entry, cached) => {
+                            if !cached {
+                                owned.cache_summary(after.epoch, &entry).await;
+                            }
+                            Ok(vec![Arc::new(FeedEntry {
+                                sequence: entry.sequence,
+                                stored_at: entry.stored_at,
+                                publication: entry.publication.summary(),
+                            })])
+                        }
+                        ReadOne::Legacy => Err(ReplayError::Unavailable),
+                    }
+                })
+                .await
+                .map_err(|_| ReplayError::Unavailable)?
+            }
         }
-        if after.sequence == head {
-            return Ok(Vec::new());
-        }
-        let reply: StreamRangeReply =
-            commands.xrange(entries_key(after.epoch), format!("{}-0", after.sequence + 1), "+").await.map_err(unavailable)?;
-        let cutoff = SystemTime::now().checked_sub(self.retention).unwrap_or(UNIX_EPOCH);
-        let entries: Vec<SharedEntry> =
-            reply.ids.iter().filter_map(decode_entry).skip_while(|entry| entry.stored_at < cutoff).map(Arc::new).collect();
-        // Trimmed by size or retention: resuming would skip events.
-        if entries.first().map(|entry| entry.sequence) != Some(after.sequence + 1) {
-            return Err(ReplayError::Expired);
-        }
-        Ok(entries)
     }
 }
 
@@ -185,6 +376,7 @@ impl ReplayStore for RedisStore {
         let stored_at_ms = stored_at.duration_since(UNIX_EPOCH).unwrap_or_default().as_millis() as u64;
         let published_at = publication.published_at.map(|timestamp| timestamp.encode_to_vec()).unwrap_or_default();
         let hazard = publication.hazard.encode_to_vec();
+        let summary = publication.summary().hazard.encode_to_vec();
         let trace = serde_json::to_string(&publication.trace).unwrap_or_else(|_| "[]".into());
         let mut commands = self.commands.clone();
         let mut expected = self.meta().epoch;
@@ -203,6 +395,8 @@ impl ReplayStore for RedisStore {
                 .arg(&hazard)
                 .arg(&trace)
                 .arg(stored_at_ms)
+                .arg(MAX_REPLAY_BYTES)
+                .arg(&summary)
                 .invoke_async(&mut commands)
                 .await
                 .map_err(|error| {
@@ -213,7 +407,8 @@ impl ReplayStore for RedisStore {
                 [tag, sequence] if tag == "stored" => {
                     let sequence = sequence.parse().map_err(|_| StoreUnavailable)?;
                     // Local subscribers get it from the follower, like entries of other replicas.
-                    return Ok(Some(Arc::new(FeedEntry { sequence, stored_at, publication })));
+                    let entry = FeedEntry { sequence, stored_at, publication };
+                    return Ok(Some(Arc::new(entry)));
                 }
                 [tag] if tag == "duplicate" => return Ok(None),
                 [tag, epoch] if tag == "moved" => expected = epoch.parse().map_err(|_| StoreUnavailable)?,
@@ -226,7 +421,7 @@ impl ReplayStore for RedisStore {
         Err(StoreUnavailable)
     }
 
-    async fn subscribe(&self, after: Option<Position>) -> Result<Snapshot, ReplayError> {
+    async fn subscribe(&self, after: Option<Position>, summary: bool) -> Result<Snapshot, ReplayError> {
         // Subscribe before reading, so nothing appended meanwhile is missed; repeats are skipped.
         let (meta, live) = {
             let live = self.live();
@@ -237,7 +432,7 @@ impl ReplayStore for RedisStore {
                 if after.epoch != meta.epoch {
                     return Err(ReplayError::Expired);
                 }
-                let backlog = self.read_after_in(after).await?;
+                let backlog = self.read_after_in(after, summary).await?;
                 let head = backlog.last().map_or(after.sequence, |entry| entry.sequence);
                 Ok(Snapshot { meta, backlog, head, live })
             }
@@ -248,11 +443,11 @@ impl ReplayStore for RedisStore {
         }
     }
 
-    async fn read_after(&self, after: Position) -> Result<Vec<SharedEntry>, ReplayError> {
+    async fn read_after(&self, after: Position, summary: bool) -> Result<Vec<SharedEntry>, ReplayError> {
         if after.epoch != self.meta().epoch {
             return Err(ReplayError::Expired);
         }
-        self.read_after_in(after).await
+        self.read_after_in(after, summary).await
     }
 }
 
@@ -261,8 +456,27 @@ fn unavailable(error: redis::RedisError) -> ReplayError {
     ReplayError::Unavailable
 }
 
+#[cfg(test)]
 fn entries_key(epoch: u64) -> String {
     format!("feed:{epoch}:entries")
+}
+
+#[cfg(test)]
+#[path = "redis_memory_tests.rs"]
+mod memory_tests;
+
+fn summary_key(epoch: u64, sequence: u64) -> String {
+    format!("feed:{epoch}:summary:{sequence}")
+}
+
+fn decode_fields(fields: &[Vec<u8>]) -> Option<FeedEntry> {
+    let sequence = std::str::from_utf8(&fields[1]).ok()?.parse().ok()?;
+    let event_id = String::from_utf8(fields[2].clone()).ok()?;
+    let published_at = if fields[3].is_empty() { None } else { Some(Timestamp::decode(fields[3].as_slice()).ok()?) };
+    let hazard = HazardEvent::decode(fields[4].as_slice()).ok()?;
+    let trace: TraceCarrier = serde_json::from_slice(&fields[5]).ok()?;
+    let stored_at = UNIX_EPOCH + Duration::from_millis(std::str::from_utf8(&fields[6]).ok()?.parse().ok()?);
+    Some(FeedEntry { sequence, stored_at, publication: Publication { event_id, published_at, hazard, trace } })
 }
 
 async fn head(connection: &mut impl redis::aio::ConnectionLike, epoch: u64) -> redis::RedisResult<u64> {
@@ -292,21 +506,19 @@ async fn ensure_meta(connection: &mut impl redis::aio::ConnectionLike) -> Result
     Ok(StreamMeta { epoch, cursor_key })
 }
 
+#[cfg(test)]
 fn decode_entry(id: &StreamId) -> Option<FeedEntry> {
-    let entry = (|| {
-        let sequence = id.id.split_once('-')?.0.parse().ok()?;
-        let event_id: String = id.get("event_id")?;
-        let published_at: Vec<u8> = id.get("published_at")?;
-        let published_at = if published_at.is_empty() { None } else { Some(Timestamp::decode(published_at.as_slice()).ok()?) };
-        let hazard = HazardEvent::decode(id.get::<Vec<u8>>("hazard")?.as_slice()).ok()?;
-        let trace: TraceCarrier = serde_json::from_str(&id.get::<String>("trace")?).ok()?;
-        let stored_at = UNIX_EPOCH + Duration::from_millis(id.get("stored_at_ms")?);
-        Some(FeedEntry { sequence, stored_at, publication: Publication { event_id, published_at, hazard, trace } })
-    })();
-    if entry.is_none() {
-        tracing::warn!(id = %id.id, "skipping malformed replay entry");
-    }
-    entry
+    // Translate the historical row fixtures into READ_ONE's wire tuple and
+    // exercise the actual decoder, rather than keep an obsolete decoder in tests.
+    decode_fields(&[
+        b"full".to_vec(),
+        id.id.split_once('-')?.0.as_bytes().to_vec(),
+        id.get("event_id")?,
+        id.get("published_at")?,
+        id.get("hazard")?,
+        id.get("trace")?,
+        id.get("stored_at_ms")?,
+    ])
 }
 
 #[cfg(test)]

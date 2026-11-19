@@ -23,7 +23,7 @@ use crate::core::ports::{ActorVerifier, AuthError, Position, ReplayStore, Stream
 use crate::telemetry;
 
 const CORRELATION_HEADER: &str = "x-correlation-id";
-const STREAM_BUFFER: usize = 16;
+const STREAM_BUFFER: usize = 1;
 
 pub struct FeedGrpc<S, V, R> {
     pub feed: Arc<FeedService<S>>,
@@ -65,7 +65,7 @@ impl<S: ReplayStore, V: ActorVerifier, R: TokenRenewer> EventFeedService for Fee
                 Some(Position { epoch: meta.epoch, sequence })
             }
         };
-        let subscription = self.feed.subscribe(after).instrument(span.clone()).await.map_err(feed_status)?;
+        let subscription = self.feed.subscribe(after, view != View::Full).instrument(span.clone()).await.map_err(feed_status)?;
 
         let (events, data) = mpsc::channel(STREAM_BUFFER);
         let (end, ended) = mpsc::channel(2);
@@ -123,6 +123,11 @@ impl Forward {
         // The SubscribeEvents span this task is instrumented with.
         let stream = tracing::Span::current().context().span().span_context().clone();
         loop {
+            // Reserve before reading/projecting, so a full channel cannot
+            // retain another complete wildfire in an awaited send future.
+            let Ok(slot) = events.reserve().await else {
+                return;
+            };
             let entry = match subscription.next().await {
                 Ok(entry) => entry,
                 Err(error) => {
@@ -133,15 +138,14 @@ impl Forward {
             if !self.filter.matches(&entry.publication.hazard) {
                 continue;
             }
-            if events.send(self.response(&entry)).instrument(self.deliver_span(&entry, &stream)).await.is_err() {
-                return;
-            }
+            self.deliver_span(&entry, &stream).in_scope(|| slot.send(self.response(&entry)));
         }
     }
 
     /// A child of the event's rabbitmq.consume span, linked to this subscriber's stream: the
     /// hazard's trace shows its fan-out, and an hour-long stream trace doesn't collect every
-    /// delivery. It covers the hand-off into the stream buffer (backpressure from a slow client).
+    /// delivery. It covers projection/hand-off; channel capacity is reserved
+    /// before loading a payload, while the enclosing stream span records waiting.
     fn deliver_span(&self, entry: &FeedEntry, stream: &SpanContext) -> tracing::Span {
         let span = tracing::info_span!(
             parent: None,
@@ -226,6 +230,33 @@ mod tests {
     use crate::core::models::{Actor, Publication};
 
     struct Verifier;
+
+    #[tokio::test]
+    async fn slow_subscriber_does_not_read_the_next_full_payload_before_capacity_is_available() {
+        let store = Arc::new(MemoryStore::with_epoch(7, Duration::from_secs(600), 100));
+        store.append(publication("first", Source::Bmkg, HazardType::Seismic)).await.unwrap();
+        let second = store.append(publication("second", Source::Bmkg, HazardType::Seismic)).await.unwrap().unwrap();
+        let feed = FeedService::new(store);
+        let subscription = feed.subscribe(Some(Position { epoch: 7, sequence: 0 }), false).await.unwrap();
+        let forward =
+            Forward { meta: subscription.meta(), subject: "field".into(), view: View::Full, filter: Filter::parse(None).unwrap() };
+        let (events, data) = mpsc::channel(1);
+        let (end, _ended) = mpsc::channel(2);
+        let pump = tokio::spawn(forward.run(subscription, events, end));
+        tokio::time::timeout(Duration::from_secs(1), async {
+            while data.is_empty() {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        tokio::task::yield_now().await;
+        // One reference belongs to the store and one to this test. Reading the
+        // next entry before waiting for output would retain another full body.
+        assert_eq!(Arc::strong_count(&second), 2);
+        drop(data);
+        tokio::time::timeout(Duration::from_secs(1), pump).await.unwrap().unwrap();
+    }
 
     impl ActorVerifier for Verifier {
         async fn verify(&self, token: &str) -> Result<Actor, AuthError> {

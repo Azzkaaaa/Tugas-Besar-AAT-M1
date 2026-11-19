@@ -1,0 +1,10 @@
+1:M 19 Nov 2026 10:23:42.068 * Creating AOF incr file appendonly.aof.5.incr.aof on background rewrite
+1:M 19 Nov 2026 10:23:42.070 * Background append only file rewriting started by pid 34
+34:C 19 Nov 2026 10:23:42.107 * BGSAVE done, 13 keys saved, 0 keys skipped, 4969190 bytes written.
+34:C 19 Nov 2026 10:23:42.119 * Successfully created the temporary AOF base file temp-rewriteaof-bg-34.aof
+34:C 19 Nov 2026 10:23:42.120 * Fork CoW for AOF rewrite: current 0 MB, peak 0 MB, average 0 MB
+1:M 19 Nov 2026 10:23:42.171 * Background AOF rewrite terminated with success
+1:M 19 Nov 2026 10:23:42.171 * Successfully renamed the temporary AOF base file temp-rewriteaof-bg-34.aof into appendonly.aof.5.base.rdb
+1:M 19 Nov 2026 10:23:42.182 * Removing the history file appendonly.aof.4.incr.aof in the background
+1:M 19 Nov 2026 10:23:42.182 * Removing the history file appendonly.aof.4.base.rdb in the background
+1:M 19 Nov 2026 10:23:42.193 * Background AOF rewrite finished successfully

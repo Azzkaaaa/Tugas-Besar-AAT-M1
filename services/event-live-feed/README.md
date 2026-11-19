@@ -35,11 +35,16 @@ komposisi hanya di `main.rs`.
   sendiri lalu mengikat queue ke exchange; Aggregator hanya mendeklarasikan exchange.
 - **Replay.** Event ID yang sama selama jendela retensi tidak ditambahkan dua kali.
   Sequence naik mulai 1 per epoch. Buffer dibatasi `FEED_REPLAY_RETENTION_SECONDS`
-  dan `FEED_REPLAY_MAX_ENTRIES`. Dengan `FEED_REDIS_URL`, buffer, sequence, dedup,
+  dan `FEED_REPLAY_MAX_ENTRIES`, serta anggaran byte (32MiB alokasi terhitung untuk
+  ring lokal; 64MiB stream Redis). Satu record batas tetap utuh. Jendela replay
+  dapat memendek saat data besar; posisi yang sudah terbuang menghasilkan
+  `OUT_OF_RANGE`, bukan melewati event diam-diam. Dengan `FEED_REDIS_URL`, buffer, sequence, dedup,
   epoch, dan kunci cursor ada di Redis dan dipakai bersama semua replika: event yang
-  di-consume replika mana pun diteruskan (XREAD) ke subscriber di setiap replika, dan
-  cursor dari satu replika bisa dilanjutkan di replika lain. Redis berjalan tanpa
-  persistence; bila key hilang, epoch baru dibuat sehingga subscriber aktif dan
+  di-consume replika mana pun tersedia di setiap replika melalui notice sequence
+  kecil dan pembacaan satu record per langkah. SUMMARY memakai metadata terpisah;
+  payload lama tanpa cache diperbaiki satu per satu. Subscriber tidak menahan
+  salinan seluruh jendela replay. Cursor dari satu replika bisa dilanjutkan di
+  replika lain. Bila key replay hilang, epoch baru dibuat sehingga subscriber aktif dan
   cursor lama mendapat `OUT_OF_RANGE` (ambil snapshot baru). Bila Redis tidak dapat
   dihubungi, event di-nack dengan requeue (tidak pernah di-ack tanpa tersimpan),
   health menjadi NOT_SERVING, dan subscribe menghasilkan `UNAVAILABLE`. Tanpa
@@ -127,3 +132,8 @@ Image distroless memakai `/event-live-feed --healthcheck` sebagai healthcheck gR
   [api-gateway](../api-gateway/README.md).
 - Pengujian end-to-end (Aggregator → RabbitMQ → feed → SSE dengan login Zitadel,
   termasuk stream yang bertahan melewati 60 detik) dilakukan di sesi terpisah.
+
+Pengujian replay besar dan batas memori: [M2 feed replay](../../docs/m2-feed-replay.md).
+Fixture opt-in memakai Redis kosong yang dapat dibuang, `FEED_TEST_REDIS_URL`,
+dan `FEED_TEST_LARGE_KEYS=200000`; runtime test dibatasi 256MiB. Batas jumlah
+subscriber FULL dan jalur SSE/consumer gabungan masih perlu diverifikasi.
