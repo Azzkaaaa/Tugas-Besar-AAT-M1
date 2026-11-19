@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/aggregator/internal/domain"
+	"github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/aggregator/internal/storage"
 	gocql "github.com/apache/cassandra-gocql-driver/v2"
 )
 
@@ -28,14 +29,13 @@ func (s hazards) readProjection(ctx context.Context, header *domain.HazardRecord
 // revision is unchanged. This writes derived metadata only; it cannot modify
 // canonical data, authority, outbox or the projection completion revision.
 func (s hazards) resolveListMetadata(ctx context.Context, header *domain.HazardRecord, bucket time.Time, revision *int,
-	slots chan struct{},
+	q storage.HazardQuery,
 ) (*domain.HazardRecord, int, error) {
-	select {
-	case slots <- struct{}{}:
-	case <-ctx.Done():
-		return nil, 0, ctx.Err()
+	release, err := s.db.acquireSummaryFallback(ctx)
+	if err != nil {
+		return nil, 0, err
 	}
-	defer func() { <-slots }()
+	defer release()
 	h, err := s.readProjection(ctx, header, bucket)
 	if err != nil || h == nil {
 		return h, 0, err
@@ -51,5 +51,10 @@ func (s hazards) resolveListMetadata(ctx context.Context, header *domain.HazardR
 			!domain.Withdrawn(h), *revision, int64(size), bucket, projectionShard(header.HazardID),
 			header.OccurredAt, header.HazardID, *revision).WithContext(cacheCtx).MapScanCAS(map[string]any{})
 	}
-	return h, size, nil
+	if !storage.MatchesHazardQuery(h, q) {
+		return nil, size, nil
+	}
+	// Drop the body while still holding the shared slot. A paused shard reader
+	// must never retain a large fallback after another request is admitted.
+	return storage.HazardSummaryHeader(h), size, nil
 }

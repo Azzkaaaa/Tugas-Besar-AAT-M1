@@ -46,13 +46,15 @@ func (s *Server) Start(ctx context.Context) error {
 		return fmt.Errorf("listen on %s failed: %w", s.cfg.GRPCPort, err)
 	}
 	// OTel + JWT interceptor chain & stats handler.
-	grpcSrv := grpc.NewServer(
+	options := []grpc.ServerOption{
 		// One span per RPC from the stats handler; probes of grpc.health.v1 are not traced.
 		grpc.StatsHandler(otelgrpc.NewServerHandler(otelgrpc.WithFilter(filters.Not(filters.HealthCheck())))),
 		grpc.ChainUnaryInterceptor(
 			s.auth.UnaryServerInterceptor(),
 		),
-	)
+	}
+	options = append(options, BoundedReadOptions()...)
+	grpcSrv := grpc.NewServer(options...)
 	// register service implementation.
 	aggregatorv1.RegisterAggregatorServiceServer(grpcSrv, s)
 	aggregatorv1.RegisterFieldReportServiceServer(grpcSrv, fieldReportService{store: s.reports})
@@ -192,7 +194,11 @@ func (s *Server) GetHazard(ctx context.Context, req *aggregatorv1.GetHazardReque
 	if req.View == commonv1.View_VIEW_FULL && !caller.HasScope("hazards:read:full") {
 		return nil, status.Error(codes.PermissionDenied, "insufficient scope for full view")
 	}
-	rec, err := s.hazards.Get(ctx, req.HazardId)
+	get := s.hazards.GetSummary
+	if req.View == commonv1.View_VIEW_FULL {
+		get = s.hazards.Get
+	}
+	rec, err := get(ctx, req.HazardId)
 	if err != nil {
 		return &aggregatorv1.GetHazardResponse{Partial: true, UnavailableUnits: []string{"canonical"}}, nil
 	}
@@ -208,12 +214,16 @@ func (s *Server) GetHazard(ctx context.Context, req *aggregatorv1.GetHazardReque
 	if err != nil {
 		units = append(units, "source-state:"+string(domain.SourceKeyFor(rec.Source)))
 	}
-	return &aggregatorv1.GetHazardResponse{
+	response := &aggregatorv1.GetHazardResponse{
 		Item:             proj,
 		Freshness:        []*commonv1.SourceFreshness{info.ToProto()},
 		Partial:          len(units) > 0 || info.Status != domain.StatusFresh,
 		UnavailableUnits: units,
-	}, nil
+	}
+	if proto.Size(response) > storage.MaxHazardProjectionBytes {
+		return nil, status.Error(codes.ResourceExhausted, "complete hazard response exceeds the transport byte budget")
+	}
+	return response, nil
 }
 
 func (s *Server) GetSourceStatuses(ctx context.Context, req *aggregatorv1.GetSourceStatusesRequest) (*aggregatorv1.GetSourceStatusesResponse, error) {

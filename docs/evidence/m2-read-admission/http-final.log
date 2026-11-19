@@ -1,0 +1,15 @@
+=== RUN   TestFullHTTPLargeFireMemory
+2026/11/19 07:33:13 WARN request failed status=500 error="io: read/write on closed pipe"
+    large_http_test.go:161: keys=200000 rpc_bytes=9600127 http_bytes=9400320 shed_full_requests=24 upstream_full_reads=1 peak_rss=159468 kB container_peak_bytes=166490112 elapsed=294.870179ms
+--- PASS: TestFullHTTPLargeFireMemory (0.30s)
+=== RUN   TestFullHTTPAdmissionCoversGeneratedEncodingAndWrites
+=== RUN   TestFullHTTPAdmissionCoversGeneratedEncodingAndWrites/#00
+=== RUN   TestFullHTTPAdmissionCoversGeneratedEncodingAndWrites/error
+=== RUN   TestFullHTTPAdmissionCoversGeneratedEncodingAndWrites/panic
+--- PASS: TestFullHTTPAdmissionCoversGeneratedEncodingAndWrites (0.03s)
+    --- PASS: TestFullHTTPAdmissionCoversGeneratedEncodingAndWrites/#00 (0.01s)
+    --- PASS: TestFullHTTPAdmissionCoversGeneratedEncodingAndWrites/error (0.01s)
+    --- PASS: TestFullHTTPAdmissionCoversGeneratedEncodingAndWrites/panic (0.01s)
+=== RUN   TestPriorityCapacityIncludesSlowHTTPResponseWrites
+--- PASS: TestPriorityCapacityIncludesSlowHTTPResponseWrites (0.01s)
+PASS

@@ -1,0 +1,98 @@
+{
+  "date": "2026-11-19",
+  "scope": "Get summary metadata, shared cold Get/List fallback, unary full response delivery; synthetic RF=1 and native capped fixtures",
+  "services_parent": "2147e88",
+  "implementation": {
+    "cassandra_migration": 18,
+    "cold_get_list_bodies_per_db_pool": 1,
+    "full_get_list_responses_per_aggregator_server": 1,
+    "full_unary_responses_per_gateway": 1,
+    "gateway_shared_routes": ["ListHazards", "GetHazard", "ListNotifications", "GetNotification"],
+    "full_rpc_output_encoding": "identity",
+    "full_rpc_release": "Final reference-counted protobuf buffer release, including queued transport slices",
+    "http_release": "Outer handler completion, after generated JSON serialization and HTTP writes",
+    "complete_response_budget_bytes": 16777216
+  },
+  "verification": {
+    "aggregator_full_untagged": "passed; subsequent added caller-admission test also passed in focused and native runs",
+    "gateway_full_untagged": "passed on final source",
+    "postgres_full_integration_seconds": 12.419,
+    "postgres_server_cap_bytes": 536870912,
+    "cassandra_summary_contract_bucket_layouts_seconds": [43.31, 41.99],
+    "cassandra_small_metadata_upgrade_seconds": 37.88,
+    "cassandra_list_cache_upgrade_regression_seconds": 38.06,
+    "cassandra_production_authority_fence_seconds": 40.56,
+    "cassandra_large_sequence": {
+      "client_cap_bytes": 536870912,
+      "go_soft_limit": "384MiB",
+      "cpus": 2,
+      "keys_per_record": 200000,
+      "cold_summary_waiters": 13,
+      "large_get_summary_seconds": 40.96,
+      "list_records": 32,
+      "records_per_shard": [4, 4, 4, 4, 4, 4, 4, 4],
+      "summary_response_bytes": 2548,
+      "full_pages": 32,
+      "max_complete_full_rpc_bytes": 9600452,
+      "every_detection_key_compared": true,
+      "list_application_seconds": 11.234413081,
+      "list_including_schema_seconds": 49.67,
+      "process_peak_rss_kib": 190264,
+      "container_peak_bytes": 201007104
+    },
+    "final_large_get_including_null_legacy_and_imports": {
+      "seconds": 39.06,
+      "keys_per_record": 200000,
+      "cold_summary_waiters": 13,
+      "peak_rss_kib": 213208,
+      "container_peak_bytes": 227643392
+    },
+    "grpc_transport": {
+      "native_process_cap_bytes": 536870912,
+      "zero_response_window_after_handler_and_stats_end": "full credit remains held",
+      "competing_full_requests_shed": 12,
+      "summary_during_backpressure": "passed",
+      "reset_releases_credit": "passed",
+      "gzip_request_complete_identity_response": "passed",
+      "marshal_error_cancellation_tiny_partial_and_final_slice_release": "passed",
+      "caller_checked_before_capacity": "passed"
+    },
+    "http": {
+      "native_process_cap_bytes": 268435456,
+      "go_soft_limit": "160MiB",
+      "cpus": 2,
+      "keys": 200000,
+      "rpc_bytes": 9600127,
+      "http_bytes": 9400320,
+      "concurrent_competing_full_requests_shed": 24,
+      "upstream_full_reads": 1,
+      "every_detection_key_compared": true,
+      "peak_rss_kib": 159468,
+      "container_peak_bytes": 166490112,
+      "seconds": 0.294870179,
+      "blocked_write_error_panic_notification_shared_credit_and_reserved_priority": "passed",
+      "upstream": "Immutable test reply and real gRPC server in the same capped process; deployed gateway Dial options and real generated HTTP router"
+    },
+    "cassandra_server": {
+      "version": "5.0.9",
+      "cap_bytes": 1073741824,
+      "heap_mib": 256,
+      "shared_jdk_direct_limit_mib": 256,
+      "restarts": 0,
+      "oom_and_kill_counters": 0,
+      "internal_oom_crc_errors": 0,
+      "memory_limit_pressure": "Peak reaches the configured ceiling; no general RF=3/full-feed headroom claim"
+    }
+  },
+  "launcher_note": "The first Docker client exited before tests because PowerShell split unquoted -test.run flags. Quoted-flag reruns passed. runtime.json retains the initial launcher's exit 1.",
+  "not_proven": [
+    "FULL SSE/feed and consumer notification projections under combined traffic",
+    "Combined disk processor, live ingest, storage, RPC/HTTP, outbox, broker and consumer memory",
+    "Public JWT verification on a deployed cluster (focused fixtures inject trusted scopes)",
+    "Separate-kernel k3s/RF=3 loss and redundancy restoration",
+    "Full available official satellite session/stream, p95 and 60x catch-up acceptance"
+  ],
+  "f15_complete": false,
+  "paused_after_this_checkpoint": true,
+  "push_performed": false
+}

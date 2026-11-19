@@ -197,6 +197,21 @@ func (s hazards) Get(ctx context.Context, hazardID string) (*domain.HazardRecord
 	return h, err
 }
 
+func (s hazards) GetSummary(ctx context.Context, hazardID string) (*domain.HazardRecord, error) {
+	var h domain.HazardRecord
+	err := s.db.Pool.QueryRow(ctx, `SELECT hazard_id,source,hazard_type,severity,area_name,occurred_at,ingested_at,revision
+		FROM hazard_events WHERE hazard_id=$1 AND attributes->'withdrawn' IS DISTINCT FROM 'true'::jsonb`, hazardID).
+		Scan(&h.HazardID, &h.Source, &h.HazardType, &h.Severity, &h.AreaName, &h.OccurredAt, &h.IngestedAt, &h.Revision)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	h.OccurredAt, h.IngestedAt = h.OccurredAt.UTC(), h.IngestedAt.UTC()
+	return &h, nil
+}
+
 func (s hazards) List(ctx context.Context, q storage.HazardQuery, page storage.PageRequest) (storage.HazardPage, error) {
 	page.Size = storage.HazardPageSize(page.Size)
 	where := []string{"attributes->'withdrawn' IS DISTINCT FROM 'true'::jsonb"}

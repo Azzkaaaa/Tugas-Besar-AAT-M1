@@ -78,9 +78,11 @@ func TestListLargeSatelliteRPCBudget(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	server := grpc.NewServer(grpc.UnaryInterceptor(func(ctx context.Context, req any, _ *grpc.UnaryServerInfo, next grpc.UnaryHandler) (any, error) {
+	options := []grpc.ServerOption{grpc.ChainUnaryInterceptor(func(ctx context.Context, req any, _ *grpc.UnaryServerInfo, next grpc.UnaryHandler) (any, error) {
 		return next(context.WithValue(ctx, auth.CallerContextKey, &auth.CallerContextData{Scopes: []string{"hazards:read:full", "hazards:read:summary"}}), req)
-	}))
+	})}
+	options = append(options, apigrpc.BoundedReadOptions()...)
+	server := grpc.NewServer(options...)
 	aggregatorv1.RegisterAggregatorServiceServer(server, apigrpc.NewServer(&config.Config{SourceStaleThreshold: time.Hour}, backend.Hazards, backend.Sources, nil))
 	go func() { _ = server.Serve(listener) }()
 	defer server.Stop()

@@ -28,6 +28,7 @@ func Run(t *testing.T, newBackend func(t *testing.T) *storage.Backend) {
 		{"ApplyRevision/NormalizesAttributes", testApplyNormalizes},
 		{"ApplyRevision/EventErrorWritesNothing", testApplyEventError},
 		{"Get/Missing", testGetMissing},
+		{"Get/Summary", testGetSummary},
 		{"List/OrderAndPaging", testListOrderAndPaging},
 		{"List/Filters", testListFilters},
 		{"List/TimeRange", testListTimeRange},

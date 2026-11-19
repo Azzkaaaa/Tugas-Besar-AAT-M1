@@ -48,6 +48,7 @@ type gateway struct {
 	retryAfter      int
 	inFlight        chan struct{}
 	reserved        chan struct{}
+	fullRead        chan struct{}
 	priorityAllowed func(*http.Request) bool
 }
 
@@ -55,7 +56,7 @@ type gateway struct {
 func New(opts Options) http.Handler {
 	capacity := max(opts.MaxInFlight, 1)
 	reserve := min(max(opts.ReservedInFlight, 0), capacity-1)
-	g := &gateway{contract: opts.Contract, retryAfter: opts.RetryAfterSeconds, inFlight: make(chan struct{}, capacity-reserve), reserved: make(chan struct{}, reserve), priorityAllowed: opts.PriorityAllowed}
+	g := &gateway{contract: opts.Contract, retryAfter: opts.RetryAfterSeconds, inFlight: make(chan struct{}, capacity-reserve), reserved: make(chan struct{}, reserve), fullRead: make(chan struct{}, 1), priorityAllowed: opts.PriorityAllowed}
 	strict := gw.NewStrictHandlerWithOptions(
 		&handlers.Handlers{Clients: opts.Clients, Timeout: opts.RequestTimeout, Heartbeat: opts.Heartbeat},
 		[]gw.StrictMiddlewareFunc{g.limit},
@@ -66,7 +67,7 @@ func New(opts Options) http.Handler {
 	)
 
 	router := chi.NewRouter()
-	router.Use(spanRoute, g.recoverer, g.correlation)
+	router.Use(spanRoute, g.recoverer, g.correlation, responseLifetime)
 	router.Get("/healthz", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) })
 	router.Post("/field-reports", g.submitFieldReport(opts.Clients.FieldReports, opts.RequestTimeout))
 	router.NotFound(func(w http.ResponseWriter, r *http.Request) {
@@ -176,7 +177,15 @@ func (g *gateway) limit(next gw.StrictHandlerFunc, operationID string) gw.Strict
 		if !ok {
 			return nil, problem.New(http.StatusTooManyRequests, "Too many requests; retry later.")
 		}
-		defer release()
+		defer holdResponse(ctx, release)()
+		if isFullRead(request) {
+			select {
+			case g.fullRead <- struct{}{}:
+				defer holdResponse(ctx, func() { <-g.fullRead })()
+			default:
+				return nil, problem.New(http.StatusTooManyRequests, "Full response capacity is busy; retry later.")
+			}
+		}
 		return next(ctx, w, r, request)
 	}
 }

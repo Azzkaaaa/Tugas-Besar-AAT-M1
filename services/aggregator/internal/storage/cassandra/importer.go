@@ -73,10 +73,12 @@ func (db *DB) ImportHazard(ctx context.Context, rec *domain.HazardRecord) error 
 	b := db.guardBatch(ctx, canonicalGuard(h.HazardID))
 	b.Query(`UPDATE canonical_events SET
 			hazard_type = ?, severity = ?, area_name = ?, latitude = ?, longitude = ?, occurred_at = ?,
-			ingested_at = ?, attributes = ?, revision = ?, bucket = ?, content_hash = ?, prev_bucket = ?, prev_occurred_at = ?
+			ingested_at = ?, attributes = ?, revision = ?, bucket = ?, content_hash = ?, prev_bucket = ?, prev_occurred_at = ?,
+			summary_active = ?, summary_revision = ?
 		WHERE shard=? AND hazard_id = ? IF revision = ?`,
 		h.HazardType, h.Severity, h.AreaName, h.Latitude, h.Longitude, h.OccurredAt,
 		h.IngestedAt, mustJSON(h.Attributes), h.Revision, bucket, hash, st.bucket, st.rec.OccurredAt,
+		!domain.Withdrawn(&h), h.Revision,
 		auditShard(h.HazardID), h.HazardID, st.rec.Revision)
 	if err := db.addCriticalEvent(ctx, b, &h, nil); err != nil {
 		return err

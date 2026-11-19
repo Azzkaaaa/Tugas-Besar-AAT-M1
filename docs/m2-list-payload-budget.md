@@ -37,7 +37,8 @@ authoritative fencing batches. The cache is trusted only for its matching row
 revision. A rolling prior writer changes revision without updating these fields,
 which invalidates the cache.
 
-Missing/stale caches use one full fallback at a time per List request. A bounded
+Missing/stale caches use one full fallback at a time across Get/List on the DB
+connection pool (see the later read-admission follow-up). A bounded
 best-effort conditional update fills derived metadata only if revision has not
 changed. Cold old rows can therefore require a detail read even for SUMMARY;
 new/valid cached rows do not. Cache writes never change canonical state,
@@ -92,7 +93,7 @@ cassandra.test -test.run=^TestListLargeSatelliteRPCBudget$ -test.v -test.timeout
 This fixture injects trusted test caller scopes and isolates read projections.
 It does not exercise JWT verification, the public HTTP gateway, concurrent full
 responses, live ingest/outbox, broker/consumers or the disk processor together.
-Get(SUMMARY) still uses its existing full record lookup. Cold-cache fallback
-serialization is currently per request; global admission still needs work.
-Those memory/concurrency paths and full-feed RF=3 p95/catch-up/reference
-acceptance remain F15 work.
+The later [read-admission follow-up](m2-read-admission.md) adds metadata-only
+Get(SUMMARY), shared cold fallback and unary full-response admission through
+RPC/HTTP delivery. Full SSE/feed and the combined processing/consumer path plus
+full-feed RF=3 p95/catch-up/reference acceptance remain F15 work.

@@ -15,6 +15,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/aggregator/internal/storage"
@@ -52,6 +53,8 @@ type DB struct {
 	keyspace     string
 	nodeFromRack bool
 	retention    time.Duration
+	summaryOnce  sync.Once
+	summarySlot  chan struct{}
 	// initialPeriod is the configured bucket period for a keyspace without a schedule.
 	initialPeriod time.Duration
 	sched         scheduleHolder

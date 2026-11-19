@@ -37,6 +37,11 @@ type HazardStore interface {
 	// Get returns nil, nil when no record has hazardID.
 	Get(ctx context.Context, hazardID string) (*domain.HazardRecord, error)
 
+	// GetSummary returns an active record's header without detail fields. Missing
+	// or withdrawn records return nil, nil. Backends select metadata before any
+	// payload; bounded legacy fallback may be needed for pre-upgrade rows.
+	GetSummary(ctx context.Context, hazardID string) (*domain.HazardRecord, error)
+
 	// List returns records matching q, ordered by OccurredAt descending then HazardID ascending.
 	// page.Size must be positive (callers clamp it). Pages can be shorter under
 	// their payload-byte budget; only an empty NextToken means the last page.

@@ -188,10 +188,12 @@ func (s hazards) applyRevision(ctx context.Context, rev *domain.HazardRecord, se
 		b := s.db.guardBatch(ctx, canonicalGuard(h.HazardID))
 		b.Query(`UPDATE canonical_events SET
 				hazard_type = ?, severity = ?, area_name = ?, latitude = ?, longitude = ?, occurred_at = ?,
-				attributes = ?, revision = ?, bucket = ?, content_hash = ?, prev_bucket = ?, prev_occurred_at = ?, ingest_sequence = ?
+				attributes = ?, revision = ?, bucket = ?, content_hash = ?, prev_bucket = ?, prev_occurred_at = ?, ingest_sequence = ?,
+				summary_active = ?, summary_revision = ?
 			WHERE shard=? AND hazard_id = ? IF revision = ? AND ingest_sequence = ?`,
 			h.HazardType, h.Severity, h.AreaName, h.Latitude, h.Longitude, h.OccurredAt,
 			mustJSON(h.Attributes), h.Revision, bucket, hash, st.bucket, st.rec.OccurredAt, max(sequence, priorSequence),
+			!domain.Withdrawn(&h), h.Revision,
 			auditShard(h.HazardID), h.HazardID, st.rec.Revision, st.sequence)
 		if err := s.db.addCriticalEvent(ctx, b, &h, ev.TraceContext); err != nil {
 			return nil, false, err
@@ -462,15 +464,14 @@ func (s hazards) List(ctx context.Context, q storage.HazardQuery, page storage.P
 	}
 	buckets := s.db.session.Query(stmt, args...).WithContext(ctx).PageSize(200).Iter()
 
-	// Only headers are retained for fanout/merge. Legacy fallbacks are serial
-	// within this request so eight shards cannot each hydrate a large body.
+	// Only headers are retained for fanout/merge. Legacy fallbacks share one
+	// slot across every Get/List on this DB, including all eight shard readers.
 	var sizes sync.Map
-	legacySlots := make(chan struct{}, 1)
 	out := collectBuckets(ctx, buckets, scope, page, func(bucket time.Time, want int) ([]*domain.HazardRecord, error) {
 		unitCtx, cancel := context.WithTimeout(ctx, 250*time.Millisecond)
 		defer cancel()
 		remember := func(h *domain.HazardRecord, n int) { sizes.Store(h, listMetadata{bytes: n, bucket: bucket}) }
-		return s.readBucket(unitCtx, bucket, q, since, until, cursor, want, remember, legacySlots)
+		return s.readBucket(unitCtx, bucket, q, since, until, cursor, want, remember)
 	})
 	candidates := make([]storage.HazardCandidate, len(out.Items))
 	for i, h := range out.Items {
@@ -543,16 +544,16 @@ func collectBuckets(ctx context.Context, buckets bucketIterator, scope string, p
 // readBucket returns up to want matching rows of one bucket, in List order,
 // merged from every shard partition of the bucket.
 func (s hazards) readBucket(ctx context.Context, bucket time.Time, q storage.HazardQuery, since, until time.Time,
-	cursor *pageCursor, want int, remember func(*domain.HazardRecord, int), legacySlots chan struct{},
+	cursor *pageCursor, want int, remember func(*domain.HazardRecord, int),
 ) ([]*domain.HazardRecord, error) {
 	return readBucketShards(ctx, want, func(ctx context.Context, shard int) ([]*domain.HazardRecord, error) {
-		return s.readShard(ctx, bucket, shard, q, since, until, cursor, want, remember, legacySlots)
+		return s.readShard(ctx, bucket, shard, q, since, until, cursor, want, remember)
 	})
 }
 
 // readShard returns up to want matching rows of one bucket shard, in List order.
 func (s hazards) readShard(ctx context.Context, bucket time.Time, shard int, q storage.HazardQuery, since, until time.Time,
-	cursor *pageCursor, want int, remember func(*domain.HazardRecord, int), legacySlots chan struct{},
+	cursor *pageCursor, want int, remember func(*domain.HazardRecord, int),
 ) ([]*domain.HazardRecord, error) {
 	stmt := `SELECT hazard_id,source,hazard_type,severity,area_name,occurred_at,ingested_at,revision,
 		list_active,list_revision,list_wire_bytes FROM hazards_by_bucket_shard WHERE bucket = ? AND shard = ?`
@@ -605,15 +606,15 @@ func (s hazards) readShard(ctx context.Context, bucket time.Time, shard int, q s
 			n = int(*wireBytes)
 		}
 		if !valid || (!q.SummaryOnly && n == 0) {
-			full, bytes, err := s.resolveListMetadata(ctx, &h, bucket, revision, legacySlots)
+			header, bytes, err := s.resolveListMetadata(ctx, &h, bucket, revision, q)
 			if err != nil {
 				_ = scanner.Err()
 				return out, err
 			}
-			if full == nil || !storage.MatchesHazardQuery(full, q) {
+			if header == nil {
 				continue
 			}
-			h = *storage.HazardSummaryHeader(full)
+			h = *header
 			n = bytes
 		}
 		remember(&h, n)

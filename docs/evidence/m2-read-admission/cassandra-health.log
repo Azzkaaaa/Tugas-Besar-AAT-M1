@@ -1,0 +1,32 @@
+low 0
+high 0
+max 1424
+oom 0
+oom_kill 0
+oom_group_kill 0
+1073938432
+Name:	java
+Umask:	0022
+State:	S (sleeping)
+Tgid:	1
+Ngid:	0
+Pid:	1
+PPid:	0
+TracerPid:	0
+Uid:	999	999	999	999
+Gid:	999	999	999	999
+FDSize:	512
+Groups:
+NStgid:	1
+NSpid:	1
+NSpgid:	1
+NSsid:	1
+Kthread:	0
+VmPeak:	 1861036 kB
+VmSize:	 1828160 kB
+VmLck:	  816452 kB
+VmPin:	       0 kB
+VmHWM:	 1028196 kB
+VmRSS:	  907008 kB
+RssAnon:	  791772 kB
+matched_server_errors=0

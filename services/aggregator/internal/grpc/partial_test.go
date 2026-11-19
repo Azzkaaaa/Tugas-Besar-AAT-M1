@@ -28,6 +28,9 @@ func (s partialHazards) List(context.Context, storage.HazardQuery, storage.PageR
 func (s partialHazards) Get(context.Context, string) (*domain.HazardRecord, error) {
 	return nil, s.failure
 }
+func (s partialHazards) GetSummary(context.Context, string) (*domain.HazardRecord, error) {
+	return nil, s.failure
+}
 func (s partialHazards) HasData(context.Context, string) (bool, error) { return true, nil }
 
 type unavailableSources struct{ storage.SourceStateStore }

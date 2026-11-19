@@ -18,7 +18,39 @@ import (
 
 type projectionHazards struct {
 	partialHazards
-	query storage.HazardQuery
+	query                 storage.HazardQuery
+	fullGets, summaryGets int
+	record                *domain.HazardRecord
+}
+
+func (p *projectionHazards) Get(context.Context, string) (*domain.HazardRecord, error) {
+	p.fullGets++
+	return p.record, p.failure
+}
+
+func (p *projectionHazards) GetSummary(context.Context, string) (*domain.HazardRecord, error) {
+	p.summaryGets++
+	return p.record, p.failure
+}
+
+func TestGetSelectsSummaryBeforeReadingAndChecksWholeResponse(t *testing.T) {
+	h := &domain.HazardRecord{HazardID: "large", Source: domain.SourceSatellite, Attributes: map[string]any{"body": strings.Repeat("x", (16<<20)-(2<<10))}}
+	store := &projectionHazards{record: h}
+	srv := NewServer(&config.Config{}, store, unavailableSources{}, nil)
+	caller := context.WithValue(context.Background(), auth.CallerContextKey, &auth.CallerContextData{Scopes: []string{"hazards:read:full", "hazards:read:summary"}})
+	for _, view := range []commonv1.View{commonv1.View_VIEW_UNSPECIFIED, commonv1.View_VIEW_SUMMARY, commonv1.View_VIEW_FULL} {
+		response, err := srv.GetHazard(caller, &aggregatorv1.GetHazardRequest{HazardId: h.HazardID, View: view})
+		if err != nil || proto.Size(response) > 16<<20 {
+			t.Fatal("complete response rejected", err)
+		}
+	}
+	if store.summaryGets != 2 || store.fullGets != 1 {
+		t.Fatal("summary hydrated full body", store.summaryGets, store.fullGets)
+	}
+	h.Attributes["body"] = strings.Repeat("x", 16<<20)
+	if _, err := srv.GetHazard(caller, &aggregatorv1.GetHazardRequest{HazardId: h.HazardID, View: commonv1.View_VIEW_FULL}); status.Code(err) != codes.ResourceExhausted {
+		t.Fatal("oversized Get response accepted", err)
+	}
 }
 
 func TestListChecksExactCompleteResponseBudget(t *testing.T) {

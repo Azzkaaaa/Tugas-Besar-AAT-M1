@@ -1,0 +1,9 @@
+=== RUN   TestFullReadCreditFollowsFinalBufferReference
+--- PASS: TestFullReadCreditFollowsFinalBufferReference (0.01s)
+=== RUN   TestFullReadAdmissionChecksCallerBeforeCapacity
+--- PASS: TestFullReadAdmissionChecksCallerBeforeCapacity (0.00s)
+=== RUN   TestFullRPCBackpressureHoldsCreditAfterHandlerEnds
+--- PASS: TestFullRPCBackpressureHoldsCreditAfterHandlerEnds (0.33s)
+=== RUN   TestFullRPCErrorsAndCancellationReturnCredit
+--- PASS: TestFullRPCErrorsAndCancellationReturnCredit (0.10s)
+PASS
