@@ -27,6 +27,12 @@ type Runner struct {
 	Store   *storage.Backend
 	metrics *metrics
 }
+
+// A default valid frame can be 2MiB. Replaying 200 of them at once could consume
+// 400MiB before graph/output work. Keep recovery intake bounded independently
+// of the journal length; snapshots still avoid a replay from zero each term.
+const satelliteRecoveryBatch = 8
+
 type metrics struct {
 	inputs, parked                             metric.Int64Counter
 	latency                                    metric.Float64Histogram
@@ -130,7 +136,7 @@ func (r *Runner) satellite(ctx context.Context) error {
 	defer snapshots.Close()
 	replayStarted, replayed := time.Now(), 0
 	for seq < p.Sequence {
-		rows, err := r.Store.Streams.Read(ctx, stream, seq, 200)
+		rows, err := r.Store.Streams.Read(ctx, stream, seq, satelliteRecoveryBatch)
 		if err != nil {
 			return err
 		}

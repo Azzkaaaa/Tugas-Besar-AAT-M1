@@ -27,6 +27,12 @@ the term and replay the authoritative journal; a failed checkpoint retries an
 idempotent canonical save. Incoming event types cannot impersonate the trusted
 already-archived no-op marker.
 
+Committed-tail recovery reads at most eight journal entries per call. At the
+default 2MiB frame ceiling, a 200-entry batch could otherwise allocate 400MiB
+before graph/output work. A regression replays 100 committed inputs and checks
+the bounded read contract. Legacy/current Cassandra reconciliation is bounded
+by that same per-query limit.
+
 Snapshots encode sorted SQL rows through gzip without rebuilding graph-sized
 maps or byte buffers. Restore checks format, policy, sequence, ownership and
 counts. See [m2-streaming-snapshots.md](m2-streaming-snapshots.md) for bounded
