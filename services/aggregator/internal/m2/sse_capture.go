@@ -109,6 +109,7 @@ func ReadSSECaptured(reader io.Reader, max int, consume func(sseFrame) error, ar
 				}
 				if f.ID != "" {
 					f.Kind = "quarantined"
+					f.archived = true
 					f.Data = []byte(`{"reason":"sse_frame_size_exceeded"}`)
 					if e := consume(f); e != nil {
 						return e

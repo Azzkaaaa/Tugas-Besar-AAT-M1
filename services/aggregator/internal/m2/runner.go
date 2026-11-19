@@ -121,7 +121,13 @@ func (r *Runner) satellite(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	e, seq := r.restoreSatellite(ctx, stream, p.Sequence)
+	e, seq, err := r.restoreSatellite(ctx, stream, p.Sequence)
+	if err != nil {
+		return err
+	}
+	defer e.Close()
+	snapshots := newSatelliteSnapshotter(ctx, r.Store.Snapshots, e.graph.directory)
+	defer snapshots.Close()
 	replayStarted, replayed := time.Now(), 0
 	for seq < p.Sequence {
 		rows, err := r.Store.Streams.Read(ctx, stream, seq, 200)
@@ -138,8 +144,8 @@ func (r *Runner) satellite(ctx context.Context) error {
 			if row.Sequence != seq+1 {
 				return errors.New("journal_gap")
 			}
-			if row.Kind != "quarantined" {
-				_, _ = e.Apply(row.Kind, row.Payload, row.Sequence, row.ReceivedAt)
+			if err := e.ApplyTo(ctx, row.Kind, row.Payload, row.Sequence, row.ReceivedAt, nil); err != nil && !errors.Is(err, errFireInput) {
+				return err
 			}
 			seq = row.Sequence
 			replayed++
@@ -153,18 +159,19 @@ func (r *Runner) satellite(ctx context.Context) error {
 		work, span := otel.Tracer("bnpb.m2").Start(ctx, "satellite.process")
 		defer span.End()
 		span.SetAttributes(attribute.String("correlation_id", corr))
-		var records []*domain.HazardRecord
-		var err error
-		if row.Kind != "quarantined" {
-			records, err = e.Apply(row.Kind, row.Payload, row.Sequence, row.ReceivedAt)
-		}
-		if err != nil {
-			if err = r.park(work, domain.SourceSatellite, row.Payload, err.Error(), row.ReceivedAt); err != nil {
+		emitted := false
+		err := e.ApplyTo(work, row.Kind, row.Payload, row.Sequence, row.ReceivedAt, func(h *domain.HazardRecord) error {
+			if err := r.save(work, h, corr); err != nil {
 				return err
 			}
-		}
-		for _, h := range records {
-			if err = r.save(work, h, corr); err != nil {
+			emitted = true
+			return nil
+		})
+		if err != nil {
+			if !errors.Is(err, errFireInput) {
+				return err
+			}
+			if err = r.park(work, domain.SourceSatellite, row.Payload, err.Error(), row.ReceivedAt); err != nil {
 				return err
 			}
 		}
@@ -172,24 +179,29 @@ func (r *Runner) satellite(ctx context.Context) error {
 			return err
 		}
 		r.metrics.inputs.Add(work, 1, metric.WithAttributes(attribute.String("source", domain.SourceSatellite)))
-		if len(records) > 0 {
+		if emitted {
 			r.metrics.latency.Record(work, time.Since(row.ReceivedAt).Seconds(), metric.WithAttributes(attribute.String("source", domain.SourceSatellite)))
 		}
 		fires, singles := e.Counts()
 		r.metrics.fires.Record(work, int64(fires))
 		r.metrics.singles.Record(work, int64(singles))
-		r.metrics.late.Record(work, e.Late)
+		r.metrics.late.Record(work, e.meta.Late)
 		r.metrics.active.Record(work, int64(e.Active()))
-		r.metrics.expired.Record(work, e.Expired)
-		r.metrics.overCapacity.Record(work, e.OverCapacity)
-		if every := int64(r.Config.SnapshotEvery); every > 0 && r.Store.Snapshots != nil && p.Sequence-snapshotAt >= every {
-			r.saveSatellite(work, stream, p.Sequence, e)
-			snapshotAt = p.Sequence
+		r.metrics.expired.Record(work, e.meta.Expired)
+		r.metrics.overCapacity.Record(work, e.meta.OverCapacity)
+		if every := int64(r.Config.SnapshotEvery); every > 0 && p.Sequence-snapshotAt >= every {
+			scheduled, err := snapshots.Save(work, stream, p.Sequence, e)
+			if err != nil {
+				return err
+			}
+			if scheduled {
+				snapshotAt = p.Sequence
+			}
 		}
 		if n, err := strconv.ParseInt(p.Cursor, 10, 64); err == nil {
 			r.metrics.offset.Record(work, n)
 		}
-		return r.Store.Sources.RecordSuccess(work, domain.SourceKeySatellite, e.MaxTime)
+		return r.Store.Sources.RecordSuccess(work, domain.SourceKeySatellite, e.meta.MaxTime)
 	}
 	// Recover the one input appended before a previous process died.
 	for {
@@ -232,7 +244,7 @@ func (r *Runner) satellite(ctx context.Context) error {
 			} else if f.Kind != "heartbeat" {
 				return errors.New("feed_event_without_offset")
 			}
-			row, err := r.Store.Streams.Append(ctx, stream, storage.StreamEntry{Sequence: p.Sequence + 1, Kind: f.Kind, Cursor: cursor, Payload: f.Data, ReceivedAt: time.Now().UTC()})
+			row, err := r.Store.Streams.Append(ctx, stream, storage.StreamEntry{Sequence: p.Sequence + 1, Kind: satelliteJournalKind(f), Cursor: cursor, Payload: f.Data, ReceivedAt: time.Now().UTC()})
 			if err != nil {
 				return err
 			}
@@ -264,44 +276,6 @@ func (r *Runner) satellite(ctx context.Context) error {
 		backoff = min(30*time.Second, backoff*2)
 	}
 	return ctx.Err()
-}
-
-// restoreSatellite loads the newest verified snapshot at or below the
-// committed checkpoint. Any failure falls back to a full journal replay, which
-// yields the same state, only slower.
-func (r *Runner) restoreSatellite(ctx context.Context, stream string, committed int64) (*FireEngine, int64) {
-	fresh := func() *FireEngine {
-		return NewFireEngineRetention(r.Config.Lateness, r.Config.Retention, r.Config.MaxDetections)
-	}
-	if r.Store.Snapshots == nil || r.Config.SnapshotEvery == 0 || committed == 0 {
-		return fresh(), 0
-	}
-	seq, state, err := r.Store.Snapshots.LatestSnapshot(ctx, stream, committed)
-	if err != nil || state == nil {
-		if err != nil {
-			slog.WarnContext(ctx, "satellite snapshot unavailable; replaying journal", "error", err, "correlation_id", "satellite-recovery")
-		}
-		return fresh(), 0
-	}
-	e, err := RestoreFireEngine(state, r.Config.Lateness, r.Config.Retention, r.Config.MaxDetections)
-	if err != nil {
-		slog.WarnContext(ctx, "satellite snapshot rejected; replaying journal", "sequence", seq, "error", err, "correlation_id", "satellite-recovery")
-		return fresh(), 0
-	}
-	return e, seq
-}
-
-// saveSatellite is best effort: a failed snapshot only lengthens the next recovery.
-func (r *Runner) saveSatellite(ctx context.Context, stream string, sequence int64, e *FireEngine) {
-	state, err := e.EncodeState()
-	if err == nil {
-		err = r.Store.Snapshots.SaveSnapshot(ctx, stream, sequence, state)
-	}
-	if err != nil {
-		slog.WarnContext(ctx, "satellite snapshot failed", "sequence", sequence, "error", err, "correlation_id", fmt.Sprintf("satellite-%d", sequence))
-		return
-	}
-	slog.DebugContext(ctx, "satellite snapshot saved", "sequence", sequence, "bytes", len(state), "correlation_id", fmt.Sprintf("satellite-%d", sequence))
 }
 
 type processingError struct{ error }

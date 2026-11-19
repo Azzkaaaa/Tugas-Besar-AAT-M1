@@ -25,7 +25,7 @@ func workingError(err error) error {
 	if err == nil {
 		return nil
 	}
-	return fmt.Errorf("%w: %v", errWorkingState, err)
+	return fmt.Errorf("%w: %w", errWorkingState, err)
 }
 
 // All graph-sized structures are indexed on disk. Only scalar policy/counters
@@ -208,9 +208,6 @@ func (d *diskFireProcessor) ApplyTo(ctx context.Context, kind string, raw []byte
 			return workingError(err)
 		}
 	}
-	if err := tx.QueryRowContext(ctx, `SELECT COALESCE(SUM(members>=2),0),COALESCE(SUM(members=1),0) FROM components`).Scan(&d.fires, &d.singles); err != nil {
-		return workingError(err)
-	}
 	if err := tx.Commit(); err != nil {
 		return workingError(err)
 	}
@@ -256,7 +253,7 @@ func (d *diskFireProcessor) mutate(ctx context.Context, tx *sql.Tx, kind string,
 			return err
 		}
 	}
-	if err := execGraph(ctx, tx, `INSERT INTO old_owners SELECT o.key,o.component_id FROM owners o JOIN affected a ON a.key=o.key`); err != nil {
+	if err := execGraph(ctx, tx, `INSERT INTO old_owners SELECT o.key,o.component_id FROM affected a CROSS JOIN owners o ON o.key=a.key`); err != nil {
 		return err
 	}
 	if err := d.removePoint(ctx, tx, in.key); err != nil {
@@ -281,8 +278,13 @@ func (d *diskFireProcessor) mutate(ctx context.Context, tx *sql.Tx, kind string,
 			return err
 		}
 	}
+	if err := execGraph(ctx, tx, `INSERT INTO old_ids SELECT DISTINCT component_id FROM old_owners`); err != nil {
+		return err
+	}
+	if err := d.adjustGraphCounts(ctx, tx, "old_ids", -1); err != nil {
+		return err
+	}
 	for _, query := range []string{
-		`INSERT INTO old_ids SELECT DISTINCT component_id FROM old_owners`,
 		`DELETE FROM components WHERE id IN (SELECT id FROM old_ids)`,
 		`DELETE FROM owners WHERE key IN (SELECT key FROM affected)`,
 	} {
@@ -292,8 +294,8 @@ func (d *diskFireProcessor) mutate(ctx context.Context, tx *sql.Tx, kind string,
 	}
 	for {
 		var root string
-		err := tx.QueryRowContext(ctx, `SELECT p.key FROM affected a JOIN points p ON p.key=a.key
-			LEFT JOIN visited v ON v.key=p.key WHERE v.key IS NULL AND p.confidence<>'l' ORDER BY p.key LIMIT 1`).Scan(&root)
+		err := tx.QueryRowContext(ctx, `SELECT p.key FROM affected a CROSS JOIN points p ON p.key=a.key
+			LEFT JOIN visited v ON v.key=p.key WHERE v.key IS NULL AND p.confidence<>'l' ORDER BY a.key LIMIT 1`).Scan(&root)
 		if errors.Is(err, sql.ErrNoRows) {
 			break
 		}
@@ -320,6 +322,9 @@ func (d *diskFireProcessor) mutate(ctx context.Context, tx *sql.Tx, kind string,
 		if in.insertOnly {
 			break
 		}
+	}
+	if err := d.adjustGraphCounts(ctx, tx, "new_components", 1); err != nil {
+		return err
 	}
 	if err := walkGraphKeys(ctx, tx, `SELECT id FROM new_components WHERE id>? ORDER BY id LIMIT 1`, func(id string) error {
 		var members int
@@ -364,6 +369,19 @@ func (d *diskFireProcessor) mutate(ctx context.Context, tx *sql.Tx, kind string,
 		previous.Severity = domain.SeverityNormal
 		return changeGraphRecord(ctx, tx, id, previous)
 	})
+}
+
+// Count only touched components, avoiding a full working-catalog scan for
+// every singleton input. The table names are private fixed SQL identifiers.
+func (d *diskFireProcessor) adjustGraphCounts(ctx context.Context, tx *sql.Tx, table string, sign int) error {
+	var fires, singles int
+	if err := tx.QueryRowContext(ctx, `SELECT COALESCE(SUM(members>=2),0),COALESCE(SUM(members=1),0)
+		FROM components WHERE id IN (SELECT id FROM `+table+`)`).Scan(&fires, &singles); err != nil {
+		return err
+	}
+	d.fires += sign * fires
+	d.singles += sign * singles
+	return nil
 }
 
 func assignGraphComponent(ctx context.Context, tx *sql.Tx, root string, sequence int64) error {
@@ -489,6 +507,9 @@ func (d *diskFireProcessor) compact(ctx context.Context, tx *sql.Tx) error {
 	}
 	if err := execGraph(ctx, tx, `INSERT INTO expired_components SELECT o.component_id
 		FROM owners o JOIN points p ON p.key=o.key GROUP BY o.component_id HAVING MAX(p.at_ms)<?`, cutoff.UnixMilli()); err != nil {
+		return err
+	}
+	if err := d.adjustGraphCounts(ctx, tx, "expired_components", -1); err != nil {
 		return err
 	}
 	if d.keepFinal {

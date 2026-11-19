@@ -80,6 +80,7 @@ func pause(ctx context.Context, d time.Duration) bool {
 type sseFrame struct {
 	ID, Kind string
 	Data     []byte
+	archived bool // set only by the trusted capture path after durable archival
 }
 
 // ReadSSE implements multiline data, CRLF, comments, and bounded frame sizes.

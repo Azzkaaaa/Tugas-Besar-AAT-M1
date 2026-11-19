@@ -13,6 +13,7 @@ import (
 
 type Config struct {
 	SatelliteURL, SatelliteToken, SatelliteStream       string
+	StateDir                                            string
 	CoastalURL, CoastalToken                            string
 	AuditToken, HTTPAddress                             string
 	Lateness, CoastalPoll, Timeout, StaleAfter, OpenFor time.Duration
@@ -25,6 +26,7 @@ type Config struct {
 
 func LoadConfig() (Config, error) {
 	c := Config{SatelliteURL: os.Getenv("SATELLITE_BASE_URL"), SatelliteToken: os.Getenv("SATELLITE_TOKEN"),
+		StateDir:        os.Getenv("SATELLITE_STATE_DIR"),
 		SatelliteStream: "satellite-v1", CoastalURL: os.Getenv("PANTAI_BASE_URL"), CoastalToken: os.Getenv("PANTAI_AUTH_TOKEN"),
 		AuditToken: os.Getenv("AUDIT_TOKEN"), HTTPAddress: os.Getenv("AGGREGATOR_M2_HTTP_ADDRESS"),
 		Lateness: 24 * time.Hour, CoastalPoll: 500 * time.Millisecond, Timeout: 1500 * time.Millisecond,
