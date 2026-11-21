@@ -166,7 +166,10 @@ func (l leases) installAll(ctx context.Context, partitions []guardPartition, a l
 	var workers sync.WaitGroup
 	var first error
 	var once sync.Once
-	for range 4 {
+	// Each source installs up to 65 partition guards before it can run or
+	// renew. Keep the work bounded, but allow enough concurrent network I/O
+	// to finish the barrier within the lease window on separate hosts.
+	for range 8 {
 		workers.Add(1)
 		go func() {
 			defer workers.Done()
