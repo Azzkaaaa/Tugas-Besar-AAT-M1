@@ -340,6 +340,7 @@ func (s hazards) addProjection(b *gocql.Batch, h *domain.HazardRecord, bucket, p
 func (s hazards) addProjectionMetadata(b *gocql.Batch, h *domain.HazardRecord, bucket, prevBucket, prevOccurredAt time.Time) {
 	if s.db.fencedSchema {
 		addAuditProjection(b, h)
+		addOrderedListProjection(b, h, bucket, prevOccurredAt)
 	}
 	if !prevBucket.IsZero() && (!prevBucket.Equal(bucket) || !prevOccurredAt.Equal(h.OccurredAt)) {
 		b.Query(`DELETE FROM hazards_by_bucket_shard WHERE bucket = ? AND shard = ? AND occurred_at = ? AND hazard_id = ?`,
@@ -436,6 +437,9 @@ func (s hazards) List(ctx context.Context, q storage.HazardQuery, page storage.P
 	if err != nil {
 		return storage.HazardPage{}, fmt.Errorf("%w: %v", storage.ErrInvalidPageToken, err)
 	}
+	if s.db.orderedListReady(ctx) {
+		return s.listOrdered(ctx, q, page, cursor)
+	}
 	since, until := msUTC(q.Since), msUTC(q.Until) // zero stays zero
 	if !q.Until.IsZero() && !q.Until.Equal(until) {
 		until = until.Add(time.Millisecond)
@@ -473,6 +477,10 @@ func (s hazards) List(ctx context.Context, q storage.HazardQuery, page storage.P
 		remember := func(h *domain.HazardRecord, n int) { sizes.Store(h, listMetadata{bytes: n, bucket: bucket}) }
 		return s.readBucket(unitCtx, bucket, q, since, until, cursor, want, remember)
 	})
+	return s.loadListPage(ctx, q, page, out, &sizes)
+}
+
+func (s hazards) loadListPage(ctx context.Context, q storage.HazardQuery, page storage.PageRequest, out storage.HazardPage, sizes *sync.Map) (storage.HazardPage, error) {
 	candidates := make([]storage.HazardCandidate, len(out.Items))
 	for i, h := range out.Items {
 		n, _ := sizes.Load(h)

@@ -26,7 +26,8 @@ import (
 
 const usage = `usage:
   storeadmin bucket-period            show the bucket period and any scheduled change
-  storeadmin bucket-period set <dur>  schedule a new bucket period (e.g. 5m, 1h)`
+  storeadmin bucket-period set <dur>  schedule a new bucket period (e.g. 5m, 1h)
+  storeadmin prepare-list-index      backfill/cut over ordered List headers AFTER all writers are upgraded`
 
 func main() {
 	if err := run(os.Args[1:]); err != nil {
@@ -36,7 +37,8 @@ func main() {
 }
 
 func run(args []string) error {
-	if len(args) == 0 || args[0] != "bucket-period" || (len(args) != 1 && (len(args) != 3 || args[1] != "set")) {
+	prepareList := len(args) == 1 && args[0] == "prepare-list-index"
+	if !prepareList && (len(args) == 0 || args[0] != "bucket-period" || (len(args) != 1 && (len(args) != 3 || args[1] != "set"))) {
 		return fmt.Errorf("%s", usage)
 	}
 	var period time.Duration
@@ -51,7 +53,11 @@ func run(args []string) error {
 		period = p
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	timeout := 2 * time.Minute
+	if prepareList {
+		timeout = 30 * time.Minute
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 	if os.Getenv("CANONICAL_STORE_CASSANDRA_HOSTS") == "" {
 		_ = os.Setenv("CANONICAL_STORE_CASSANDRA_HOSTS", "localhost:9042")
@@ -67,6 +73,13 @@ func run(args []string) error {
 		return err
 	}
 	defer db.Close()
+	if prepareList {
+		if err := db.PrepareOrderedList(ctx); err != nil {
+			return err
+		}
+		fmt.Println("Ordered List index backfilled and ready; canonical data unchanged")
+		return nil
+	}
 
 	if period > 0 {
 		from, err := db.SetBucketPeriod(ctx, period)

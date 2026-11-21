@@ -16,6 +16,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/aggregator/internal/storage"
@@ -48,13 +49,14 @@ type Config struct {
 
 // DB is an open Cassandra store.
 type DB struct {
-	fencedSchema bool
-	session      *gocql.Session
-	keyspace     string
-	nodeFromRack bool
-	retention    time.Duration
-	summaryOnce  sync.Once
-	summarySlot  chan struct{}
+	fencedSchema   bool
+	session        *gocql.Session
+	keyspace       string
+	nodeFromRack   bool
+	retention      time.Duration
+	summaryOnce    sync.Once
+	summarySlot    chan struct{}
+	listIndexReady atomic.Bool
 	// initialPeriod is the configured bucket period for a keyspace without a schedule.
 	initialPeriod time.Duration
 	sched         scheduleHolder

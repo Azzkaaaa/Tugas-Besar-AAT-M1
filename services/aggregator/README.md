@@ -22,6 +22,22 @@ Implementasi dan bahasa belum dipilih.
 
 ## Storage
 
+For an upgrade containing migration 0019, first roll **all** Aggregator writers
+to that build, then run `/app/storeadmin prepare-list-index` in one Aggregator
+pod with its normal storage environment. This performs a retryable backfill and
+only marks the ordered header index ready after success. Readers keep the older
+bucket path until then; do not cut over while older writers can still mutate
+canonical data. Canonical rows and payload buckets are retained.
+
+The ordered List path merges eight hash-sharded header streams, ordered by
+`occurred_at DESC, hazard_id ASC`, instead of walking empty minute buckets left
+by fire moves. Full bodies remain in their existing bucket shards. Logical
+revision timestamps suppress superseded positions and delayed older writes.
+Quorum reads, authority checks, byte limits, and explicit partial pages remain
+in force. Header partitions grow with retained history; they need retention or
+additional generations at substantially larger scale. This is metadata, not a
+full replicated copy of every HazardEvent on every node.
+
 Logika bisnis (ingest, gRPC, publisher) hanya memakai interface di
 `internal/storage` (`HazardStore`, `SourceStateStore`, `Outbox`) dengan tipe
 domain; tidak ada transaksi, query bebas, atau tipe protobuf yang melewati

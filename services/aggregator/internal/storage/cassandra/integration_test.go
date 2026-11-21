@@ -30,6 +30,7 @@ var dataTables = []string{
 	"hazards_by_id", "canonical_events", "stream_inputs_by_shard", "hazards_by_bucket", "hazards_by_bucket_shard", "hazard_buckets", "source_state",
 	"outbox_events", "outbox_pending", "outbox_dead_letters", "leader_leases",
 	"audit_events_by_shard", "audit_refs_by_shard", "analytics_by_shard",
+	"list_headers_by_shard",
 }
 
 func testHosts(t *testing.T) []string {
