@@ -18,9 +18,10 @@ import (
 )
 
 const auditShards = 16
+
 // Metadata-only pages keep full-catalog checksums within their bounded deadline
 // without a separate WAN round trip for every 64 references.
-const auditReadPageSize = 256
+const auditReadPageSize = 1024
 const auditReadyKey = "audit_indexes_v4"
 
 type audit struct{ db *DB }
