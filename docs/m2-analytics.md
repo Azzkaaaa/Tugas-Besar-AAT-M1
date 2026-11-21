@@ -30,7 +30,7 @@ or upgrade backfill from overriding newer withdrawals. Migration 0010 and the
 versioned background Audit backfill install this index. Reads remain partial
 until backfill completes. PostgreSQL streams only the needed metadata fields.
 Neither backend loads the full payload catalog into application memory.
-The Aggregator scans at most four Cassandra pages concurrently (128 rows per
+The Aggregator scans at most eight Cassandra pages concurrently (128 rows per
 page, 500 ms each) and admits one analytics scan per replica. Busy scans are
 explicitly partial. Requests have a 10-second Aggregator budget within the
 gateway's 12 seconds. At most 10,000 area keys and 4,096 nonempty time buckets

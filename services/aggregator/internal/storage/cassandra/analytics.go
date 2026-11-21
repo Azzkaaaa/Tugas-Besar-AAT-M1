@@ -40,7 +40,10 @@ func (s audit) ScanAnalytics(ctx context.Context, source string, visit func(stor
 	}
 	results := make(chan result, 4)
 	var workers sync.WaitGroup
-	for range 4 {
+	// Sixteen independently paged shards need enough overlap to finish a live
+	// catalog inside the ten-second API budget. Keep at most eight reads in
+	// flight; each page remains capped at 128 metadata rows, never payloads.
+	for range 8 {
 		workers.Add(1)
 		go func() {
 			defer workers.Done()
