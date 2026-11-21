@@ -16,7 +16,7 @@ func TestAuditMergeUsesGlobalOrderAndRetainsHealthyShards(t *testing.T) {
 	base := time.Date(2026, 11, 18, 0, 0, 0, 0, time.UTC)
 	data := map[int][]auditEntry{}
 	for shard := range auditShards {
-		for n := range 130 {
+		for n := range 2*auditReadPageSize + 2 {
 			data[shard] = append(data[shard], auditEntry{at: base.Add(time.Duration(n) * time.Millisecond), id: fmt.Sprintf("%02d-%03d", shard, n), ref: fmt.Sprintf("ref-%03d", n), active: n%3 != 0})
 		}
 	}
@@ -30,7 +30,7 @@ func TestAuditMergeUsesGlobalOrderAndRetainsHealthyShards(t *testing.T) {
 				continue
 			}
 			out = append(out, row)
-			if len(out) == 64 {
+			if len(out) == auditReadPageSize {
 				break
 			}
 		}

@@ -18,6 +18,9 @@ import (
 )
 
 const auditShards = 16
+// Metadata-only pages keep full-catalog checksums within their bounded deadline
+// without a separate WAN round trip for every 64 references.
+const auditReadPageSize = 256
 const auditReadyKey = "audit_indexes_v4"
 
 type audit struct{ db *DB }
@@ -81,7 +84,7 @@ func (s audit) read(ctx context.Context, q storage.AuditQuery, shard int, after 
 		stmt += ` AND ingested_at>=?`
 		args = append(args, q.Since)
 	}
-	iter := s.db.session.Query(stmt+` LIMIT 64`, args...).WithContext(ctx).PageSize(64).Iter()
+	iter := s.db.session.Query(fmt.Sprintf("%s LIMIT %d", stmt, auditReadPageSize), args...).WithContext(ctx).PageSize(auditReadPageSize).Iter()
 	out := []auditEntry{}
 	var row auditEntry
 	for {
@@ -132,7 +135,7 @@ func (h *auditHeap) Pop() any {
 	return v
 }
 
-// Keep at most 64 small metadata rows per shard; fetch hazard payloads only when
+// Keep at most auditReadPageSize small metadata rows per shard; fetch payloads only when
 // emitting a globally ordered result. Parallelism is bounded at four queries.
 func mergeAudit(ctx context.Context, q storage.AuditQuery, refs bool,
 	read func(context.Context, storage.AuditQuery, int, auditEntry, bool) ([]auditEntry, error),
@@ -148,7 +151,7 @@ func mergeAudit(ctx context.Context, q storage.AuditQuery, refs bool,
 			defer workers.Done()
 			for shard := range jobs {
 				rows, err := read(ctx, q, shard, auditEntry{at: q.After.At, id: q.After.ID}, refs)
-				streams[shard] = &auditStream{shard: shard, rows: rows, done: len(rows) < 64}
+				streams[shard] = &auditStream{shard: shard, rows: rows, done: len(rows) < auditReadPageSize}
 				errorsByShard[shard] = err
 			}
 		}()
@@ -180,7 +183,7 @@ func mergeAudit(ctx context.Context, q storage.AuditQuery, refs bool,
 		stream.at++
 		if stream.at == len(stream.rows) && !stream.done {
 			rows, err := read(ctx, q, stream.shard, row, refs)
-			stream.rows, stream.at, stream.done = rows, 0, len(rows) < 64
+			stream.rows, stream.at, stream.done = rows, 0, len(rows) < auditReadPageSize
 			if err != nil {
 				units = append(units, fmt.Sprintf("audit-shard-%02d", stream.shard))
 				stream.done = true
