@@ -495,6 +495,13 @@ func (s hazards) loadListPage(ctx context.Context, q storage.HazardQuery, page s
 	if consumed > 0 && consumed < len(candidates) && !out.Partial {
 		out.NextToken = encodeCursor(candidates[consumed-1].Header)
 	}
+	if timeBudgetShortPage(ctx, out.Partial, consumed, err) {
+		// The index range was complete and items[:consumed] is an intact ordered
+		// prefix; continue after it exactly like a byte-budget short page. The
+		// unhydrated candidates follow the cursor, so nothing is skipped.
+		out.NextToken = encodeCursor(candidates[consumed-1].Header)
+		return out, nil
+	}
 	if err != nil {
 		out.Partial = true
 		out.UnavailableUnits = append(out.UnavailableUnits, "hazard-payload")
@@ -505,6 +512,17 @@ func (s hazards) loadListPage(ctx context.Context, q storage.HazardQuery, page s
 		return out, err
 	}
 	return out, nil
+}
+
+// timeBudgetShortPage reports whether a FULL hydration that stopped only because
+// the caller's time budget ran out may be served as a short complete page. Any
+// other failure, an incomplete index range, or no progress keeps the explicit
+// partial page that retries its incoming cursor.
+func timeBudgetShortPage(ctx context.Context, indexPartial bool, consumed int, err error) bool {
+	if err == nil || indexPartial || consumed == 0 {
+		return false
+	}
+	return errors.Is(err, context.DeadlineExceeded) || errors.Is(ctx.Err(), context.DeadlineExceeded)
 }
 
 func restartCursor() string {

@@ -103,6 +103,13 @@ func hazardQuery(f *commonv1.HazardFilter) storage.HazardQuery {
 	return q
 }
 
+const (
+	listHazardsBudget = 1500 * time.Millisecond
+	// freshnessReserve covers one parallel round of 500ms source probes and
+	// leaves storage its usual one-second read unit.
+	freshnessReserve = 500 * time.Millisecond
+)
+
 // sourceFreshness reports the freshness of one source's ingest stream.
 func (s *Server) sourceFreshness(ctx context.Context, source string) (*domain.SourceStatusInfo, error) {
 	ctx, cancel := context.WithTimeout(ctx, 500*time.Millisecond)
@@ -127,7 +134,7 @@ func (s *Server) sourceFreshness(ctx context.Context, source string) (*domain.So
 }
 
 func (s *Server) ListHazards(ctx context.Context, req *aggregatorv1.ListHazardsRequest) (*aggregatorv1.ListHazardsResponse, error) {
-	ctx, cancel := context.WithTimeout(ctx, 1500*time.Millisecond)
+	ctx, cancel := context.WithTimeout(ctx, listHazardsBudget)
 	defer cancel()
 	caller := auth.GetCallerContext(ctx)
 	if caller == nil {
@@ -142,7 +149,13 @@ func (s *Server) ListHazards(ctx context.Context, req *aggregatorv1.ListHazardsR
 	}
 	q := hazardQuery(req.Filter)
 	q.SummaryOnly = req.View != commonv1.View_VIEW_FULL
-	page, err := s.hazards.List(ctx, q, storage.PageRequest{Size: pageSize, Token: req.Page.GetPageToken()})
+	// Reserve the tail of the deadline for the freshness probes that follow.
+	// Otherwise a slow FULL hydration consumes the whole budget and every
+	// source is reported UNAVAILABLE. Storage turns the earlier stop into a
+	// short complete page with a continuation.
+	listCtx, listCancel := context.WithTimeout(ctx, listHazardsBudget-freshnessReserve)
+	page, err := s.hazards.List(listCtx, q, storage.PageRequest{Size: pageSize, Token: req.Page.GetPageToken()})
+	listCancel()
 	if errors.Is(err, storage.ErrHazardProjectionTooLarge) {
 		return nil, status.Error(codes.ResourceExhausted, err.Error())
 	}
