@@ -65,6 +65,10 @@ type DB struct {
 // metaBucketPeriod is where builds before the bucket schedule recorded the fixed period.
 const metaBucketPeriod = "bucket_period"
 
+// A quorum read over separate tailnet hosts can exceed a LAN-sized 250ms
+// budget. The parent request deadline still caps the entire operation.
+const readUnitTimeout = time.Second
+
 //go:embed migrations/*.cql
 var migrationFiles embed.FS
 

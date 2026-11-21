@@ -468,7 +468,7 @@ func (s hazards) List(ctx context.Context, q storage.HazardQuery, page storage.P
 	// slot across every Get/List on this DB, including all eight shard readers.
 	var sizes sync.Map
 	out := collectBuckets(ctx, buckets, scope, page, func(bucket time.Time, want int) ([]*domain.HazardRecord, error) {
-		unitCtx, cancel := context.WithTimeout(ctx, 250*time.Millisecond)
+		unitCtx, cancel := context.WithTimeout(ctx, readUnitTimeout)
 		defer cancel()
 		remember := func(h *domain.HazardRecord, n int) { sizes.Store(h, listMetadata{bytes: n, bucket: bucket}) }
 		return s.readBucket(unitCtx, bucket, q, since, until, cursor, want, remember)

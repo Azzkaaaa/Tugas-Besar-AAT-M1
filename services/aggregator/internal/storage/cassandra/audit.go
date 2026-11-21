@@ -60,7 +60,7 @@ func (s audit) ready(ctx context.Context) ([]string, error) {
 }
 
 func (s audit) read(ctx context.Context, q storage.AuditQuery, shard int, after auditEntry, refs bool) ([]auditEntry, error) {
-	ctx, cancel := context.WithTimeout(ctx, 250*time.Millisecond)
+	ctx, cancel := context.WithTimeout(ctx, readUnitTimeout)
 	defer cancel()
 	scope := q.Source
 	if scope == "" {
@@ -209,7 +209,7 @@ func (s audit) Events(ctx context.Context, q storage.AuditQuery) (storage.AuditP
 			out.More = true
 			return errAuditPageFull
 		}
-		readCtx, cancel := context.WithTimeout(ctx, 250*time.Millisecond)
+		readCtx, cancel := context.WithTimeout(ctx, readUnitTimeout)
 		h, e := (hazards{s.db}).Get(readCtx, row.id)
 		cancel()
 		if e != nil || h == nil {

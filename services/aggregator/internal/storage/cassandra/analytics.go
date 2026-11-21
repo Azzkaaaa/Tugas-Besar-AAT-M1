@@ -4,13 +4,12 @@ import (
 	"context"
 	"fmt"
 	"sync"
-	"time"
 
 	"github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/aggregator/internal/storage"
 )
 
 func (s audit) analyticsShard(ctx context.Context, scope string, shard int, after string) ([]storage.AnalyticsRow, string, error) {
-	ctx, cancel := context.WithTimeout(ctx, 500*time.Millisecond)
+	ctx, cancel := context.WithTimeout(ctx, readUnitTimeout)
 	defer cancel()
 	iter := s.db.session.Query(`SELECT hazard_id,occurred_at,hazard_type,severity,area_name,tsunami,active
 		FROM analytics_by_shard WHERE scope=? AND shard=? AND hazard_id>? LIMIT 128`, scope, shard, after).WithContext(ctx).PageSize(128).Iter()

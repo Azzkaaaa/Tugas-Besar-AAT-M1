@@ -131,7 +131,7 @@ func (s criticalJournal) page(ctx context.Context, cursor storage.CriticalCursor
 		if shard == cursor.Shard && cursor.After != "" {
 			after = prefix + cursor.After
 		}
-		work, cancel := context.WithTimeout(ctx, 250*time.Millisecond)
+		work, cancel := context.WithTimeout(ctx, readUnitTimeout)
 		query := `SELECT ` + criticalColumns + `,hazard_id FROM canonical_events WHERE shard=? AND hazard_id>? AND hazard_id<? LIMIT ?`
 		upper := strings.TrimSuffix(prefix, ":") + ";"
 		if versions != nil {
@@ -262,7 +262,7 @@ func (s criticalJournal) Version(ctx context.Context) ([]int64, error) {
 		go func() {
 			defer workers.Done()
 			for shard := range jobs {
-				work, cancel := context.WithTimeout(ctx, 250*time.Millisecond)
+				work, cancel := context.WithTimeout(ctx, readUnitTimeout)
 				generation, err := s.db.criticalGeneration(work, shard)
 				cancel()
 				if err != nil {
