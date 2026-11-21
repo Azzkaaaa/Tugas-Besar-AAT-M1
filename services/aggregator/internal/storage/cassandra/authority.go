@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 	"sync"
 	"time"
@@ -68,15 +69,32 @@ func (db *DB) checkPartition(ctx context.Context, p guardPartition, a leader.Aut
 	var now time.Time
 	err := db.session.Query(`SELECT authority_epochs,authority_tokens,authority_until,toTimestamp(now()) FROM `+p.table+` WHERE `+p.column+`=? LIMIT 1`, p.key).WithContext(ctx).Consistency(gocql.LocalSerial).Scan(&epochs, &tokens, &until, &now)
 	if errors.Is(err, gocql.ErrNotFound) {
+		logFencedRejection(ctx, p, a, "guard partition missing", 0, "", time.Time{}, time.Time{})
 		return leader.ErrLostAuthority
 	}
 	if err != nil {
 		return err
 	}
 	if epochs[a.Lease] != guardVersion(a) || tokens[a.Lease] != a.Holder || !until[a.Lease].After(now) {
+		reason := "authority expired"
+		if epochs[a.Lease] != guardVersion(a) || tokens[a.Lease] != a.Holder {
+			reason = "superseded by a newer term"
+		}
+		logFencedRejection(ctx, p, a, reason, epochs[a.Lease], tokens[a.Lease], until[a.Lease], now)
 		return leader.ErrLostAuthority
 	}
 	return nil
+}
+
+// logFencedRejection records a write refused by its fencing guard. Safety does not
+// depend on this log; it makes stale-writer rejections (clock skew, freeze/resume,
+// superseded terms) observable as evidence. storage_now is Cassandra's clock.
+func logFencedRejection(ctx context.Context, p guardPartition, a leader.Authority, reason string, version int64, holder string, until, storageNow time.Time) {
+	slog.WarnContext(ctx, "fenced write rejected", "component", "fencing", "reason", reason,
+		"lease", a.Lease, "holder", a.Holder, "epoch", a.Epoch, "guard_version", guardVersion(a),
+		"guard", p.table, "guard_key", fmt.Sprint(p.key),
+		"current_guard_version", version, "current_holder", holder,
+		"current_until", until, "storage_now", storageNow)
 }
 
 func (db *DB) installAuthority(ctx context.Context, p guardPartition, a leader.Authority, until time.Time) error {

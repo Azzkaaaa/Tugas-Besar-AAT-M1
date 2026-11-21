@@ -3,6 +3,7 @@ package leader
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"net/http"
 )
 
@@ -42,7 +43,13 @@ func CheckAuthority(ctx context.Context) error {
 		return err
 	}
 	if a, ok := ctx.Value(authorityKey{}).(authorityContext); ok && a.store != nil {
-		return a.store.ValidateAuthority(ctx, a.token)
+		err := a.store.ValidateAuthority(ctx, a.token)
+		if errors.Is(err, ErrLostAuthority) {
+			// Refused before any upstream I/O or write: a stale holder neither polls nor saves.
+			slog.WarnContext(ctx, "fenced operation refused", "component", "fencing",
+				"lease", a.token.Lease, "holder", a.token.Holder, "epoch", a.token.Epoch)
+		}
+		return err
 	}
 	return nil
 }
