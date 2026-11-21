@@ -1,0 +1,3 @@
+ok  	github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/aggregator/internal/grpc	(cached)
+ok  	github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/aggregator/internal/storage/cassandra	(cached)
+?   	github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/aggregator/cmd/storeadmin	[no test files]

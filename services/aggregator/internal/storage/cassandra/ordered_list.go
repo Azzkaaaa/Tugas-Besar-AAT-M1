@@ -19,6 +19,10 @@ const orderedListReadyKey = "ordered_list_v1"
 // it after a fire moves to an earlier time. This metadata is bounded per revision
 // and contains no detection arrays or other large bodies.
 func addOrderedListProjection(b *gocql.Batch, h *domain.HazardRecord, bucket, previous time.Time) {
+	addOrderedListHeader(b, h, bucket, previous, int64(domain.FullProjectionSize(h)), !domain.Withdrawn(h))
+}
+
+func addOrderedListHeader(b *gocql.Batch, h *domain.HazardRecord, bucket, previous time.Time, bytes int64, active bool) {
 	for _, scope := range []string{scopeAll, h.Source} {
 		if !previous.IsZero() && !previous.Equal(h.OccurredAt) {
 			b.Query(`INSERT INTO list_headers_by_shard (scope,shard,occurred_at,hazard_id,active,revision)
@@ -26,7 +30,7 @@ func addOrderedListProjection(b *gocql.Batch, h *domain.HazardRecord, bucket, pr
 		}
 		b.Query(`INSERT INTO list_headers_by_shard (scope,shard,occurred_at,hazard_id,source,hazard_type,severity,area_name,ingested_at,revision,bucket,full_bytes,active)
             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?) USING TIMESTAMP ?`, scope, projectionShard(h.HazardID), h.OccurredAt, h.HazardID,
-			h.Source, h.HazardType, h.Severity, h.AreaName, h.IngestedAt, h.Revision, bucket, int64(domain.FullProjectionSize(h)), !domain.Withdrawn(h), int64(max(1, h.Revision)))
+			h.Source, h.HazardType, h.Severity, h.AreaName, h.IngestedAt, h.Revision, bucket, bytes, active, int64(max(1, h.Revision)))
 	}
 }
 
@@ -128,73 +132,92 @@ func (s hazards) readOrderedShard(ctx context.Context, q storage.HazardQuery, cu
 // run migration 19's dual-writing build. Existing readers continue using the old
 // index until this succeeds. Canonical revisions make the backfill retryable and
 // prevent it from overwriting concurrent newer mutations. No canonical data is
-// deleted or changed. Full bodies are held singly, as in the Audit backfill.
+// deleted or changed. Warm rows copy metadata only. Legacy body fallbacks share
+// the existing single-body admission slot. Four workers bound network latency
+// without retaining a catalog of payloads in memory.
 func (db *DB) PrepareOrderedList(ctx context.Context) error {
-	iter := db.session.Query(`SELECT ` + storedColumns + ` FROM canonical_events`).WithContext(ctx).PageSize(1).Iter()
-	scanner := iter.Scanner()
-	for scanner.Next() {
-		var bucket, prevBucket, previous time.Time
-		var hash *string
-		h, err := scanHazard(func(dest ...any) error { return scanner.Scan(append(dest, &bucket, &hash, &prevBucket, &previous)...) })
-		if err != nil {
-			_ = scanner.Err()
-			return err
+	err := orderedWork(ctx, func(work context.Context, submit func(func(context.Context) error) error) error {
+		iter := db.session.Query(`SELECT hazard_id,source,hazard_type,severity,area_name,occurred_at,ingested_at,revision,bucket,prev_occurred_at,summary_active,summary_revision FROM canonical_events`).WithContext(work).PageSize(64).Iter()
+		defer iter.Close()
+		for {
+			var h domain.HazardRecord
+			var bucket, previous time.Time
+			var active *bool
+			var cachedRevision *int
+			if !iter.Scan(&h.HazardID, &h.Source, &h.HazardType, &h.Severity, &h.AreaName, &h.OccurredAt, &h.IngestedAt, &h.Revision, &bucket, &previous, &active, &cachedRevision) {
+				break
+			}
+			if h.HazardID == "" || criticalInternalKey(h.HazardID) {
+				continue
+			}
+			if err := submit(func(work context.Context) error {
+				bytes := int64(0) // Unknown size is safe: full reads enforce their actual byte budget.
+				if active == nil || cachedRevision == nil || *cachedRevision != h.Revision {
+					st, err := db.orderedLegacy(work, h.HazardID)
+					if err != nil {
+						return err
+					}
+					h = *st.record
+					bucket = st.bucket
+					previous = st.previous
+					value := st.active
+					active = &value
+					bytes = st.fullBytes
+				}
+				batch := db.session.Batch(gocql.LoggedBatch).WithContext(work)
+				addOrderedListHeader(batch, &h, bucket, previous, bytes, *active)
+				return batch.Exec()
+			}); err != nil {
+				return err
+			}
 		}
-		if h.HazardID == "" || criticalInternalKey(h.HazardID) {
-			continue
-		}
-		b := db.session.Batch(gocql.LoggedBatch).WithContext(ctx)
-		addOrderedListProjection(b, h, bucket, previous)
-		if err := b.Exec(); err != nil {
-			_ = scanner.Err()
-			return err
-		}
-	}
-	if err := scanner.Err(); err != nil {
+		return iter.Close()
+	})
+	if err != nil {
 		return err
 	}
 	// Remove stale positions created before every writer was upgraded. Reading
 	// the current canonical revision AFTER an index row makes concurrent updates
 	// safe: a subsequent revision always wins this inactive marker.
-	rows := db.session.Query(`SELECT scope,shard,occurred_at,hazard_id FROM list_headers_by_shard`).WithContext(ctx).PageSize(64).Iter()
-	var scope, id string
-	var shard int
-	var occurred time.Time
-	for rows.Scan(&scope, &shard, &occurred, &id) {
-		var current time.Time
-		var revision int
-		var active *bool
-		err := db.session.Query(`SELECT occurred_at,revision,summary_active FROM canonical_events WHERE shard=? AND hazard_id=?`, auditShard(id), id).WithContext(ctx).Scan(&current, &revision, &active)
-		if err != nil {
-			_ = rows.Close()
-			return err
-		}
-		// Pre-cache canonical rows can have a NULL summary_active. Resolve only
-		// those through the existing bounded full-body fallback.
-		if active == nil {
-			h, e := (hazards{db}).Get(ctx, id)
-			if e != nil {
-				_ = rows.Close()
-				return e
+	err = orderedWork(ctx, func(work context.Context, submit func(func(context.Context) error) error) error {
+		rows := db.session.Query(`SELECT scope,shard,occurred_at,hazard_id FROM list_headers_by_shard`).WithContext(work).PageSize(64).Iter()
+		defer rows.Close()
+		for {
+			var scope, id string
+			var shard int
+			var occurred time.Time
+			if !rows.Scan(&scope, &shard, &occurred, &id) {
+				break
 			}
-			if h == nil {
-				_ = rows.Close()
-				return fmt.Errorf("canonical row missing: %s", id)
+			if err := submit(func(work context.Context) error {
+				var current time.Time
+				var revision int
+				var active *bool
+				var cachedRevision *int
+				if err := db.session.Query(`SELECT occurred_at,revision,summary_active,summary_revision FROM canonical_events WHERE shard=? AND hazard_id=?`, auditShard(id), id).WithContext(work).Scan(&current, &revision, &active, &cachedRevision); err != nil {
+					return err
+				}
+				if active == nil || cachedRevision == nil || *cachedRevision != revision {
+					st, err := db.orderedLegacy(work, id)
+					if err != nil {
+						return err
+					}
+					value := st.active
+					active = &value
+					current = st.record.OccurredAt
+					revision = st.record.Revision
+				}
+				if *active && current.Equal(occurred) {
+					return nil
+				}
+				return db.session.Query(`INSERT INTO list_headers_by_shard (scope,shard,occurred_at,hazard_id,active,revision) VALUES (?,?,?,?,?,?) USING TIMESTAMP ?`, scope, shard, occurred, id, false, revision, int64(max(1, revision))).WithContext(work).Exec()
+			}); err != nil {
+				return err
 			}
-			value := !domain.Withdrawn(h)
-			active = &value
-			current = h.OccurredAt
-			revision = h.Revision
 		}
-		if *active && current.Equal(occurred) {
-			continue
-		}
-		if err := db.session.Query(`INSERT INTO list_headers_by_shard (scope,shard,occurred_at,hazard_id,active,revision) VALUES (?,?,?,?,?,?) USING TIMESTAMP ?`, scope, shard, occurred, id, false, revision, int64(max(1, revision))).WithContext(ctx).Exec(); err != nil {
-			_ = rows.Close()
-			return err
-		}
-	}
-	if err := rows.Close(); err != nil {
+		return rows.Close()
+	})
+	if err != nil {
 		return err
 	}
 	if err := db.session.Query(`INSERT INTO store_meta (key,value) VALUES (?,?)`, orderedListReadyKey, "ready").WithContext(ctx).Exec(); err != nil {
@@ -202,4 +225,67 @@ func (db *DB) PrepareOrderedList(ctx context.Context) error {
 	}
 	db.listIndexReady.Store(true)
 	return nil
+}
+
+type orderedLegacyHeader struct {
+	record           *domain.HazardRecord
+	bucket, previous time.Time
+	active           bool
+	fullBytes        int64
+}
+
+func (db *DB) orderedLegacy(ctx context.Context, id string) (*orderedLegacyHeader, error) {
+	release, err := db.acquireSummaryFallback(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
+	st, err := (hazards{db}).readStoredTable(ctx, id, false, false)
+	if err == nil && st == nil {
+		err = fmt.Errorf("canonical row missing: %s", id)
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &orderedLegacyHeader{record: storage.HazardSummaryHeader(st.rec), bucket: st.bucket, previous: st.prevOccurredAt, active: !domain.Withdrawn(st.rec), fullBytes: int64(domain.FullProjectionSize(st.rec))}, nil
+}
+
+func orderedWork(ctx context.Context, produce func(context.Context, func(func(context.Context) error) error) error) error {
+	work, cancel := context.WithCancel(ctx)
+	defer cancel()
+	jobs := make(chan func(context.Context) error, 16)
+	var once sync.Once
+	var first error
+	var workers sync.WaitGroup
+	fail := func(err error) { once.Do(func() { first = err; cancel() }) }
+	for range 4 {
+		workers.Go(func() {
+			for job := range jobs {
+				if work.Err() != nil {
+					return
+				}
+				if err := job(work); err != nil {
+					fail(err)
+					return
+				}
+			}
+		})
+	}
+	err := produce(work, func(job func(context.Context) error) error {
+		select {
+		case jobs <- job:
+			return nil
+		case <-work.Done():
+			return work.Err()
+		}
+	})
+	if err != nil {
+		fail(err)
+	}
+	close(jobs)
+	workers.Wait()
+	if first != nil {
+		return first
+	}
+	return ctx.Err()
 }

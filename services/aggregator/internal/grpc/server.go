@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"sync"
 	"time"
 
 	aggregatorv1 "github.com/Azzkaaaa/Tugas-Besar-AAT-M1/packages/bnpb-aggregator-go/bnpb/aggregator/v1"
@@ -104,7 +105,7 @@ func hazardQuery(f *commonv1.HazardFilter) storage.HazardQuery {
 
 // sourceFreshness reports the freshness of one source's ingest stream.
 func (s *Server) sourceFreshness(ctx context.Context, source string) (*domain.SourceStatusInfo, error) {
-	ctx, cancel := context.WithTimeout(ctx, 100*time.Millisecond)
+	ctx, cancel := context.WithTimeout(ctx, 500*time.Millisecond)
 	defer cancel()
 	state, err := s.sources.Get(ctx, domain.SourceKeyFor(source))
 	if err != nil {
@@ -161,22 +162,9 @@ func (s *Server) ListHazards(ctx context.Context, req *aggregatorv1.ListHazardsR
 		}
 		items = append(items, proj)
 	}
-	freshness := []*commonv1.SourceFreshness{}
-	partial := page.Partial
-	for _, src := range domain.AllSources {
-		if q.Source != "" && q.Source != src.Source {
-			continue
-		}
-		info, err := s.sourceFreshness(ctx, src.Source)
-		if err != nil {
-			partial = true
-			page.UnavailableUnits = append(page.UnavailableUnits, "source-state:"+string(src.Key))
-		}
-		if info.Status != domain.StatusFresh {
-			partial = true
-		}
-		freshness = append(freshness, info.ToProto())
-	}
+	freshness, unavailable, stale := s.freshnessFor(ctx, q.Source)
+	partial := page.Partial || stale
+	page.UnavailableUnits = append(page.UnavailableUnits, unavailable...)
 	response := &aggregatorv1.ListHazardsResponse{Items: items, NextPageToken: page.NextToken, Freshness: freshness, Partial: partial, UnavailableUnits: page.UnavailableUnits}
 	if proto.Size(response) > storage.MaxHazardProjectionBytes {
 		return nil, status.Error(codes.ResourceExhausted, "complete hazard response exceeds the transport byte budget")
@@ -227,10 +215,36 @@ func (s *Server) GetHazard(ctx context.Context, req *aggregatorv1.GetHazardReque
 }
 
 func (s *Server) GetSourceStatuses(ctx context.Context, req *aggregatorv1.GetSourceStatusesRequest) (*aggregatorv1.GetSourceStatusesResponse, error) {
+	freshness, _, _ := s.freshnessFor(ctx, "")
+	return &aggregatorv1.GetSourceStatusesResponse{Freshness: freshness}, nil
+}
+
+// Four independent probes share the caller deadline; WAN quorum latency must
+// not multiply by the source count. Keep the established response order.
+func (s *Server) freshnessFor(ctx context.Context, filter string) ([]*commonv1.SourceFreshness, []string, bool) {
+	infos := make([]*domain.SourceStatusInfo, len(domain.AllSources))
+	errs := make([]error, len(domain.AllSources))
+	var work sync.WaitGroup
+	for i, src := range domain.AllSources {
+		if filter != "" && filter != src.Source {
+			continue
+		}
+		work.Go(func() { infos[i], errs[i] = s.sourceFreshness(ctx, src.Source) })
+	}
+	work.Wait()
 	freshness := []*commonv1.SourceFreshness{}
-	for _, src := range domain.AllSources {
-		info, _ := s.sourceFreshness(ctx, src.Source)
+	var unavailable []string
+	partial := false
+	for i, info := range infos {
+		if info == nil {
+			continue
+		}
+		if errs[i] != nil {
+			unavailable = append(unavailable, "source-state:"+string(domain.AllSources[i].Key))
+			partial = true
+		}
+		partial = partial || info.Status != domain.StatusFresh
 		freshness = append(freshness, info.ToProto())
 	}
-	return &aggregatorv1.GetSourceStatusesResponse{Freshness: freshness}, nil
+	return freshness, unavailable, partial
 }

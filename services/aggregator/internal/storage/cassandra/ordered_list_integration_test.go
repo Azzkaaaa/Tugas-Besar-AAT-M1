@@ -48,6 +48,12 @@ func TestOrderedListCutoverMovesAndPagination(t *testing.T) {
 	if db.orderedListReady(ctx) {
 		t.Fatal("cutover happened before all writers were upgraded")
 	}
+	// A pre-cache canonical row still requires one bounded body fallback; it
+	// must not be hidden as inactive when the new header-only scan sees NULL.
+	legacy := records[10]
+	if err := db.session.Query(`DELETE summary_active,summary_revision FROM canonical_events WHERE shard=? AND hazard_id=?`, auditShard(legacy.HazardID), legacy.HazardID).WithContext(ctx).Exec(); err != nil {
+		t.Fatal(err)
+	}
 	if err := db.PrepareOrderedList(ctx); err != nil {
 		t.Fatal(err)
 	}
