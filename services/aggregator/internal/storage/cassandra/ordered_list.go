@@ -137,7 +137,7 @@ func (s hazards) readOrderedShard(ctx context.Context, q storage.HazardQuery, cu
 // without retaining a catalog of payloads in memory.
 func (db *DB) PrepareOrderedList(ctx context.Context) error {
 	err := orderedWork(ctx, func(work context.Context, submit func(func(context.Context) error) error) error {
-		iter := db.session.Query(`SELECT hazard_id,source,hazard_type,severity,area_name,occurred_at,ingested_at,revision,bucket,prev_occurred_at,summary_active,summary_revision FROM canonical_events`).WithContext(work).PageSize(64).Iter()
+		iter := db.session.Query(`SELECT hazard_id,source,hazard_type,severity,area_name,occurred_at,ingested_at,revision,bucket,prev_occurred_at,summary_active,summary_revision FROM canonical_events`).WithContext(work).RetryPolicy(&gocql.SimpleRetryPolicy{NumRetries: 3}).Idempotent(true).PageSize(64).Iter()
 		defer iter.Close()
 		for {
 			var h domain.HazardRecord
@@ -180,7 +180,7 @@ func (db *DB) PrepareOrderedList(ctx context.Context) error {
 	// the current canonical revision AFTER an index row makes concurrent updates
 	// safe: a subsequent revision always wins this inactive marker.
 	err = orderedWork(ctx, func(work context.Context, submit func(func(context.Context) error) error) error {
-		rows := db.session.Query(`SELECT scope,shard,occurred_at,hazard_id FROM list_headers_by_shard`).WithContext(work).PageSize(64).Iter()
+		rows := db.session.Query(`SELECT scope,shard,occurred_at,hazard_id FROM list_headers_by_shard`).WithContext(work).RetryPolicy(&gocql.SimpleRetryPolicy{NumRetries: 3}).Idempotent(true).PageSize(64).Iter()
 		defer rows.Close()
 		for {
 			var scope, id string
@@ -220,7 +220,9 @@ func (db *DB) PrepareOrderedList(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	if err := db.session.Query(`INSERT INTO store_meta (key,value) VALUES (?,?)`, orderedListReadyKey, "ready").WithContext(ctx).Exec(); err != nil {
+	if err := orderedRetry(ctx, func(work context.Context) error {
+		return db.session.Query(`INSERT INTO store_meta (key,value) VALUES (?,?)`, orderedListReadyKey, "ready").WithContext(work).Exec()
+	}); err != nil {
 		return err
 	}
 	db.listIndexReady.Store(true)
@@ -264,7 +266,7 @@ func orderedWork(ctx context.Context, produce func(context.Context, func(func(co
 				if work.Err() != nil {
 					return
 				}
-				if err := job(work); err != nil {
+				if err := orderedRetry(work, job); err != nil {
 					fail(err)
 					return
 				}
@@ -288,4 +290,23 @@ func orderedWork(ctx context.Context, produce func(context.Context, func(func(co
 		return first
 	}
 	return ctx.Err()
+}
+
+// These maintenance writes use canonical logical timestamps, so an uncertain
+// quorum result can be repeated without overwriting a newer revision. Never
+// extend the caller deadline or enable retries for ordinary fenced writes here.
+func orderedRetry(ctx context.Context, job func(context.Context) error) error {
+	for attempt := 0; ; attempt++ {
+		err := job(ctx)
+		if err == nil || ctx.Err() != nil || attempt == 3 {
+			return err
+		}
+		timer := time.NewTimer(time.Duration(attempt+1) * 100 * time.Millisecond)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return ctx.Err()
+		case <-timer.C:
+		}
+	}
 }
