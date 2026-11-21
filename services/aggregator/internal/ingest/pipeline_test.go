@@ -158,3 +158,49 @@ func TestPipelinePreservesOversizedAndBrokenResponse(t *testing.T) {
 		t.Fatal("oversized response was truncated or lost")
 	}
 }
+
+// Exercise quarantine and subsequent healthy work together, rather than only
+// calling the validator: a poisoned item must not block an unrelated key.
+func TestPipelinePoisonIsolationAndIntactArchive(t *testing.T) {
+	for reason, raw := range map[string][]byte{
+		"invalid_json_object": []byte(validVolcanic[:len(validVolcanic)-3]),
+		"invalid_utf8":        []byte(strings.Replace(validVolcanic, "v-merapi", "v-\xff", 1)),
+		"json_depth_exceeded": []byte(`{"new":` + strings.Repeat("[", 40) + "0" + strings.Repeat("]", 40) + "}"),
+		"payload_too_large":   bytes.Repeat([]byte{'x'}, maxItemBytes+1),
+	} {
+		t.Run(reason, func(t *testing.T) {
+			ctx := context.Background()
+			inbox := &testInbox{messages: make(map[string]storage.IngestMessage)}
+			hazards := &testSequencedHazards{}
+			p := NewPipeline(inbox, hazards, true, 1<<20)
+			m := storage.IngestMessage{Source: "PVMBG", Stream: string(domain.SourceKeyPVMBGVolcanic), Format: formatVolcanic, SchemaVersion: "2"}
+			_, err := p.stage(ctx, incoming{IngestMessage: m, items: []json.RawMessage{raw, []byte(validVolcanic)}}, nil)
+			if err != nil && !errors.Is(err, errUncertainProgress) {
+				t.Fatal(err)
+			}
+			if count, err := p.process(ctx, domain.SourceKeyPVMBGVolcanic); err != nil || count != 1 {
+				t.Fatalf("healthy key failed: count=%d err=%v", count, err)
+			}
+			parked := 0
+			for _, message := range inbox.messages {
+				if message.State != storage.IngestParked {
+					continue
+				}
+				parked++
+				payload := message.Raw
+				if message.ArchiveChunks > 0 {
+					payload = bytes.Join(inbox.chunks, nil)
+				}
+				if message.Reason != reason || !bytes.Equal(payload, raw) || message.Attempts != 1 {
+					t.Fatalf("quarantine changed poison or retried it: %+v", message)
+				}
+			}
+			if parked != 1 {
+				t.Fatalf("want one parked item, got %d", parked)
+			}
+			if count, err := p.process(ctx, domain.SourceKeyPVMBGVolcanic); err != nil || count != 0 {
+				t.Fatalf("poison retry loop or duplicate healthy write: %d, %v", count, err)
+			}
+		})
+	}
+}
