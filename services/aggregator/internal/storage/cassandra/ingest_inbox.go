@@ -114,35 +114,62 @@ func (s ingestInbox) GetMessage(ctx context.Context, id string) (*storage.Ingest
 }
 
 func (s ingestInbox) ListMessages(ctx context.Context, source string, cursor storage.IngestCursor, limit int) (storage.IngestPage, error) {
+	return collectInboxPage(ctx, source, cursor, limit, s.readInboxPage)
+}
+
+const inboxMetadataPageSize = 64
+
+// Bound the physical scan, including resolved and other-source rows. PageSize
+// alone only controls network frames: Iter otherwise keeps fetching the entire
+// partition inside one deadline, eventually making healthy history unreadable.
+func (s ingestInbox) readInboxPage(ctx context.Context, shard int, after string) ([]storage.IngestMessage, error) {
+	ctx, cancel := context.WithTimeout(ctx, readUnitTimeout)
+	defer cancel()
+	iter := s.db.session.Query(`SELECT `+inboxMetadata+` FROM ingest_inbox WHERE shard = ? AND message_id > ? LIMIT 64`, shard, after).
+		WithContext(ctx).Consistency(gocql.LocalQuorum).PageSize(inboxMetadataPageSize).Iter()
+	rows := make([]storage.IngestMessage, 0, inboxMetadataPageSize)
+	var m storage.IngestMessage
+	for iter.Scan(messageColumns(&m)...) {
+		rows = append(rows, m)
+	}
+	return rows, iter.Close()
+}
+
+func collectInboxPage(ctx context.Context, source string, cursor storage.IngestCursor, limit int,
+	read func(context.Context, int, string) ([]storage.IngestMessage, error),
+) (storage.IngestPage, error) {
 	page := storage.IngestPage{Items: make([]storage.IngestMessage, 0, limit)}
 	for shard := cursor.Shard; shard < problemShards; shard++ {
+		if err := ctx.Err(); err != nil {
+			return page, err
+		}
 		start := sequenceKey
 		if shard == cursor.Shard && cursor.After != "" {
 			start = cursor.After
 		}
-		shardCtx, cancel := context.WithTimeout(ctx, 500*time.Millisecond)
-		iter := s.db.session.Query(`SELECT `+inboxMetadata+` FROM ingest_inbox WHERE shard = ? AND message_id > ?`, shard, start).
-			WithContext(shardCtx).Consistency(gocql.LocalQuorum).PageSize(64).Iter()
-		var m storage.IngestMessage
-		for iter.Scan(messageColumns(&m)...) {
+		rows, err := read(ctx, shard, start)
+		if err != nil {
+			page.UnavailableUnits = append(page.UnavailableUnits, fmt.Sprintf("ingest-inbox-%02d", shard))
+		}
+		for _, m := range rows {
+			// The continuation tracks scanned metadata, not only matches. An
+			// empty filtered page can therefore still make forward progress.
+			start = m.ID
 			if m.State == storage.IngestResolved || (source != "" && m.Source != source) {
 				continue
 			}
+			page.Items = append(page.Items, m)
 			if len(page.Items) == limit {
-				_ = iter.Close()
-				cancel()
+				page.Next = &storage.IngestCursor{Shard: shard, After: start}
 				return page, nil
 			}
-			page.Items = append(page.Items, m)
-			page.Next = &storage.IngestCursor{Shard: shard, After: m.ID}
 		}
-		err := iter.Close()
-		cancel()
-		if err != nil {
-			if ctx.Err() != nil {
-				return page, ctx.Err()
-			}
-			page.UnavailableUnits = append(page.UnavailableUnits, fmt.Sprintf("ingest-inbox-%02d", shard))
+		if ctx.Err() != nil {
+			return page, ctx.Err()
+		}
+		if err == nil && len(rows) == inboxMetadataPageSize {
+			page.Next = &storage.IngestCursor{Shard: shard, After: start}
+			return page, nil
 		}
 	}
 	page.Next = nil

@@ -6,11 +6,13 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/aggregator/internal/storage"
+	gocql "github.com/apache/cassandra-gocql-driver/v2"
 	"github.com/google/uuid"
 )
 
@@ -52,6 +54,66 @@ func TestProblem3DurableFieldReport(t *testing.T) {
 	if err != nil || processed == nil || processed.ProcessedAt.IsZero() || !processed.ObservedAt.Equal(report.ObservedAt) ||
 		processed.AreaName != "Kota Padang" || processed.Description != "Rising water" {
 		t.Fatalf("processed report missing or changed: %+v, %v", processed, err)
+	}
+}
+
+func TestProblem3InboxDiscoveryPastResolvedHistory(t *testing.T) {
+	db, err := openTest(t, "agg_test_inbox_pages_"+uuid.NewString()[:8], time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer dropKeyspace(db)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	var want []string
+	for offset := 0; offset < 270; offset += 30 {
+		batch := db.session.Batch(gocql.UnloggedBatch).WithContext(ctx)
+		for i := offset; i < min(270, offset+30); i++ {
+			id := fmt.Sprintf("msg-00%062x", i)
+			source, state := "PVMBG", storage.IngestResolved
+			if i >= 220 && i%3 == 0 {
+				state = storage.IngestParked
+				want = append(want, id)
+			} else if i%2 == 0 {
+				source, state = "BMKG", storage.IngestPending
+			}
+			// Discovery-only fixture, in its own disposable keyspace; no raw
+			// blobs or CAS/sequence setup are needed for this SELECT contract.
+			batch.Query(`INSERT INTO ingest_inbox (shard,message_id,source,state,received_at) VALUES (?,?,?,?,?)`, 0, id, source, state, time.Now().UTC())
+		}
+		if err := batch.Exec(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, limit := range []int{7, 1000} {
+		cursor := storage.IngestCursor{}
+		var got []string
+		empty := 0
+		for calls := 0; ; calls++ {
+			if calls > 100 {
+				t.Fatal("pagination never completed")
+			}
+			page, err := (ingestInbox{db}).ListMessages(ctx, "PVMBG", cursor, limit)
+			if err != nil || len(page.UnavailableUnits) > 0 {
+				t.Fatalf("healthy bounded scan was partial: %+v %v", page, err)
+			}
+			for _, m := range page.Items {
+				got = append(got, m.ID)
+			}
+			if page.Next == nil {
+				break
+			}
+			if *page.Next == cursor {
+				t.Fatal("cursor stalled")
+			}
+			if len(page.Items) == 0 {
+				empty++
+			}
+			cursor = *page.Next
+		}
+		if strings.Join(got, ",") != strings.Join(want, ",") || empty < 3 {
+			t.Fatalf("limit=%d history hid or duplicated pending messages: got=%v want=%v empty=%d", limit, got, want, empty)
+		}
 	}
 }
 

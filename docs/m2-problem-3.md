@@ -12,6 +12,13 @@ The gateway calls an Aggregator RPC for field reports. A quorum-confirmed condit
 
 The current Cassandra implementation pages through fixed shards to discover unresolved messages and pending reports. This keeps the durable rows authoritative for discovery after a crash. Record retention and indexing for longer-running or higher-volume deployments need separate sizing.
 
+Inbox discovery reads at most 64 metadata rows from one shard before yielding
+a continuation. Resolved and other-source records count toward that physical
+page, so `items: []` can still carry a non-null `next_cursor`. Clients must
+follow that cursor through the history; stopping on an empty filtered page can
+hide pending messages. Reads retain quorum and report unavailable shards.
+This limits each physical read without discarding resolved records or raw data.
+
 ## Deployment and access
 
 Use the team’s P1/P2 cluster and the P3 versions of Aggregator, API Gateway, Envoy routing, PVMBG mock, and Zitadel Claims. The `infrastructure` checkout provides an opt-in P3 chart integration. Use the team’s existing Cassandra settings and Secret, enable `problem3`, and reference the dedicated auditor Secret. Keep the field worker independently scalable, and add the exact `/field-reports` match to the existing protected Envoy HTTPRoute. The Cassandra network policy permits the Aggregator receiver and report worker to use storage. The Internal Ops and Audit routes use a private Aggregator Service on port 9092.

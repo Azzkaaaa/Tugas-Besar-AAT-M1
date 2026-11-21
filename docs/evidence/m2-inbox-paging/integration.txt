@@ -1,0 +1,46 @@
+=== RUN   TestProblem3InboxDiscoveryPastResolvedHistory
+2026/11/21 18:21:46 INFO created keyspace keyspace=agg_test_inbox_pages_f7041077 replication="{'class': 'SimpleStrategy', 'replication_factor': 1}"
+2026/11/21 18:21:53 INFO applied migration migration=0001_baseline.cql
+2026/11/21 18:21:54 INFO applied migration migration=0002_bucket_schedule.cql
+2026/11/21 18:21:57 INFO applied migration migration=0003_leader_and_revision.cql
+2026/11/21 18:21:59 INFO applied migration migration=0004_derived_hazard_ids.cql
+2026/11/21 18:21:59 INFO applied migration migration="0005_rekey_hazard_ids (go)"
+2026/11/21 18:22:00 INFO applied migration migration=0006_drop_hazard_by_source_ref.cql
+2026/11/21 18:22:02 INFO applied migration migration=0007_problem3.cql
+2026/11/21 18:22:04 INFO applied migration migration=0008_m2_streams.cql
+2026/11/21 18:22:05 INFO applied migration migration=0009_audit_indexes.cql
+2026/11/21 18:22:06 INFO applied migration migration=0010_analytics_metadata.cql
+2026/11/21 18:22:12 INFO applied migration migration=0011_write_authority.cql
+2026/11/21 18:22:18 INFO applied migration migration=0012_critical_journal.cql
+2026/11/21 18:22:19 INFO applied migration migration=0013_stream_snapshots.cql
+2026/11/21 18:22:20 INFO applied migration migration=0014_sharded_projection.cql
+2026/11/21 18:22:20 INFO applied migration migration="0015_backfill_sharded_projection (go)"
+2026/11/21 18:22:20 INFO applied migration migration=0016_streaming_snapshots.cql
+2026/11/21 18:22:22 INFO applied migration migration=0017_list_metadata.cql
+2026/11/21 18:22:24 INFO applied migration migration=0018_get_summary.cql
+2026/11/21 18:22:25 INFO applied migration migration=0019_ordered_list.cql
+--- PASS: TestProblem3InboxDiscoveryPastResolvedHistory (44.40s)
+=== RUN   TestProblem3InboxRawAndState
+2026/11/21 18:22:32 INFO created keyspace keyspace=agg_test_ingest_inbox_3a541652 replication="{'class': 'SimpleStrategy', 'replication_factor': 1}"
+2026/11/21 18:22:38 INFO applied migration migration=0001_baseline.cql
+2026/11/21 18:22:39 INFO applied migration migration=0002_bucket_schedule.cql
+2026/11/21 18:22:42 INFO applied migration migration=0003_leader_and_revision.cql
+2026/11/21 18:22:43 INFO applied migration migration=0004_derived_hazard_ids.cql
+2026/11/21 18:22:43 INFO applied migration migration="0005_rekey_hazard_ids (go)"
+2026/11/21 18:22:45 INFO applied migration migration=0006_drop_hazard_by_source_ref.cql
+2026/11/21 18:22:47 INFO applied migration migration=0007_problem3.cql
+2026/11/21 18:22:48 INFO applied migration migration=0008_m2_streams.cql
+2026/11/21 18:22:50 INFO applied migration migration=0009_audit_indexes.cql
+2026/11/21 18:22:50 INFO applied migration migration=0010_analytics_metadata.cql
+2026/11/21 18:22:59 INFO applied migration migration=0011_write_authority.cql
+2026/11/21 18:23:04 INFO applied migration migration=0012_critical_journal.cql
+2026/11/21 18:23:05 INFO applied migration migration=0013_stream_snapshots.cql
+2026/11/21 18:23:06 INFO applied migration migration=0014_sharded_projection.cql
+2026/11/21 18:23:06 INFO applied migration migration="0015_backfill_sharded_projection (go)"
+2026/11/21 18:23:07 INFO applied migration migration=0016_streaming_snapshots.cql
+2026/11/21 18:23:08 INFO applied migration migration=0017_list_metadata.cql
+2026/11/21 18:23:10 INFO applied migration migration=0018_get_summary.cql
+2026/11/21 18:23:11 INFO applied migration migration=0019_ordered_list.cql
+--- PASS: TestProblem3InboxRawAndState (46.26s)
+PASS
+ok  	github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/aggregator/internal/storage/cassandra	90.796s
