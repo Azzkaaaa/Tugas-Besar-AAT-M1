@@ -11,12 +11,17 @@
 // default localhost:9042, _KEYSPACE, _USERNAME, _PASSWORD, _CONSISTENCY, _LOCAL_DC). The keyspace
 // must already exist with an up-to-date schema: storeadmin never creates or migrates anything,
 // so a wrong keyspace name fails instead of creating an empty one.
+//
+// prepare-list-index honours STOREADMIN_PREPARE_TIMEOUT (Go duration, default 2h) and
+// STOREADMIN_PREPARE_WORKERS (1-32, default 4). It rewrites every header idempotently, so
+// an interrupted run can simply be repeated; progress is logged to stderr.
 package main
 
 import (
 	"context"
 	"fmt"
 	"os"
+	"strconv"
 	"time"
 
 	"github.com/Azzkaaaa/Tugas-Besar-AAT-M1/services/aggregator/internal/config"
@@ -54,8 +59,12 @@ func run(args []string) error {
 	}
 
 	timeout := 2 * time.Minute
+	var listOpts cassandra.OrderedListOptions
 	if prepareList {
-		timeout = 30 * time.Minute
+		var err error
+		if timeout, listOpts, err = prepareSettings(os.Getenv); err != nil {
+			return err
+		}
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
@@ -74,7 +83,16 @@ func run(args []string) error {
 	}
 	defer db.Close()
 	if prepareList {
-		if err := db.PrepareOrderedList(ctx); err != nil {
+		start := time.Now()
+		listOpts.Progress = func(phase string, rows int64, done bool) {
+			state := "running"
+			if done {
+				state = "complete"
+			}
+			fmt.Fprintf(os.Stderr, "prepare-list-index: phase=%s rows=%d %s elapsed=%s\n", phase, rows, state, time.Since(start).Round(time.Second))
+		}
+		fmt.Fprintf(os.Stderr, "prepare-list-index: timeout=%s workers=%d\n", timeout, listOpts.Workers)
+		if err := db.PrepareOrderedListWith(ctx, listOpts); err != nil {
 			return err
 		}
 		fmt.Println("Ordered List index backfilled and ready; canonical data unchanged")
@@ -101,4 +119,24 @@ func run(args []string) error {
 		fmt.Printf("next:    %s from %s\n", st.Next, st.NextFrom.Format(time.RFC3339))
 	}
 	return nil
+}
+
+func prepareSettings(getenv func(string) string) (time.Duration, cassandra.OrderedListOptions, error) {
+	timeout := 2 * time.Hour
+	opts := cassandra.OrderedListOptions{Workers: 4}
+	if v := getenv("STOREADMIN_PREPARE_TIMEOUT"); v != "" {
+		d, err := time.ParseDuration(v)
+		if err != nil || d <= 0 {
+			return 0, opts, fmt.Errorf("invalid STOREADMIN_PREPARE_TIMEOUT %q", v)
+		}
+		timeout = d
+	}
+	if v := getenv("STOREADMIN_PREPARE_WORKERS"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil || n < 1 || n > cassandra.MaxOrderedListWorkers {
+			return 0, opts, fmt.Errorf("invalid STOREADMIN_PREPARE_WORKERS %q (1-%d)", v, cassandra.MaxOrderedListWorkers)
+		}
+		opts.Workers = n
+	}
+	return timeout, opts, nil
 }

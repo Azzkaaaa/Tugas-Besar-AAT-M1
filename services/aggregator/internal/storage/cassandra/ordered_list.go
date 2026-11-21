@@ -136,7 +136,45 @@ func (s hazards) readOrderedShard(ctx context.Context, q storage.HazardQuery, cu
 // the existing single-body admission slot. Four workers bound network latency
 // without retaining a catalog of payloads in memory.
 func (db *DB) PrepareOrderedList(ctx context.Context) error {
-	err := orderedWork(ctx, func(work context.Context, submit func(func(context.Context) error) error) error {
+	return db.PrepareOrderedListWith(ctx, OrderedListOptions{})
+}
+
+// OrderedListOptions tunes the maintenance backfill. Zero values keep the
+// conservative defaults; Workers is clamped to [1, MaxOrderedListWorkers].
+type OrderedListOptions struct {
+	Workers int
+	// Progress, when set, is called periodically and at the end of each phase
+	// with the number of rows scanned so far in that phase.
+	Progress func(phase string, rows int64, done bool)
+}
+
+const (
+	defaultOrderedListWorkers = 4
+	MaxOrderedListWorkers     = 32
+	orderedProgressEvery      = 1000
+)
+
+func (o OrderedListOptions) workers() int {
+	switch {
+	case o.Workers <= 0:
+		return defaultOrderedListWorkers
+	case o.Workers > MaxOrderedListWorkers:
+		return MaxOrderedListWorkers
+	}
+	return o.Workers
+}
+
+func (o OrderedListOptions) report(phase string, rows int64, done bool) {
+	if o.Progress != nil && (done || rows%orderedProgressEvery == 0) {
+		o.Progress(phase, rows, done)
+	}
+}
+
+// PrepareOrderedListWith is PrepareOrderedList with explicit concurrency and
+// progress reporting. Every write is idempotent, so a rerun is always safe.
+func (db *DB) PrepareOrderedListWith(ctx context.Context, opts OrderedListOptions) error {
+	var scanned int64
+	err := orderedWork(ctx, opts.workers(), func(work context.Context, submit func(func(context.Context) error) error) error {
 		iter := db.session.Query(`SELECT hazard_id,source,hazard_type,severity,area_name,occurred_at,ingested_at,revision,bucket,prev_occurred_at,summary_active,summary_revision FROM canonical_events`).WithContext(work).RetryPolicy(&gocql.SimpleRetryPolicy{NumRetries: 3}).Idempotent(true).PageSize(64).Iter()
 		defer iter.Close()
 		for {
@@ -147,6 +185,8 @@ func (db *DB) PrepareOrderedList(ctx context.Context) error {
 			if !iter.Scan(&h.HazardID, &h.Source, &h.HazardType, &h.Severity, &h.AreaName, &h.OccurredAt, &h.IngestedAt, &h.Revision, &bucket, &previous, &active, &cachedRevision) {
 				break
 			}
+			scanned++
+			opts.report("headers", scanned, false)
 			if h.HazardID == "" || criticalInternalKey(h.HazardID) {
 				continue
 			}
@@ -176,10 +216,12 @@ func (db *DB) PrepareOrderedList(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	opts.report("headers", scanned, true)
+	scanned = 0
 	// Remove stale positions created before every writer was upgraded. Reading
 	// the current canonical revision AFTER an index row makes concurrent updates
 	// safe: a subsequent revision always wins this inactive marker.
-	err = orderedWork(ctx, func(work context.Context, submit func(func(context.Context) error) error) error {
+	err = orderedWork(ctx, opts.workers(), func(work context.Context, submit func(func(context.Context) error) error) error {
 		rows := db.session.Query(`SELECT scope,shard,occurred_at,hazard_id FROM list_headers_by_shard`).WithContext(work).RetryPolicy(&gocql.SimpleRetryPolicy{NumRetries: 3}).Idempotent(true).PageSize(64).Iter()
 		defer rows.Close()
 		for {
@@ -189,6 +231,8 @@ func (db *DB) PrepareOrderedList(ctx context.Context) error {
 			if !rows.Scan(&scope, &shard, &occurred, &id) {
 				break
 			}
+			scanned++
+			opts.report("stale-positions", scanned, false)
 			if err := submit(func(work context.Context) error {
 				var current time.Time
 				var revision int
@@ -220,6 +264,7 @@ func (db *DB) PrepareOrderedList(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	opts.report("stale-positions", scanned, true)
 	if err := orderedRetry(ctx, func(work context.Context) error {
 		return db.session.Query(`INSERT INTO store_meta (key,value) VALUES (?,?)`, orderedListReadyKey, "ready").WithContext(work).Exec()
 	}); err != nil {
@@ -252,15 +297,15 @@ func (db *DB) orderedLegacy(ctx context.Context, id string) (*orderedLegacyHeade
 	return &orderedLegacyHeader{record: storage.HazardSummaryHeader(st.rec), bucket: st.bucket, previous: st.prevOccurredAt, active: !domain.Withdrawn(st.rec), fullBytes: int64(domain.FullProjectionSize(st.rec))}, nil
 }
 
-func orderedWork(ctx context.Context, produce func(context.Context, func(func(context.Context) error) error) error) error {
+func orderedWork(ctx context.Context, workerCount int, produce func(context.Context, func(func(context.Context) error) error) error) error {
 	work, cancel := context.WithCancel(ctx)
 	defer cancel()
-	jobs := make(chan func(context.Context) error, 16)
+	jobs := make(chan func(context.Context) error, 4*workerCount)
 	var once sync.Once
 	var first error
 	var workers sync.WaitGroup
 	fail := func(err error) { once.Do(func() { first = err; cancel() }) }
-	for range 4 {
+	for range workerCount {
 		workers.Go(func() {
 			for job := range jobs {
 				if work.Err() != nil {
