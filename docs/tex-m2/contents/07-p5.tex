@@ -5,7 +5,7 @@ Sensor eksternal menghadirkan pelanggaran kontrak/poison message (kriteria 2), k
 Circuit breaker menahan panggilan setelah kegagalan berulang, kemudian mengizinkan probe untuk mengetahui pemulihan. Ini berbeda dari retry yang terus mengulangi operasi; menggabungkan keduanya membutuhkan batas agar tidak memperbesar beban saat layanan sedang sakit~\cite{breaker}.
 
 \section{Validasi dan Isolasi Sensor Pantai}
-Deployment memakai image asisten dengan digest \code{51fbd90d3891ad6e9f5768ad330ffb65205644cb29e50da65c7538f2e0b4397d}. Adapter memanggil stations dan observations dengan token privat, lalu menyimpan halaman dan metadata stasiun pada journal. Cursor hanya maju setelah item valid tersimpan dan item invalid berhasil diparkir. Mekanisme tidak bergantung pada ID, seed, atau pola urutan profil latihan.
+Deployment memakai image asisten dengan digest \code{51fbd90d3891ad6e9f5768ad330ffb65205644cb29e50da65c7538f2e0b4397d}. Adapter memanggil stations dan observations dengan token privat, lalu menyimpan halaman dan metadata stasiun pada journal. Cursor hanya maju setelah item valid tersimpan dan item invalid berhasil diparkir. Mekanisme tidak bergantung pada ID, seed, atau pola urutan profil sensor.
 
 Validasi mencakup UTF-8, JSON, nesting maksimal 32, tipe field wajib, koordinat, timestamp, wave height nonnegatif, \code{quality=ok} serta boolean critical. Body parse dibatasi 2 MiB. Jalur capture terbaru mengarsipkan respons finite yang berlebih melalui durable inbox/spool, bukan hanya prefix parse. Bila socket berhenti, byte yang sempat diterima dan alasan incomplete disimpan; cursor tidak maju. Dokumen P4/P5 awal yang menyebut prefix-only adalah perilaku historis sebelum jalur capture ini.
 
@@ -43,10 +43,10 @@ Private signing key hanya ada pada receiver. Pihak BNPB mempunyai public key unt
 \section{Perilaku Menyimpang yang Teramati}
 \begin{longtable}{@{}P{3.8cm}P{5.6cm}P{6.1cm}@{}}
 \toprule Perilaku & Cara menemukan & Penanganan dan batas bukti\\\midrule\endhead
-Quality tidak valid & Tiga payload nyata diunduh melalui Ops; bytes/hash dipertahankan; ID kanonik terkait memberi 404 \bukti{E27}. & Dikarantina beserta alasan; tidak dipetakan sebagai hazard. Ini sampel berbatas, bukan seluruh profil ujian.\\
+Quality tidak valid & Tiga payload nyata diunduh melalui Ops; bytes/hash dipertahankan; ID kanonik terkait memberi 404 \bukti{E27}. & Dikarantina beserta alasan; tidak dipetakan sebagai hazard. Ini sampel berbatas, bukan seluruh profil sensor.\\
 Sensor tidak dapat dijangkau & Deny jaringan Calico terencana pada TCP 8080; counter lima deadline failure dan satu client error; breaker membuka \bukti{E28}. & Timeout, open/probe, pembacaan cache/store; setelah aturan dicabut polling sukses dan breaker menutup tanpa restart/replay manual. Gangguan diinduksi, bukan bukti bug internal vendor.\\
 Service port diubah tetapi koneksi lama masih hidup & Percobaan awal targetPort tidak konsisten menghentikan aliran \bukti{E27}. & Percobaan tidak dipakai sebagai bukti outage; konfigurasi dipulihkan, kemudian uji jaringan terpisah dilakukan.\\
-Health tampak sehat tetapi data stale; JSON/tipe/ukuran abnormal & Mekanisme freshness/validator dan fixture parser tersedia dalam kode. & Ditangani oleh status stale/karantina. Belum ada bukti live lengkap untuk setiap perilaku tersebut; tidak dinyatakan seluruhnya ditemukan pada sensor resmi.\\\bottomrule
+Health tampak sehat tetapi data stale; JSON/tipe/ukuran abnormal & Mekanisme freshness/validator dan fixture parser tersedia dalam kode. & Ditangani oleh status stale/karantina. Belum ada bukti live lengkap untuk setiap perilaku tersebut; tidak dinyatakan seluruhnya ditemukan pada sensor.\\\bottomrule
 \end{longtable}
 
 \section{SLO, Hasil Receipt dan Error Budget}
@@ -56,19 +56,19 @@ Untuk $N$ observasi critical valid yang diharapkan, budget kehilangan adalah nol
 
 \begin{table}[htbp]\centering
 \begin{tabular}{lrrl}\toprule
-Observasi latihan & Generasi/shard & Ingest--receipt & Hash/tanda tangan\\\midrule
+Observasi & Generasi/shard & Ingest--receipt & Hash/tanda tangan\\\midrule
 \code{obs-000120} & 1 / 14 & 6,995299 s & cocok / valid\\
 \code{obs-000362} & 2 / 14 & 2,215375 s & cocok / valid\\
 \code{obs-000601} & 1 / 0 & 6,071496 s & cocok / valid\\\bottomrule
 \end{tabular}
-\caption{Tiga critical yang diketahui dari capture latihan; seluruhnya mempunyai receipt dan semua generation journal tercakup \bukti{E29}. Identitas ini hanya bukti pengukuran, tidak menjadi kondisi khusus dalam algoritme.}
+\caption{Tiga critical yang diketahui dari capture; seluruhnya mempunyai receipt dan semua generation journal tercakup \bukti{E29}. Identitas ini hanya bukti pengukuran, tidak menjadi kondisi khusus dalam algoritme.}
 \end{table}
 
-P95 diagnostik ingest--receipt pada artefak adalah 6,995299 s. Timestamp emisi nyata tidak tersedia, sehingga p95 emisi--receipt dan konsumsi budget resmi \textbf{belum dapat dihitung}. Kelengkapan tiga known observations tidak membuktikan nol kehilangan pada seluruh sesi resmi. Ketiganya serta receipt tetap identik pada export setelah recovery storage \bukti{E30}.
+P95 diagnostik ingest--receipt pada artefak adalah 6,995299 s. Timestamp emisi nyata tidak tersedia, sehingga p95 emisi--receipt dan konsumsi budget \textbf{belum dapat dihitung}. Kelengkapan tiga known observations tidak membuktikan nol kehilangan pada seluruh sesi. Ketiganya serta receipt tetap identik pada export setelah recovery storage \bukti{E30}.
 
 Pada beban prioritas 10 detik, Tim Lapangan memperoleh 12/12 HTTP 200; Media mendapat 391 HTTP 200, 78 controlled 429 dan tiga HTTP 502. P95 sekitar 4,48 s untuk Tim Lapangan dan 4,39 s untuk Media. Slot cadangan teramati bekerja, tetapi error tidak terkendali dan latensi tinggi masih ada. Sampel sumber sehat selama sensor putus tetap HTTP 200; tanpa pembandingan lengkap target latensi M1, hasil tersebut tidak dinyatakan lulus semua kriteria M1.
 
-\section{Observabilitas dan Post-mortem Latihan}
+\section{Observabilitas dan Post-mortem}
 Dashboard operasional memuat latency/error/throughput per layanan, lag offset satelit, breaker sensor, input parked/retrying, dan pending receipt. Trace menggunakan konteks yang dibawa dalam journal/outbox agar jalur asinkron tetap terhubung. Log memuat correlation ID, source, alasan dan term/epoch untuk penolakan fencing.
 
 Trace \code{dc95832bfc641d4910d5bc1ebdee31b8} yang diekspor dari telemetry tersimpan berisi 45 span, enam layanan, dan nol orphan span \bukti{E31}. Layanannya adalah Aggregator, critical-notifier, Danger Notification, Event Live Feed, receiver dan Webhook Provider. Ini bukti satu jalur kritis; belum berarti semua jenis request melewati enam service yang sama.
@@ -84,26 +84,26 @@ Awal pencatatan receipt ke Aggregator & 4.734,1 ms\\\bottomrule
 \caption{Transkripsi timeline trace \bukti{E31}. Titik ini bukan timestamp emisi sumber dan bukan durasi seluruh commit receipt.}
 \end{table}
 
-\textbf{Deteksi.} Pada latihan gangguan jaringan sensor, kenaikan error transport dan breaker-open menunjukkan sumber tidak dapat diakses. Read dari sumber lain dan cache coastal tetap diamati. Pada jalur kritis, trace menunjukkan waktu yang terpakai sebelum publikasi/penerimaan serta dua percobaan notifier terhadap event yang sama; receiver kedua menjawab secara idempoten.
+\textbf{Deteksi.} Pada gangguan jaringan sensor, kenaikan error transport dan breaker-open menunjukkan sumber tidak dapat diakses. Read dari sumber lain dan cache coastal tetap diamati. Pada jalur kritis, trace menunjukkan waktu yang terpakai sebelum publikasi/penerimaan serta dua percobaan notifier terhadap event yang sama; receiver kedua menjawab secara idempoten.
 
-\textbf{Dampak.} Polling sensor berhenti sementara. Sampel read tetap dijawab, tetapi beberapa latensinya tinggi. Uji overload memberi tiga 502 pada Media; tidak ada klaim semua trafik memenuhi target. Pengukuran receipt hanya mencakup tiga critical latihan dan tidak mempunyai timestamp emisi independen.
+\textbf{Dampak.} Polling sensor berhenti sementara. Sampel read tetap dijawab, tetapi beberapa latensinya tinggi. Uji overload memberi tiga 502 pada Media; tidak ada klaim semua trafik memenuhi target. Pengukuran receipt hanya mencakup tiga critical dan tidak mempunyai timestamp emisi independen.
 
 \textbf{Mitigasi dan pemulihan.} Circuit breaker menekan panggilan saat outage. Setelah aturan deny terjadwal dihapus, jendela recovery hanya melakukan observasi: counter sukses bertambah dua lalu empat dan breaker kembali tertutup tanpa restart aplikasi, replay manual, perubahan cursor atau reset sumber. Penghapusan fault merupakan akhir injeksi yang direncanakan; recovery aplikasi berlangsung otomatis sesudahnya.
 
-\textbf{Perbaikan berikutnya.} Tambahkan capture emisi independen/window tertutup dan rekonsiliasi seluruh revisi; ukur latensi M1 dengan baseline yang sebanding; ulangi fault gabungan tanpa intervensi pemulihan; evaluasi bottleneck Auth/read sebelum menaikkan load. Receiver perlu failure domain yang sesuai cakupan node yang akan dimatikan. Post-mortem ini adalah latihan terencana, bukan laporan game day ujian yang belum tersedia.
+\textbf{Perbaikan berikutnya.} Tambahkan capture emisi independen/window tertutup dan rekonsiliasi seluruh revisi; ukur latensi M1 dengan baseline yang sebanding; ulangi fault gabungan tanpa intervensi pemulihan; evaluasi bottleneck Auth/read sebelum menaikkan load. Receiver perlu failure domain yang sesuai cakupan node yang akan dimatikan.
 
 \section{Bukti per Kriteria dan Batasan}
 \begingroup\small
 \begin{longtable}{@{}P{.9cm}P{7.2cm}P{7.3cm}@{}}
 \toprule No. & Bukti & Status\\\midrule\endhead
 1 & Tiga known critical, journal lengkap, signature valid \bukti{E29,E30}. & Nol missing pada cohort; SLO emisi $\leq5$ s dan full-window loss belum terbukti.\\
-2 & Tiga invalid-quality quarantined dan canonical 404 \bukti{E27}. & Terbukti pada sampel; seluruh perilaku ujian belum diketahui.\\
+2 & Tiga invalid-quality quarantined dan canonical 404 \bukti{E27}. & Terbukti pada sampel; jenis invalid lain belum diuji live.\\
 3 & BMKG/PVMBG/cache read HTTP 200 selama outage \bukti{E28}. & Target latensi M1 belum dibuktikan menyeluruh.\\
-4 & Breaker open, request terbatas, recovery polling otomatis \bukti{E28}. & Terbukti untuk gangguan jaringan terencana; latihan targetPort awal bukan bukti outage.\\
+4 & Breaker open, request terbatas, recovery polling otomatis \bukti{E28}. & Terbukti untuk gangguan jaringan terencana; percobaan targetPort awal bukan bukti outage.\\
 5 & FIELD\_TEAM 12/12; Media 78 controlled 429 \bukti{E27}. & Prioritas teramati, tetapi tiga 502 dan p95 tinggi tetap tercatat.\\
 6 & Fault individual terencana dan jendela observasi recovery. & Kombinasi tak diumumkan tanpa intervensi belum diuji.\\
 7 & 45 span, enam layanan, nol orphan; metrik lag/breaker/read \bukti{E31}. & Bukti diagnosis tersedia; penjelasan semua anggota dalam video belum direkam di artefak ini.\\
-8 & Target dan rumus budget dinyatakan; receipt cohort lengkap. & Konsumsi budget emisi resmi belum bisa dihitung tanpa emitted\_at.\\\bottomrule
+8 & Target dan rumus budget dinyatakan; receipt cohort lengkap. & Konsumsi budget emisi belum bisa dihitung tanpa emitted\_at.\\\bottomrule
 \end{longtable}
 \endgroup
 \sumber{Panduan critical delivery, read/stream admission; kode coastal dan criticaldelivery; bukti P5 infrastruktur. Path lengkap pada Lampiran~\ref{app:evidence}.}

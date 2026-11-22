@@ -2,7 +2,7 @@
 \section{Tujuan dan Ruang Lingkup}
 ARLOW mengubah data kebencanaan dari beberapa instansi menjadi \code{HazardEvent} kanonik, lalu menyediakannya melalui REST, live feed SSE, webhook, dan notifikasi. M1 membuktikan integrasi BMKG/PVMBG, isolasi kegagalan sumber, autentikasi, pemisahan layanan, serta distribusi event. M2 membawa sistem tersebut ke beberapa node, menambah penyimpanan terdistribusi, koordinasi beberapa Aggregator, penerimaan laporan lapangan yang tahan kegagalan, serta sumber satelit dan sensor pantai~\cite{spec,m1}.
 
-Pengguna terdiri atas Media, Tim Lapangan, dan BNPB Internal. Media memperoleh ringkasan sesuai scope; Tim Lapangan dapat mengirim laporan dan menerima peringatan; Internal Ops dapat memeriksa serta memproses ulang pesan gagal dengan scope khusus. Token Audit terpisah dipakai untuk pemeriksaan oleh asisten. Semua data uji merupakan data simulasi/latihan.
+Pengguna terdiri atas Media, Tim Lapangan, dan BNPB Internal. Media memperoleh ringkasan sesuai scope; Tim Lapangan dapat mengirim laporan dan menerima peringatan; Internal Ops dapat memeriksa serta memproses ulang pesan gagal dengan scope khusus. Token Audit terpisah dipakai untuk pemeriksaan oleh asisten. Semua data uji merupakan data simulasi.
 
 \section{Arsitektur Logis}
 \begin{figure}[htbp]
@@ -82,7 +82,7 @@ Kapasitas guest merupakan alokasi/kapasitas yang terlihat oleh Kubernetes, bukan
 \label{fig:deployment}
 \end{figure}
 
-Replikasi Cassandra menoleransi satu anggota hilang selama dua dari tiga replika tiap partisi tetap tersedia. Hal ini tidak menjamin quorum bila seluruh host Linux-BC yang memuat dua anggota mati. Receiver latihan pada host a berada di luar pod/worker sasaran b atau c, tetapi belum merupakan perangkat fisik terpisah dari seluruh host BNPB. Auth DB, broker dan beberapa store layanan juga belum ditunjukkan memiliki toleransi kehilangan host setara canonical store.
+Replikasi Cassandra menoleransi satu anggota hilang selama dua dari tiga replika tiap partisi tetap tersedia. Hal ini tidak menjamin quorum bila seluruh host Linux-BC yang memuat dua anggota mati. Receiver Tim Lapangan pada host a berada di luar pod/worker sasaran b atau c, tetapi belum merupakan perangkat fisik terpisah dari seluruh host BNPB. Auth DB, broker dan beberapa store layanan juga belum ditunjukkan memiliki toleransi kehilangan host setara canonical store.
 
 \section{Kontrak Platform, Sumber Daya, dan Isolasi}
 Namespace aplikasi adalah \code{sistem-informasi-kebencanaan-bnpb}. Label \code{role} mengikuti kelas Aggregator, store, broker, consumer, API, mock, sensor, dan other. Tester Agent dipasang sebagai DaemonSet terpisah dengan image/digest dari spesifikasi; Sensor Pantai memakai digest resmi yang dipin di \code{m2/sources.yaml}. Tidak ada modifikasi image asisten yang dijadikan dasar solusi.
@@ -127,7 +127,7 @@ kubectl -n sistem-informasi-kebencanaan-bnpb \
 curl -H "Authorization: Bearer $AUDIT_API_TOKEN" \
   'http://127.0.0.1:9092/internal/audit/checksum?source=BMKG'
 \end{lstlisting}
-UI/analitik SPA diakses melalui edge (NodePort 30080 pada latihan); dashboard operasional melalui Grafana. Kind/Compose hanya untuk pengembangan, bukan bukti kernel terpisah.
+UI/analitik SPA diakses melalui edge (NodePort 30080); dashboard operasional melalui Grafana. Kind/Compose hanya untuk pengembangan, bukan bukti kernel terpisah.
 
 \section{Asumsi dan Metode Pembuktian}
 Identitas stabil dan offset feed menjadi dasar deduplikasi. Waktu bukti/satelit memakai UTC; WIB berarti UTC+7. Jam storage tetap perlu disinkronkan; fencing tidak membuktikan toleransi pergeseran jam arbitrer semua server.

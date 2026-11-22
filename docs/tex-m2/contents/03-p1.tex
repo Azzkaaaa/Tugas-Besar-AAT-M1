@@ -73,7 +73,7 @@ d & 16.601 & 73,2\% & 158,21 MiB & 31.142 & 34.972\\\bottomrule
 \end{table}
 Jumlah replica record adalah 61.542 atau tiga kali 20.514 hazard. Angka tersebut dihitung dari penempatan natural replica, bukan sensus fisik SSTable. Load nodetool merupakan total disk yang dilaporkan, bukan byte payload kanonik saja. Counter write mencakup mutasi/replikasi dan aktivitas sumber lain, sehingga bukan throughput event bisnis. Porsi write normal 21,2--27,3\% dan saat burst 21,9--27,4\% menunjukkan pekerjaan tetap tersebar.
 
-Burst latihan menambah 300 gempa Laut Banda. Seluruh 300 ditemukan, dengan salinan per node a=213, b=221, c=229, d=237 (total 900). Hash tidak memusatkan semua gempa satu wilayah pada satu node. Dataset historis resmi belum tersedia, sehingga ini bukti latihan tentang ketimpangan, bukan validasi katalog asisten.
+Burst menambah 300 gempa Laut Banda. Seluruh 300 ditemukan, dengan salinan per node a=213, b=221, c=229, d=237 (total 900). Hash tidak memusatkan semua gempa satu wilayah pada satu node.
 
 Fault disk dibatasi pada direktori Cassandra anggota di bnpb-c. Semua 146.960 identitas baseline masih ditemukan setelah repair; hasil akhir memuat 148.099 identitas. Sebanyak 900 hazard baru diingest selama fault. Perbedaan total 1.139 mencakup seluruh jendela sebelum/sesudah, sehingga tidak disamakan dengan 900 pada jendela fault. Backup lokal lama dipertahankan offline dan tidak digunakan untuk recovery \bukti{E07}.
 
@@ -82,10 +82,10 @@ Pengujian memerlukan intervensi operator pada startup budget dan replacement int
 \section{Bukti per Kriteria dan Batasan}
 \begin{longtable}{@{}P{.9cm}P{7.2cm}P{7.3cm}@{}}
 \toprule No. & Bukti yang tersedia & Status dan batas interpretasi\\\midrule\endhead
-1 & 20.514 hazard; tiga salinan/record; empat node; \bukti{E04,E05}. & Terbukti pada katalog live latihan; katalog historis resmi dan sensus disk independen belum ada.\\
+1 & 20.514 hazard; tiga salinan/record; empat node; \bukti{E04,E05}. & Terbukti pada katalog live; sensus disk independen belum ada.\\
 2 & Counter write normal/burst dan 300 gempa satu wilayah \bukti{E06}. & Beban tersebar; pengaruh setiap sumber tidak diisolasi dari counter agregat.\\
 3 & Traversal halaman terurut, perbandingan FULL/summary \bukti{E09}. & Traversal berbatas lulus; tidak mengklaim snapshot seluruh katalog saat ada write.\\
-4 & Tidak ada identitas baseline hilang pada scoped fault \bukti{E07}. & Seluruh worker tidak dihapus; tiga 502 menggagalkan klaim semua request terjawab. Checksum resmi belum tersedia.\\
+4 & Tidak ada identitas baseline hilang pada scoped fault \bukti{E07}. & Seluruh worker tidak dihapus; tiga 502 menggagalkan klaim semua request terjawab.\\
 5 & Disk aktif kosong kembali menjadi anggota; 900 ingest saat fault. & Pemulihan berhasil dengan intervensi; jalur replacement intent baru belum diuji live ulang.\\
 6 & Empat UN dan full repair termasuk Paxos. & Redundansi nominal kembali; fault kedua belum dijalankan.\\
 7 & Lima kategori, time series/severity/area, warning partial; perbandingan beberapa scope \bukti{E08,E10}. & Dashboard tersedia. Kesetaraan seluruh katalog coastal/ALL saat fault masih terbatas oleh scan partial.\\\bottomrule

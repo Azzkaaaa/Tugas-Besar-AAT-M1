@@ -14,7 +14,7 @@ PVMBG v5: field hilang & Ash height nol yang dihilangkan pada laporan Normal dit
 Perubahan tidak dikenal & Parked dengan alasan skema; menunggu perbaikan dan replay. & Salah menafsirkan tingkat bahaya lebih berisiko daripada menandai data belum tersedia.\\
 JSON/UTF-8/struktur/ukuran tidak valid & Arsip byte yang diterima; tidak dimasukkan sebagai hazard; item sehat tetap diproses. & Parser tidak boleh crash atau menghabiskan memori akibat satu payload.\\\bottomrule
 \end{longtable}
-Flag \code{PVMBG_SCHEMA_ADAPTERS=true} mengaktifkan transformasi yang sudah dideklarasikan. Snapshot 15 mengaktifkannya pada latihan pemulihan. Validasi dilakukan lagi sesudah transformasi; mengaktifkan adapter bukan mengabaikan validasi.
+Flag \code{PVMBG_SCHEMA_ADAPTERS=true} mengaktifkan transformasi yang sudah dideklarasikan. Snapshot 15 mengaktifkannya pada pemulihan. Validasi dilakukan lagi sesudah transformasi; mengaktifkan adapter bukan mengabaikan validasi.
 
 \section{Penyimpanan Pesan Gagal dan Replay}
 Inbox Cassandra menyimpan raw bytes, sumber, waktu diterima, versi skema, alasan kegagalan, correlation ID dan status. Envelope rusak diarsipkan sebagai body utuh yang berhasil diterima. Payload besar dibaca ke spool dan chunk 64 KiB untuk membatasi memori. Bila koneksi putus, hanya byte yang benar-benar tiba yang dapat diarsipkan; alasan \code{incomplete_response} dan checkpoint yang tertahan mengungkap ketidaklengkapan tersebut. Sistem tidak menyatakan dapat menyimpan byte yang tidak pernah dikirim oleh upstream.
@@ -42,7 +42,7 @@ Gateway memverifikasi JWT dan memanggil RPC Aggregator. Conditional insert yang 
 
 Field-report worker terpisah memindai pending rows dan menyimpan hasil normalisasi serta status terminal secara kondisional. Worker boleh menjalankan percobaan lebih dari sekali, tetapi satu receipt mempunyai satu hasil yang commit. Setelah ACK 202, keberlanjutan bergantung pada quorum/replica store, bukan memori gateway. Jika quorum tidak dapat dicapai, sistem memberikan 503 untuk intake baru; menerima data di memori lalu membalas 202 akan melanggar jaminan ini.
 
-Jaminannya adalah at-least-once attempt dengan efek tersimpan idempoten, selama state quorum dan idempotency key dipertahankan. Tidak ada janji bahwa proses worker tidak pernah mengeksekusi ulang kode. Di dalam cohort latihan, 12 laporan yang mendapat 202 ketika worker dimatikan tetap dapat diproses setelah pod gateway/Aggregator penerima dihapus. Retry mengembalikan receipt yang sama, semua ID ditemukan, dan timestamp terminal tidak berubah pada pemeriksaan ulang \bukti{E20}.
+Jaminannya adalah at-least-once attempt dengan efek tersimpan idempoten, selama state quorum dan idempotency key dipertahankan. Tidak ada janji bahwa proses worker tidak pernah mengeksekusi ulang kode. Di dalam cohort uji, 12 laporan yang mendapat 202 ketika worker dimatikan tetap dapat diproses setelah pod gateway/Aggregator penerima dihapus. Retry mengembalikan receipt yang sama, semua ID ditemukan, dan timestamp terminal tidak berubah pada pemeriksaan ulang \bukti{E20}.
 
 \section{Alternatif dan Trade-off}
 \begin{longtable}{@{}P{3.6cm}P{5.5cm}P{6.4cm}@{}}

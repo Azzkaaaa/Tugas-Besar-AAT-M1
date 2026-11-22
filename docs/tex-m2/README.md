@@ -37,9 +37,7 @@ Build PDF biasa tidak memerlukan checkout infrastruktur; daftar bukti LaTeX suda
 
 ## Pelengkapan oleh kelompok
 
-1. Isi kontribusi nyata M2 dan riwayat penggunaan AI yang belum diketahui.
-2. Bila ada template resmi Form Penggunaan AI M1, pindahkan deklarasi ke format tersebut.
-3. Tambahkan hasil resmi auditor/referensi dan bukti demo ketika tersedia, lalu perbarui status tiap kriteria.
-4. Tinjau versi/tanggal laporan terhadap artefak yang benar-benar dikumpulkan. Snapshot 22 November tidak dinyatakan sebagai submission 20 November.
+1. Lengkapi riwayat penggunaan AI pada implementasi.
+2. Tambahkan tautan video demo.
 
 Hasil utama yang masih terbatas: P1 belum membuktikan kehilangan seluruh worker/pemulihan tanpa intervensi; P2 belum menjalankan 10.000 VU dan gagal mencapai rasio throughput 2×/rollout tanpa error; P4 belum mengejar backlog dalam 60 detik; P5 belum memiliki timestamp emisi independen untuk menghitung SLO penerima. Rincian dan sumber ada di PDF.

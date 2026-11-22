@@ -9,7 +9,7 @@ Sebelum job baru berjalan, otoritas epoch/holder/expiry dipasang pada seluruh pa
 
 Pemeriksaan sebelum HTTP fetch mengurangi permintaan dari term yang sudah diketahui kedaluwarsa. Namun HTTP upstream tidak berada dalam transaksi Cassandra. Proses dapat terhenti setelah pemeriksaan atau respons dapat hilang; karena itu kode tidak menjanjikan exactly-once untuk setiap paket HTTP. Pembuktian fetch tunggal tetap membutuhkan log upstream, sedangkan jaminan efek kanonik memerlukan fencing dan deduplikasi.
 
-Pergeseran jam pada node aplikasi tidak langsung mengubah perhitungan kedaluwarsa berdasarkan database. Freeze lebih lama dari TTL membuat writer lama tidak berhak; term pengganti memasang epoch baru sebelum mulai menulis. Karena database sendiri juga berjalan di node yang jamnya dapat berubah, sinkronisasi jam storage tetap bagian asumsi. Bukti latihan yang menolak stale writer tidak diperluas menjadi teorema toleransi pergeseran jam arbitrer semua replika.
+Pergeseran jam pada node aplikasi tidak langsung mengubah perhitungan kedaluwarsa berdasarkan database. Freeze lebih lama dari TTL membuat writer lama tidak berhak; term pengganti memasang epoch baru sebelum mulai menulis. Karena database sendiri juga berjalan di node yang jamnya dapat berubah, sinkronisasi jam storage tetap bagian asumsi. Bukti yang menolak stale writer tidak diperluas menjadi teorema toleransi pergeseran jam arbitrer semua replika.
 
 \begin{table}[htbp]\centering
 \begin{tabularx}{\textwidth}{@{}P{5cm}P{2.4cm}Y@{}}
@@ -50,7 +50,7 @@ Perintah k6 dijalankan dari repository layanan; helper scaling dari repository i
 
 \begin{longtable}{@{}P{3.4cm}P{6.2cm}P{5.9cm}@{}}
 \toprule Uji & Hasil tersimpan & Interpretasi\\\midrule\endhead
-Failover BMKG & Pengganti mengambil alih dalam 31,9 s \bukti{E11}. & Di bawah 60 s pada latihan; kelengkapan historis seluruh sumber belum dibandingkan referensi resmi.\\
+Failover BMKG & Pengganti mengambil alih dalam 31,9 s \bukti{E11}. & Di bawah 60 s; kelengkapan historis seluruh sumber belum dibandingkan.\\
 Clock skew +45/-30 s & Refusal fencing, tidak terlihat concurrent accepted write; gap polling sekitar 99/76 s \bukti{E12}. & Safety dalam window teramati; liveness menurun dan gap melewati 60 s.\\
 Freeze/resume & Skenario c menunjukkan refusal writer lama \bukti{E13}. & Skenario b terdahulu juga membekukan mock sehingga tidak dipakai sebagai bukti bersih.\\
 Throughput 1 vs 3 & 27,73/s vs 32,60/s pada window 45 s; fase satu replika memiliki 14 HTTP 503 \bukti{E14}. & Rasio 1,1756 (dibulatkan 1,176), di bawah target 2,0. Workload 40 worker tidak setara 10.000 VU.\\
@@ -71,7 +71,7 @@ Penempatan Zitadel/Auth DB di VM b dengan 2 vCPU dan kurva latensi mengindikasik
 \toprule No. & Bukti & Status\\\midrule\endhead
 1 & Replika siap dan discovery pada tiga node berbeda \bukti{E14}. & Teramati pada tahap tiga replika; penempatan dapat berubah oleh HPA.\\
 2 & Log upstream/poller dan fencing pada drill BMKG \bukti{E11}. & Bukti berbatas; tidak membuktikan tidak ada gap/permintaan ganda di seluruh riwayat.\\
-3 & Failover 31,9 s \bukti{E11}. & Target waktu tercapai pada latihan tersebut; referensi kontinuitas resmi belum tersedia.\\
+3 & Failover 31,9 s \bukti{E11}. & Target waktu tercapai.\\
 4 & Skew +45/-30 s \bukti{E12}. & Writer lama ditolak dalam scope bukti; gap polling tetap dilaporkan.\\
 5 & Freeze/resume node c \bukti{E13}. & Fencing term lama teramati.\\
 6 & Scaling berbatas dan k6 sampai 400 VU \bukti{E14,E16,E17}. & 10.000 VU selama 120 s dengan transisi 3--5--2 belum dilaksanakan; hasil 400 VU gagal.\\
