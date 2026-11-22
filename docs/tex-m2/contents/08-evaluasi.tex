@@ -1,24 +1,39 @@
-\chapter{Evaluasi dan Bagian yang Belum Lengkap}
-\section{Capaian pada Checkpoint Laporan}
+\chapter{Post-mortem Sistem}
+\section{Capaian pada Laporan}
 M2 sudah mempunyai jalur implementasi untuk kelima problem: canonical store terpartisi dan bereplikasi, koordinasi penulis dengan fencing, durable inbox/field-report intake, pemrosesan satelit event time, serta isolasi dan pengiriman sensor kritis. Cluster empat kernel terpisah dan snapshot deployment terverifikasi mendukung pembuktian runtime berbatas. Ini berbeda dari hanya memiliki desain, tetapi belum merupakan kelulusan seluruh kontrak tugas.
 
 Hasil yang paling kuat adalah survival identitas pada scoped disk fault, failover BMKG 31,9 s, receipt 202 yang bertahan setelah penerima mati, replay cohort schema, algoritme/recovery satelit pada fixture, dan receipt bertanda tangan tiga critical. Batas utama terletak pada kapasitas end-to-end dan pemulihan otonom menyeluruh.
 
-\section{Kesenjangan yang Perlu Dilengkapi}
-\begin{longtable}{@{}P{1.3cm}P{7cm}P{7.2cm}@{}}
-\toprule Bagian & Yang belum selesai / belum terbukti & Bukti yang diperlukan berikutnya\\\midrule\endhead
-P1 & Penghapusan seluruh worker; replacement tanpa intervensi; fault kedua; semua request terjawab. & Baseline tertutup, log Tester Agent, checksum lengkap dan capture baca selama dua siklus fault.\\
-P1 & Kesetaraan analytics seluruh scope pada konkurensi/fault. & Audit lengkap dengan window/versi katalog yang sebanding, bukan count partial.\\
-P2 & 10.000 VU/120 s; scaling 3--5--2 pada window sama; throughput $\geq2\times$ dan rollout tanpa error. & Hasil load/generator yang valid beserta token, distribusi status, topology stage dan trace bottleneck. Hasil yang ada masih gagal atau di bawah target.\\
-P3 & Injection empat poison pada deployment dan observasi semua komponen. & Raw byte/hash, restart count, healthy-key progress; replay dua revisi key sama pada cluster.\\
-P4 & Catch-up 60\(\times\) dalam 60 s; seluruh feed cocok referensi; crash/reconnect live lintas kernel. & Capture offset/checkpoint sampai selesai, p95 storage, referensi asisten dan perbandingan akhir tanpa gangguan.\\
-P5 & Nol critical hilang pada window lengkap; p95 sejak emisi; latency M1 saat fault gabungan. & Expected set independen, emitted\_at nyata, sinkronisasi jam, signed receipt seluruh revisi dan log tanpa intervensi.\\\bottomrule
-\end{longtable}
+\section{Kegagalan dan Kesenjangan}
+Tabel berikut memuat kriteria yang belum terbukti atau gagal. Kolom \emph{hasil terbaik} memuat pengukuran yang tercatat. Kolom \emph{perkiraan} memuat penilaian kelompok berdasarkan kode dan desain bila data pengujian untuk kriteria tersebut belum ada; perkiraan ini bukan bukti.
 
-\section{Bonus dan Batas Klaim}
-Topologi tiga host fisik sudah dideklarasikan, tetapi bonus host berbeda juga meminta pengukuran jaringan nyata dan pemutusan jaringan fisik. Tailscale dan fault policy tidak dengan sendirinya memenuhi seluruh bukti bonus itu. HPA min 3/max 5 tersedia, tetapi skala 3--5--2 yang disengaja bukan bukti kapasitas naik/turun otomatis akibat beban. Bukti autoscaling Redis pada tahap infrastruktur M1 tidak dianggap pengganti bukti M2 terbaru. Komponen AI-native tidak ditemukan sebagai jalur produk yang dibuktikan, sehingga bonus tersebut tidak diklaim.
+{\small
+\begin{longtable}{@{}P{1.1cm}P{2.5cm}P{3.4cm}P{4.3cm}P{3.4cm}@{}}
+\toprule Bagian & Kriteria & Hasil terbaik tercatat & Perkiraan dukungan sistem & Bukti yang diperlukan\\\midrule\endhead
+P1 & Penghapusan seluruh worker dan replacement tanpa intervensi. & Scoped disk fault bnpb-c tanpa identitas baseline hilang; pemulihan memerlukan intervensi pada startup budget dan replacement intent \bukti{E07}. & \textbf{Sebagian.} RF=3 dengan quorum menoleransi satu node hilang. Jalur replacement intent ada di kode, tetapi belum diuji live tanpa intervensi. & Penghapusan node, log Tester Agent, checksum sebelum/sesudah dan capture baca selama fault.\\
+P1 & Fault kedua. & Empat anggota UN setelah full repair. & \textbf{Didukung} bila repair selesai sebelum fault kedua, karena redundansi nominal sudah kembali. & Siklus fault kedua dengan pemeriksaan identitas yang sama.\\
+P1 & Semua request terjawab selama fault. & 545 dari 548 HTTP 200; tiga HTTP 502 \bukti{E07}. & \textbf{Belum.} Respons partial tersedia di Aggregator, tetapi kegagalan edge/auth masih dapat menghasilkan 502 sebelum Aggregator menjawab. & Capture baca tanpa 502 selama fault.\\
+P1 & Kesetaraan analytics seluruh scope saat fault. & Dashboard dan tanda partial; perbandingan beberapa scope \bukti{E08,E10}. & \textbf{Sebagian.} Scan memberi tanda partial eksplisit, bukan hasil yang setara dengan kondisi normal. & Audit lengkap dengan window dan versi katalog yang sebanding.\\
+P2 & 10.000 VU selama 120 s dengan transisi 3--5--2. & k6 sampai 400 VU gagal; sukses sekitar 30--40 request/s \bukti{E14,E22}. & \textbf{Belum.} Pertukaran token per request mencapai timeout 5 s pada 200--400 VU, sehingga beban lebih tinggi akan gagal di jalur auth. & Hasil k6 10.000 VU beserta distribusi status dan trace.\\
+P2 & Throughput 3 replika $\geq2\times$ satu replika. & Rasio 1,176 \bukti{E14}. & \textbf{Belum.} Menambah replika Aggregator tidak menambah kapasitas Zitadel dan Auth DB yang berada pada satu node 2 vCPU. & Pengukuran ulang setelah bottleneck auth dihilangkan.\\
+P2 & Rollout tanpa request gagal. & Error 502/503/403 selama rollout \bukti{E15}. & \textbf{Belum.} Belum ada mekanisme draining koneksi yang dibuktikan selama rollout. & Rollout di bawah beban dengan nol request gagal.\\
+P3 & Injection empat poison pada deployment. & Test pipeline produksi lulus untuk empat jenis poison (\code{67587d6}). & \textbf{Didukung.} Image Aggregator \code{d773970} yang berjalan sudah memuat pipeline tersebut. & Injection live, raw byte/hash, restart count dan progres key sehat.\\
+P3 & Replay dua revisi key yang sama pada cluster. & Dibuktikan oleh test pipeline, bukan cohort live \bukti{E19}. & \textbf{Didukung.} Sequence per key dan canonical CAS sama untuk lokal dan cluster. & Replay dua revisi satu key pada cluster.\\
+P4 & Catch-up $60\times$ dalam 60 s. & Lag sekitar 4,49 juta offset; checkpoint 53.383 $\rightarrow$ 53.402 dalam sekitar satu menit \bukti{E24,E26}. & \textbf{Belum.} Laju pemrosesan yang tercatat jauh di bawah laju sumber; tahap yang membatasi belum didiagnosis. & Capture offset/checkpoint sampai lag nol dan profil per tahap.\\
+P4 & Seluruh feed cocok dengan referensi. & Engine lulus pada fixture lokal \bukti{E23}; referensi seluruh feed belum ada. & \textbf{Didukung} untuk logika engine; hasil seluruh feed bergantung pada catch-up. & Perbandingan seluruh feed dengan referensi.\\
+P4 & Crash dan reconnect live lintas kernel. & Recovery satu instance 36,314 s; SSE terpotong pada fixture \bukti{E23,E25}. & \textbf{Didukung} secara mekanisme melalui offset, journal dan snapshot; waktu pemulihan pada cluster belum diketahui. & Crash terkontrol pada cluster dan perbandingan hasil sesudahnya.\\
+P5 & Nol critical hilang pada window lengkap. & Tiga known critical lengkap dengan receipt bertanda tangan \bukti{E29,E30}. & \textbf{Didukung} secara desain melalui journal, retry tanpa batas jumlah dan receipt. & Expected set independen untuk seluruh window.\\
+P5 & p95 emisi--receipt $\leq5$ s. & p95 ingest--receipt 6,995299 s \bukti{E29}. & \textbf{Kemungkinan tidak tercapai.} Bagian ingest--receipt saja sudah melebihi 5 s. & Timestamp emisi nyata dan sinkronisasi jam.\\
+P5 & Latensi M1 dan fault gabungan tanpa intervensi. & Read HTTP 200 selama outage sensor, p95 tinggi \bukti{E28}; fault diuji satu per satu. & \textbf{Sebagian.} Isolasi sumber bekerja, tetapi bottleneck auth P2 dan intervensi P1 tetap berlaku. & Fault gabungan tanpa intervensi beserta latensi baca.\\\bottomrule
+\end{longtable}}
 
-\section{Integritas Hasil dan Keterulangan}
-Hasil lokal tidak dijalankan ulang saat penulisan. Dokumentasi awal yang telah tertinggal dikoreksi terhadap kode/snapshot terbaru, misalnya disk-state satelit, FULL SSE admission, halaman Audit 1.024 record dan query shard 1 s. Tabel pengukuran merujuk artefak asli melalui kode bukti dan manifest SHA-256. Diagram disusun dari konfigurasi/placement, tidak dipresentasikan sebagai screenshot runtime.
-
-Laporan M1 tetap disimpan pada \code{docs/tex/}; laporan ini memakai source \code{docs/tex-m2/}. Nama keluaran mengikuti spesifikasi: \code{IF4031_M2_nasigoreng.pdf}.
+\section{Refleksi: Perubahan yang Diperlukan}
+\begin{enumerate}
+\item \textbf{Jalur autentikasi.} Envoy memanggil token exchange untuk setiap request dan setiap panggilan melakukan pertukaran penuh ke Zitadel. Hasil pertukaran perlu di-cache per subjek sampai expiry, atau JWT divalidasi lokal di edge. Replika Zitadel dan Auth DB perlu disebar ke beberapa node, bukan seluruhnya pada bnpb-b.
+\item \textbf{Jalur list.} Setiap List membaca delapan shard dengan quorum dan deadline 1 s, lalu membaca source state dan hazard buckets secara berurutan. Indeks list yang sudah disiapkan sebelumnya dan pembacaan paralel akan menghapus fanout tersebut dari setiap request.
+\item \textbf{Replacement Cassandra.} Penggantian anggota perlu berjalan otomatis, termasuk penyesuaian startup budget, agar kehilangan node tidak memerlukan intervensi.
+\item \textbf{Failure domain.} Rack Cassandra perlu mengikuti host fisik, bukan nama node, sehingga dua replika satu partisi tidak berada pada host yang sama.
+\item \textbf{Rollout.} Readiness gate dan draining koneksi pada gateway serta Aggregator perlu dipasang agar request yang sedang berjalan tidak gagal saat pod diganti.
+\item \textbf{Ingest satelit.} Throughput perlu diukur per tahap (decode SSE, engine, write Cassandra, checkpoint) sebelum optimasi, agar perubahan diarahkan ke tahap yang benar-benar membatasi.
+\item \textbf{Pengukuran SLO kritis.} Waktu emisi sensor perlu dicatat secara independen, dan latensi ingest--receipt perlu diturunkan di bawah 5 s.
+\end{enumerate}

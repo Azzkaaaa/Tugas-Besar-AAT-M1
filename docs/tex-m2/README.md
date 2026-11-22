@@ -9,7 +9,7 @@ Laporan disusun dari spesifikasi M2, laporan/riwayat M1, kode layanan, manifest 
 - Gambaran sistem, diagram arsitektur dan deployment, topologi aktual, teknologi, asumsi, resource, dan cara deploy.
 - Matriks keputusan yang dipertahankan/diubah/dibatalkan dari M1.
 - P1–P5: masalah, mekanisme, alternatif, konfigurasi, konsistensi, hasil per kriteria, dan batas bukti.
-- Evaluasi, daftar pekerjaan yang belum terbukti, indeks bukti, serta formulir penggunaan AI.
+- Post-mortem sistem (capaian, kegagalan dan kesenjangan, refleksi perubahan), indeks bukti, serta formulir penggunaan AI.
 - `evidence/manifest.json`: lokasi dan SHA-256 sumber yang digunakan.
 - `evidence/measurements.json`: ekstraksi numerik terpilih; bukan pengukuran baru.
 
