@@ -63,7 +63,7 @@ State hanya di memori & Akses cepat dan kode sederhana. & RSS meningkat pada fee
 2 & Test event time, lateness, snapshot pada beberapa cut point \bukti{E23}. & Kebijakan 24 h/48 h eksplisit; late dan koreksi kedaluwarsa dicatat.\\
 3 & Test update/retract, split/merge, withdrawal \bukti{E23}. & Efek deterministik pada fixture; identitas lineage lintas urutan arbitrer tidak diklaim.\\
 4 & Sesi live speed=60; histogram p95 ingest sekitar 1,5--1,6 s; lag sekitar 4,49 juta offset \bukti{E24}. & Target catch-up $\leq60$ s belum tercapai. Waktu ingest mengecualikan antrean upstream; bukan umur data keseluruhan.\\
-5 & Real Cassandra recovery: gagal setelah canonical save sebelum checkpoint; snapshot+tail restore; identitas/count/revision sama \bukti{E25}. & Integrasi satu instance 36,314 s; bukan crash terkontrol cluster kernel terpisah. Fixture memakai 1.280 MiB, lebih besar dari limit store demo 1 GiB.\\
+5 & Real Cassandra recovery: gagal setelah canonical save sebelum checkpoint; snapshot+tail restore; identitas/count/revision sama \bukti{E25}. & Integrasi satu instance 36,314 s; bukan crash terkontrol cluster kernel terpisah. Fixture memakai 1.280 MiB, lebih besar dari limit store deployment 1 GiB.\\
 6 & Belum ada hasil referensi asisten. & Selisih terhadap referensi belum dapat dihitung. Comparator lokal tidak diberi label referensi asisten.\\
 7 & Tujuh sampel selama lebih dari tiga menit; checkpoint 53.383 $\rightarrow$ 53.402 dalam sekitar satu menit \bukti{E24,E26}. & Stream benar-benar maju; tidak menunjukkan sanggup mengejar laju sumber.\\
 8 & Test SSE terpotong, offset, journal dan snapshot \bukti{E23,E25}. & Mekanisme reconnect terbukti pada fixture berbatas; perbandingan seluruh feed sesudah putus belum ada.\\\bottomrule
