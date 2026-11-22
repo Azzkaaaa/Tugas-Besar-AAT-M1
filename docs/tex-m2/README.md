@@ -35,8 +35,4 @@ python docs/tex-m2/prepare_evidence.py
 
 Build PDF biasa tidak memerlukan checkout infrastruktur; daftar bukti LaTeX sudah disertakan. Manifest merujuk artefak sumber, bukan menyalin seluruh log, kredensial, atau payload ke folder laporan. Setiap angka tetap harus ditinjau jika sumber diperbarui; skrip tidak menulis ulang narasi hasil secara otomatis.
 
-## Pelengkapan oleh kelompok
-
-1. Lengkapi riwayat penggunaan AI pada implementasi.
-
 Hasil utama yang masih terbatas: P1 belum membuktikan kehilangan seluruh worker/pemulihan tanpa intervensi; P2 belum menjalankan 10.000 VU dan gagal mencapai rasio throughput 2×/rollout tanpa error; P4 belum mengejar backlog dalam 60 detik; P5 belum memiliki timestamp emisi independen untuk menghitung SLO penerima. Rincian dan sumber ada di PDF.
