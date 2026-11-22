@@ -1,0 +1,40 @@
+\usepackage[utf8]{inputenc}
+\input{glyphtounicode}
+\pdfgentounicode=1
+\usepackage[T1]{fontenc}
+\usepackage[a4paper,margin=2.4cm,headheight=15pt]{geometry}
+\usepackage{lmodern,parskip,enumitem,graphicx,caption}
+\usepackage{booktabs,array,tabularx,longtable,amsmath}
+\usepackage{xcolor,listings,tikz}
+\usetikzlibrary{arrows.meta,positioning,fit,backgrounds,calc}
+\usepackage{xurl}
+\usepackage[hidelinks]{hyperref}
+\usepackage{fancyhdr}
+\definecolor{reportblue}{HTML}{214C68}
+\definecolor{reportlight}{HTML}{EDF4F7}
+\definecolor{reportorange}{HTML}{AD5620}
+\definecolor{codebg}{HTML}{F4F5F6}
+\hypersetup{pdftitle={IF4031 M2 - ARLOW - nasigoreng},pdfauthor={Kelompok nasigoreng},pdfsubject={Laporan implementasi dan bukti Milestone 2}}
+\pagestyle{fancy}\fancyhf{}
+\fancyhead[L]{\small IF4031 -- ARLOW / nasigoreng}
+\fancyhead[R]{\small\nouppercase{\leftmark}}
+\fancyfoot[C]{\thepage}
+\renewcommand{\chaptermark}[1]{\markboth{Bab \thechapter}{}}
+\setlength{\emergencystretch}{3em}
+\setlength{\tabcolsep}{4pt}
+\renewcommand{\arraystretch}{1.18}
+\setlist{nosep,topsep=5pt,leftmargin=*}
+\setcounter{tocdepth}{1}
+\lstset{basicstyle=\ttfamily\footnotesize,backgroundcolor=\color{codebg},breaklines=true,columns=fullflexible,keepspaces=true,showstringspaces=false,frame=single,rulecolor=\color{black!15},aboveskip=8pt,belowskip=8pt}
+\DeclareRobustCommand{\code}[1]{\nolinkurl{#1}}
+\newcolumntype{P}[1]{>{\raggedright\arraybackslash}p{#1}}
+\newcolumntype{Y}{>{\raggedright\arraybackslash}X}
+\renewcommand{\contentsname}{Daftar Isi}
+\renewcommand{\chaptername}{Bab}
+\renewcommand{\figurename}{Gambar}
+\renewcommand{\tablename}{Tabel}
+\renewcommand{\bibname}{Daftar Pustaka}
+\renewcommand{\appendixname}{Lampiran}
+\newcommand{\bukti}[1]{\textbf{[#1]}}
+\newcommand{\sumber}[1]{\par\smallskip{\footnotesize\textit{Dasar penelusuran:} #1}\par}
+\tikzset{box/.style={draw=reportblue,rounded corners=3pt,fill=reportlight,align=center,font=\small,inner sep=7pt},arr/.style={-{Stealth[length=2mm]},thick,draw=reportblue}}

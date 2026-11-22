@@ -1,0 +1,93 @@
+\chapter{P1: Yang Pulang Membawa Laptopnya}
+\section{Identifikasi Masalah}
+Problem ini menggabungkan \emph{sharding}, ketimpangan beban atau \emph{hotspot}, replikasi untuk toleransi kehilangan node, perubahan keanggotaan, serta pembacaan global. Membagi data berdasarkan wilayah tidak otomatis membagi beban: konsentrasi gempa pada satu wilayah dapat membebani satu shard. Replikasi dibutuhkan agar hilangnya pemilik partisi tidak menghilangkan satu-satunya salinan. Pembacaan lintas shard membutuhkan penggabungan urutan dan penanganan kegagalan parsial~\cite{cassandra}.
+
+\section{Partisi, Replikasi, dan Perubahan Keanggotaan}
+Identitas hazard diturunkan secara deterministik dari sumber dan referensinya. Fungsi \code{auditShard} menghitung FNV-1a atas \code{hazard_id}, kemudian modulo 16. Nilai shard menjadi partition key \code{canonical_events}. Cassandra memetakan token partition key tersebut ke anggota ring; \code{NetworkTopologyStrategy} dan RF=3 menentukan tiga natural replica. Ini adalah dua tingkat pemetaan: hash aplikasi ke shard logis, kemudian token Cassandra ke node.
+
+Empat anggota Cassandra masing-masing memiliki 16 token, dengan rack mengikuti nama node Kubernetes. Karena RF=3, setiap event ditempatkan pada tiga dari empat node, bukan disalin ke seluruh node. Hash berdasarkan identitas memutus keterkaitan antara lokasi geografis dan lokasi storage. Namun 16 shard kanonik tetap merupakan granularitas terbatas: distribusi tidak dijamin tepat 25\% dan satu shard dengan banyak revisi tetap dapat menjadi titik kontensi Paxos.
+
+Saat node hilang, replica lain tetap menyediakan data apabila quorum masih tersedia. Penambahan/penggantian node mengubah kepemilikan rentang token, menyalin rentang yang diperlukan, dan melakukan repair termasuk state Paxos. Deployment mempertahankan identitas endpoint lama untuk replacement disk kosong dan menyediakan startup budget 40 menit pada snapshot 18. Disk tetap lokal; mekanisme ini tidak mengalihkan data ke network storage di luar cluster.
+
+Write/read biasa memakai \code{LOCAL_QUORUM}. Dengan RF=3 pada satu datacenter, operasi membutuhkan dua replika dan quorum baca beririsan dengan quorum tulis. Conditional mutation memakai \code{LOCAL_SERIAL}/Paxos untuk pemeriksaan versi/otoritas. Jaminan itu berlaku pada operasi/partisi yang bersangkutan; tidak menghasilkan transaksi atomik terhadap seluruh proyeksi dan seluruh shard.
+
+\section{Alternatif dan Trade-off}
+\begin{longtable}{@{}P{3.2cm}P{5.8cm}P{6.5cm}@{}}
+\toprule Pendekatan & Keuntungan & Konsekuensi terhadap dataset timpang\\\midrule\endhead
+Partisi rentang/wilayah & Query satu wilayah terlokalisasi; penelusuran rentang mudah. & Wilayah gempa dominan menjadi hotspot. Pemecahan ulang rentang perlu koordinasi dan tidak otomatis meratakan burst.\\
+Hash identitas + replica ring (dipilih) & Sebaran tidak mengikuti provinsi; kegagalan satu node tidak menghilangkan semua salinan. & Query nasional/wilayah membutuhkan fanout. RF=3 menambah biaya storage dan jaringan; 16 shard membatasi granularitas sebaran.\\
+Satu primary SQL + replica penuh & Transaksi dan urutan baca lebih sederhana; failover primary umum digunakan. & Setiap replica memegang seluruh katalog, sehingga tidak memenuhi kriteria tidak ada node menyimpan seluruh data. Primary tetap membatasi write.\\\bottomrule
+\end{longtable}
+
+\section{Pembacaan Global dan Konsistensi Endpoint}
+List publik memakai indeks header terurut dan merge hasil lintas shard. Summary tidak mengambil seluruh attributes; FULL memiliki budget payload serta admission tersendiri. Urutan publik mengikuti waktu kejadian menurun dan tie-break identitas yang deterministik. Audit events memakai urutan \code{ingested_at ASC, hazard_id ASC}, sesuai Lampiran A. Checksum melakukan streaming atas \code{source_ref_id} terurut byte, dipisahkan newline tanpa newline terakhir, lalu SHA-256.
+
+Jika sebagian interval belum terbaca, cursor masukan dipertahankan agar halaman yang tidak lengkap dapat dicoba lagi. Client perlu deduplikasi berdasarkan hazard ID saat retry. UI tidak memajukan halaman ketika unit storage belum tersedia. \code{partial=true} juga dapat berasal dari sumber yang stale, bukan hanya kegagalan storage; \code{unavailable_units} membantu membedakannya.
+
+\begin{longtable}{@{}P{4.1cm}P{5.4cm}P{6cm}@{}}
+\toprule Endpoint / jalur & Kondisi normal & Ketika node/kapasitas hilang\\\midrule\endhead
+\code{GET /api/v1/hazards} & Merge indeks proyeksi global; quorum pada baca shard. Konsisten menurut revisi proyeksi yang terbaca, tanpa snapshot atomik lintas halaman. & Kembalikan baris yang tersedia dan partial/unit gagal; retry cursor yang sama. FULL dapat ditolak 429 saat admission penuh.\\
+\code{GET /api/v1/hazards/{id}} & Record/header aktif dibaca dengan quorum; record yang benar-benar tidak ada memberi 404. & Ketidaktersediaan store menghasilkan respons partial tanpa item, bukan 404 palsu. Error transport di edge masih mungkin dan teramati.\\
+\code{GET /api/v1/hazards/sources/statuses} & Status terakhir poller dari source state; data dapat stale sesuai timestamp. & State tidak tersedia/stale ditandai; tidak menunggu pemanggilan sumber oleh client.\\
+\code{GET /api/v1/analytics} & Scan metadata aktif seluruh shard; agregasi current projection, bukan transaksi seluruh katalog. & Partial dan warning; angka hanya untuk subset terbaca, tidak diartikan total nasional yang lengkap.\\
+\code{GET /internal/audit/events} & Urutan ingestion stabil dalam interval yang lengkap; filter \code{since} inklusif dan cursor terikat filter. & Pertahankan interval/cursor saat shard tidak terbaca; partial dan nama unit.\\
+\code{GET /internal/audit/checksum} & Digest referensi dari indeks aktif; perbandingan sah bila scope dan versi katalog setara. & Digest/count partial tidak sah sebagai bukti tidak ada data hilang. Request dibatasi waktu.\\
+\code{GET /internal/audit/location} & Natural replica dari ring, RF dan token shard; rack dipetakan ke nama node. & Down replica tetap dapat tercatat dalam placement; endpoint ini tidak membuktikan setiap byte sudah hadir pada disk.\\
+\code{GET /internal/audit/unprocessed} & Listing inbox unresolved; retrying/parked, pagination metadata. & Partial/unit gagal; halaman kosong dengan cursor tidak-null tetap harus dilanjutkan.\\
+\code{POST /field-reports} & 202 setelah conditional intake quorum; idempotency key terikat subjek JWT. & Quorum tidak cukup: tolak 503, jangan memberikan ACK palsu. Receipt 202 terdahulu tetap harus dipulihkan (P3).\\
+Ops replay / critical receipt & Conditional per-key/per-event mutation; idempoten; memerlukan credential khusus. & Retry jika hasil tidak diketahui; tidak menghapus pending kritis sebelum receipt terverifikasi commit.\\
+Feed / webhook / push & Proyeksi asinkron, at-least-once dan deduplikasi event; dapat tertinggal dari canonical commit. & Retry/replay dari store masing-masing; tidak menjanjikan pembacaan linearizable dari seluruh consumer.\\\bottomrule
+\end{longtable}
+
+Konfigurasi kode yang diperiksa membatasi satu query shard Cassandra sampai 1 detik; total pembacaan hazard gRPC memiliki budget 1,5 detik di dalam deadline gateway 2 detik. Audit events/location dibatasi 5 detik, checksum 20 detik. Metadata Audit memakai halaman 1.024 record pada \code{d773970}; nilai 64/256 dan batas shard yang lebih pendek pada dokumen lama merupakan konfigurasi historis. Deadline membatasi penantian, tetapi tidak menjamin request end-to-end selalu berhasil jika edge/auth atau jaringan gagal.
+
+\section{Dashboard Analitik Lintas Katalog}
+Panel analitik terpisah dari dashboard metrik operasional. API memindai \code{analytics_by_shard}, 16 shard metadata, maksimal delapan pembacaan bersamaan dan 128 record per halaman. Tidak ada pemuatan seluruh payload besar ke memori. Satu scan diterima per replika dengan budget 10 detik; gateway memberi 12 detik. Data dipilah menurut \code{occurred_at}, rentang \code{since} inklusif/\code{until} eksklusif, serta interval jam/hari/bulan/tahun.
+
+Panel menampilkan line chart jenis bahaya terhadap waktu, severity dan wilayah. Hazard SEISMIC dengan warning tsunami dihitung sekali pada SEISMIC dan sekali pada kategori TSUNAMI. Oleh karena itu jumlah lima kategori dapat melebihi \code{total}; total, severity dan area menghitung setiap hazard aktif sekali. Withdrawal dikeluarkan melalui metadata revisi. Overflow 10.000 area atau 4.096 bucket waktu, backfill belum selesai, shard gagal, atau deadline menimbulkan tanda partial eksplisit.
+
+Satu hasil browser lengkap mencatat 121.246 hazard, 48 area, dan empat tingkat severity \bukti{E08}. Tabel berikut adalah transkripsi data browser yang tersimpan, bukan tangkapan layar baru.
+\begin{table}[htbp]\centering
+\begin{tabular}{lrlr}\toprule
+Kategori & Jumlah & Severity & Jumlah\\\midrule
+SEISMIC & 6.988 & NORMAL & 5.204\\
+TSUNAMI (tumpang tindih) & 1.679 & WASPADA & 110.705\\
+VOLCANIC & 6.649 & SIAGA & 2.268\\
+WILDFIRE & 875 & AWAS & 3.069\\
+COASTAL & 106.734 & Total severity & 121.246\\\bottomrule
+\end{tabular}
+\caption{Hasil analitik all-time, interval harian, \code{as_of=2026-11-21T23:45:59Z}. SEISMIC + VOLCANIC + WILDFIRE + COASTAL sama dengan total.}
+\end{table}
+Perbandingan terpisah terhadap Audit pada scope yang tidak berubah menunjukkan BMKG 6.967, PVMBG 6.640 dan SATELIT 875 cocok dengan analytics. Itu bukan snapshot yang sama dengan tabel browser; nilai berbeda tidak menunjukkan inkonsistensi dengan sendirinya. Scope coastal/ALL pada beberapa scan tetap partial, sehingga kesetaraan seluruh katalog belum terbukti.
+
+\section{Hasil Sebaran dan Pemulihan}
+\begin{table}[htbp]\centering\small
+\begin{tabular}{@{}lrrrrr@{}}
+\toprule Node & Replica record & Ownership & Load disk & Write normal & Write burst\\\midrule
+a & 15.477 & 74,7\% & 149,35 MiB & 26.553 & 32.167\\
+b & 14.091 & 77,4\% & 167,40 MiB & 34.101 & 40.229\\
+c & 15.373 & 74,7\% & 160,58 MiB & 33.200 & 39.545\\
+d & 16.601 & 73,2\% & 158,21 MiB & 31.142 & 34.972\\\bottomrule
+\end{tabular}
+\caption{Sebaran dari tiga capture berbeda: replica record pada 20.514 hazard \bukti{E04}, ownership/load nodetool sebelum fault \bukti{E05}, serta counter write pada jendela normal 300 s dan burst 299,8 s \bukti{E06}. Kolom-kolom ini tidak berasal dari satu snapshot atomik.}
+\end{table}
+Jumlah replica record adalah 61.542 atau tiga kali 20.514 hazard. Angka tersebut dihitung dari penempatan natural replica, bukan sensus fisik SSTable. Load nodetool merupakan total disk yang dilaporkan, bukan byte payload kanonik saja. Counter write mencakup mutasi/replikasi dan aktivitas sumber lain, sehingga bukan throughput event bisnis. Porsi write normal 21,2--27,3\% dan saat burst 21,9--27,4\% menunjukkan pekerjaan tetap tersebar.
+
+Burst latihan menambah 300 gempa Laut Banda. Seluruh 300 ditemukan, dengan salinan per node a=213, b=221, c=229, d=237 (total 900). Hash tidak memusatkan semua gempa satu wilayah pada satu node. Dataset historis resmi belum tersedia, sehingga ini bukti latihan tentang ketimpangan, bukan validasi katalog asisten.
+
+Fault disk dibatasi pada direktori Cassandra anggota di bnpb-c. Semua 146.960 identitas baseline masih ditemukan setelah repair; hasil akhir memuat 148.099 identitas. Sebanyak 900 hazard baru diingest selama fault. Perbedaan total 1.139 mencakup seluruh jendela sebelum/sesudah, sehingga tidak disamakan dengan 900 pada jendela fault. Backup lokal lama dipertahankan offline dan tidak digunakan untuk recovery \bukti{E07}.
+
+Pengujian memerlukan intervensi operator pada startup budget dan replacement intent. Recorder awal timeout; repair diselesaikan dan diamati lewat continuation. Dari 548 pembacaan publik, 545 HTTP 200 dan tiga HTTP 502; 489 partial, p95 1,5695 s, maksimum 5,3913 s. Jadi survival identitas terbukti untuk scope ini, tetapi semua-request-terjawab dan replacement otonom belum terpenuhi. Empat anggota kembali UN setelah repair; kehilangan node berikutnya belum diuji.
+
+\section{Bukti per Kriteria dan Batasan}
+\begin{longtable}{@{}P{.9cm}P{7.2cm}P{7.3cm}@{}}
+\toprule No. & Bukti yang tersedia & Status dan batas interpretasi\\\midrule\endhead
+1 & 20.514 hazard; tiga salinan/record; empat node; \bukti{E04,E05}. & Terbukti pada katalog live latihan; katalog historis resmi dan sensus disk independen belum ada.\\
+2 & Counter write normal/burst dan 300 gempa satu wilayah \bukti{E06}. & Beban tersebar; pengaruh setiap sumber tidak diisolasi dari counter agregat.\\
+3 & Traversal halaman terurut, perbandingan FULL/summary \bukti{E09}. & Traversal berbatas lulus; tidak mengklaim snapshot seluruh katalog saat ada write.\\
+4 & Tidak ada identitas baseline hilang pada scoped fault \bukti{E07}. & Seluruh worker tidak dihapus; tiga 502 menggagalkan klaim semua request terjawab. Checksum resmi belum tersedia.\\
+5 & Disk aktif kosong kembali menjadi anggota; 900 ingest saat fault. & Pemulihan berhasil dengan intervensi; jalur replacement intent baru belum diuji live ulang.\\
+6 & Empat UN dan full repair termasuk Paxos. & Redundansi nominal kembali; fault kedua belum dijalankan.\\
+7 & Lima kategori, time series/severity/area, warning partial; perbandingan beberapa scope \bukti{E08,E10}. & Dashboard tersedia. Kesetaraan seluruh katalog coastal/ALL saat fault masih terbatas oleh scan partial.\\\bottomrule
+\end{longtable}
+\sumber{\code{internal/storage/cassandra/canonical.go}, \code{audit.go}, \code{analytics.go}, \code{cassandra.go}; \code{docs/m2-partial-reads.md}, \code{docs/m2-analytics.md}; indeks bukti infrastruktur 22 November.}

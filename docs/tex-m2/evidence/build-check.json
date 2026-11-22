@@ -1,0 +1,13 @@
+{
+  "report_date": "2026-11-22",
+  "pages": 43,
+  "pdf_bytes": 549993,
+  "pdf_sha256": "a328f80b4280fb2647b62910edb762cfd7e4af01b7d1d431f0fa971eb2c73685",
+  "source_artifacts_verified": 70,
+  "evidence_groups": 31,
+  "unresolved_references": 0,
+  "overfull_boxes": 0,
+  "replacement_characters": 0,
+  "visual_review": "Cover, architecture, deployment, tables, continued pages, and AI form inspected from rendered PDF.",
+  "application_tests_rerun": false
+}

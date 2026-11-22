@@ -1,0 +1,555 @@
+{
+  "report_date": "2026-11-22",
+  "scope": "Existing file inspection only; no live cluster or load test run.",
+  "path_root": "Parent directory containing services and infrastructure checkouts",
+  "repository_heads": {
+    "services": "36303a78b617ad7da8b8f6110e512e11e2a768c2",
+    "infrastructure": "17844392707183a303f63c6c84d1c3c5c4fb245c",
+    "Tugas-Besar-AAT-M1": "36303a78b617ad7da8b8f6110e512e11e2a768c2"
+  },
+  "m1_baseline": {
+    "implementation": "122ca7b",
+    "evidence": "4a1973b"
+  },
+  "deployed_aggregator": "d7739703983c5bb539988d159ed13644eb546ba9",
+  "evidence": [
+    {
+      "id": "E01",
+      "title": "Deklarasi host fisik dan node",
+      "artifacts": [
+        {
+          "path": "infrastructure/docs/evidence/m2-required-scenarios/topology.json",
+          "bytes": 1096,
+          "sha256": "76076364737550192ebc2b10941b38835c4954431f37874c40d20d09ccd97b11"
+        }
+      ]
+    },
+    {
+      "id": "E02",
+      "title": "Kondisi akhir dan verifikasi snapshot 18",
+      "artifacts": [
+        {
+          "path": "infrastructure/docs/evidence/m2-required-scenarios/deployment/final-state-20261122.json",
+          "bytes": 162617,
+          "sha256": "832fd1e78b4a8b5e3b2f15cbd0f1712d36fff3f9b4dfe722a7700455e738529c"
+        },
+        {
+          "path": "infrastructure/docs/evidence/m2-required-scenarios/deployment/snapshot-18.json",
+          "bytes": 9547,
+          "sha256": "a5ae5fd8949d6f41fa4e25806e19c0b6d0821c8ac212f6d2d1722d72efb4f0f6"
+        }
+      ]
+    },
+    {
+      "id": "E03",
+      "title": "Platform empat kernel dan volume lokal",
+      "artifacts": [
+        {
+          "path": "infrastructure/docs/evidence/m2-k3s-bootstrap/platform-contract.json",
+          "bytes": 13144,
+          "sha256": "1ccd48c7b963b0091237feb3124908fd96243744d9285bfacaa734ef3ea9ad92"
+        }
+      ]
+    },
+    {
+      "id": "E04",
+      "title": "Penempatan 20.514 hazard live",
+      "artifacts": [
+        {
+          "path": "infrastructure/docs/evidence/m2-required-scenarios/problem1/live-canonical-placement.json",
+          "bytes": 4710,
+          "sha256": "cd9756260c892b04570f6268f4a433857f219c8b4807737b5d0fb6fda035f694"
+        }
+      ]
+    },
+    {
+      "id": "E05",
+      "title": "Ring dan estimasi storage sebelum fault",
+      "artifacts": [
+        {
+          "path": "infrastructure/docs/evidence/m2-required-scenarios/problem1/placement-before-loss-20261122.json",
+          "bytes": 6923,
+          "sha256": "e0bf6457d58110495a5afa82a135ee9b4c3943beb6e556109c931deac0c94c1c"
+        }
+      ]
+    },
+    {
+      "id": "E06",
+      "title": "Counter normal dan burst 300 gempa",
+      "artifacts": [
+        {
+          "path": "infrastructure/docs/evidence/m2-required-scenarios/problem1/burst-load-practice.json",
+          "bytes": 3092,
+          "sha256": "48cf5d3b3c54b62e07d29c09a08334eb420c895e41e088c5594480d8e3006538"
+        }
+      ]
+    },
+    {
+      "id": "E07",
+      "title": "Scoped disk loss dan survival identitas",
+      "artifacts": [
+        {
+          "path": "infrastructure/docs/evidence/m2-required-scenarios/problem1/storage-loss-20261122/summary.json",
+          "bytes": 1743,
+          "sha256": "ebca31920fee90ff3e5002728e3644725a81b20c6b0830fa22503396f3ca14ad"
+        },
+        {
+          "path": "infrastructure/docs/evidence/m2-required-scenarios/problem1/storage-loss-20261122/audit-after.json",
+          "bytes": 2026,
+          "sha256": "0b943d234eb21177ab3a2e3cae78bd5efc2a5c96af2c49fec96e50a2529f3c52"
+        }
+      ]
+    },
+    {
+      "id": "E08",
+      "title": "Transkripsi browser analytics lengkap",
+      "artifacts": [
+        {
+          "path": "infrastructure/docs/evidence/m2-required-scenarios/problem1/browser-analytics-20261122.json",
+          "bytes": 1329,
+          "sha256": "6e9ca764d68841484ffac649d0cb8d16b851ff4b3f01a036ee131ca4c1bad257"
+        }
+      ]
+    },
+    {
+      "id": "E09",
+      "title": "Pagination global dan FULL/summary",
+      "artifacts": [
+        {
+          "path": "infrastructure/docs/evidence/m2-required-scenarios/list/bounded-ordering-0b58a62-v2.json",
+          "bytes": 4730,
+          "sha256": "ff06ac6818de370f358bb2f8f10e166c43b92f5bfb11ff7becf124672b45ea17"
+        }
+      ]
+    },
+    {
+      "id": "E10",
+      "title": "Analytics versus Audit dan degradasi browser",
+      "artifacts": [
+        {
+          "path": "infrastructure/docs/evidence/m2-required-scenarios/problem1/analytics-after-7ccc9d0/analytics-audit-20261122.json",
+          "bytes": 25933,
+          "sha256": "2d630557b25a08c0eabd560157cbc9506fba0edada82ee5eff4edeeeb9ac4325"
+        },
+        {
+          "path": "infrastructure/docs/evidence/m2-required-scenarios/problem1/browser-post-repair-20261122.json",
+          "bytes": 1399,
+          "sha256": "eaaf57dd5cbb2673775556044c9c5e4fb40cf864b03c7302a59a24f988302bf6"
+        },
+        {
+          "path": "infrastructure/docs/evidence/m2-required-scenarios/problem1/audit-d773970/baseline.json",
+          "bytes": 3463,
+          "sha256": "8bc9ce08289cca350fdd48af0e298f2862114009a162a2351b6a95f2dc797d33"
+        }
+      ]
+    },
+    {
+      "id": "E11",
+      "title": "Failover BMKG dan log polling",
+      "artifacts": [
+        {
+          "path": "infrastructure/docs/evidence/m2-required-scenarios/p2/leader-failover-bmkg.json",
+          "bytes": 6752,
+          "sha256": "da304502e9226422be52647516307640c1dac245bd4a399959aaa94d75f33fb0"
+        }
+      ]
+    },
+    {
+      "id": "E12",
+      "title": "Clock skew node c",
+      "artifacts": [
+        {
+          "path": "infrastructure/docs/evidence/m2-required-scenarios/p2/clock-skew-bnpb-c.json",
+          "bytes": 66102,
+          "sha256": "93a2db1698e5a7313aae63f0134000fcd6596dd41acc624cf5b4081fadd781b8"
+        }
+      ]
+    },
+    {
+      "id": "E13",
+      "title": "Freeze/resume node c",
+      "artifacts": [
+        {
+          "path": "infrastructure/docs/evidence/m2-required-scenarios/p2/freeze-resume-bnpb-c.json",
+          "bytes": 15286,
+          "sha256": "1e8ee20c2a79309a84f9089497b9baa1ea1c93a8e898ea7930d766c7cfd80ae1"
+        }
+      ]
+    },
+    {
+      "id": "E14",
+      "title": "Scaling, discovery dan throughput 1/3 replika",
+      "artifacts": [
+        {
+          "path": "infrastructure/docs/evidence/m2-required-scenarios/p2/scaling-throughput-20261122.json",
+          "bytes": 1149811,
+          "sha256": "5f2ab4df29c289fee29e7cd318466cd1247c23a0c5e11ff283927db2b574e938"
+        }
+      ]
+    },
+    {
+      "id": "E15",
+      "title": "Pergantian versi saat load",
+      "artifacts": [
+        {
+          "path": "infrastructure/docs/evidence/m2-required-scenarios/p2/version-change-20261122.json",
+          "bytes": 700545,
+          "sha256": "9e3252aa344d1d06721101cfd76cac79cb9e156bb166fa39e9f90678913155c9"
+        }
+      ]
+    },
+    {
+      "id": "E16",
+      "title": "k6 ramp dan batas generator",
+      "artifacts": [
+        {
+          "path": "infrastructure/docs/evidence/m2-required-scenarios/p2/quick-load-20261122/report.json",
+          "bytes": 19986,
+          "sha256": "6a9c31ef3ab176a1e236779fe83af48ecfcd3ee1d25a317bc9af0a747a707a1a"
+        },
+        {
+          "path": "infrastructure/docs/evidence/m2-required-scenarios/p2/quick-load-20261122/README.md",
+          "bytes": 2509,
+          "sha256": "3a2fe8fc5ef408712fc306bfde5b35e4fb9a4a1fc785aeb761a9f0dc62f383ba"
+        }
+      ]
+    },
+    {
+      "id": "E17",
+      "title": "k6 400 VU/120 s dengan pembaruan token",
+      "artifacts": [
+        {
+          "path": "infrastructure/docs/evidence/m2-required-scenarios/p2/quick-load-20261122/corrected-report.json",
+          "bytes": 9114,
+          "sha256": "bc6dbd6a44844d8d59716f08c848b3655aa07a427b95b790a57a5bd54ad15d77"
+        }
+      ]
+    },
+    {
+      "id": "E18",
+      "title": "Arsip raw schema dan pemeriksaan hash",
+      "artifacts": [
+        {
+          "path": "infrastructure/docs/evidence/m2-required-scenarios/problem3/recovery-20261122/archival-and-replay.json",
+          "bytes": 5086,
+          "sha256": "ea10d38a0f51b6fc934f1f2e8581599dc76fcae53a3c2899566fe943e0186631"
+        }
+      ]
+    },
+    {
+      "id": "E19",
+      "title": "Replay 20 pesan dan pemeriksaan ulang",
+      "artifacts": [
+        {
+          "path": "infrastructure/docs/evidence/m2-required-scenarios/problem3/recovery-20261122/replay-enabled.json",
+          "bytes": 59323,
+          "sha256": "139d1221ede5b77b37a5f2ef340ff4556811534dd1ad519d7fcb43ec108cdb02"
+        }
+      ]
+    },
+    {
+      "id": "E20",
+      "title": "Durability 12 field reports",
+      "artifacts": [
+        {
+          "path": "infrastructure/docs/evidence/m2-required-scenarios/problem3/field-reports.json",
+          "bytes": 12654,
+          "sha256": "80550bf5cc0d6e92077a5119803d3e122a9c92bbd7080ee3def9ea08a25abad7"
+        }
+      ]
+    },
+    {
+      "id": "E21",
+      "title": "Otorisasi metadata dan raw Ops",
+      "artifacts": [
+        {
+          "path": "infrastructure/docs/evidence/m2-required-scenarios/problem3/operator-authorization.json",
+          "bytes": 792,
+          "sha256": "d4492ab5cf4952ac84ff68f356f70f901d4a92c1ae541d16a066b245037656ff"
+        },
+        {
+          "path": "infrastructure/docs/evidence/m2-required-scenarios/problem3/raw-authorization.json",
+          "bytes": 1183,
+          "sha256": "6b79aaddda5784cfc3ce3edc916aaa5111214e8cd5fbf299b91c125c1827aec6"
+        }
+      ]
+    },
+    {
+      "id": "E22",
+      "title": "Diagnosis load lintas host dan trace",
+      "artifacts": [
+        {
+          "path": "infrastructure/docs/evidence/m2-required-scenarios/p2/load-bottleneck-20261122/README.md",
+          "bytes": 5841,
+          "sha256": "6b4f5af40c00e0b564026223e36e728d9852899f3610fd002dc9c23e80b53830"
+        },
+        {
+          "path": "infrastructure/docs/evidence/m2-required-scenarios/p2/load-bottleneck-20261122/tempo-breakdown.json",
+          "bytes": 10747,
+          "sha256": "59639c256033135bc0c7137ae2e1b79f20dce7653b5d957909cb84d0fa54778e"
+        }
+      ]
+    },
+    {
+      "id": "E23",
+      "title": "Test engine satelit dan reconnect",
+      "artifacts": [
+        {
+          "path": "infrastructure/docs/evidence/m2-required-scenarios/problem4/focused-tests-20261122.txt",
+          "bytes": 1439,
+          "sha256": "4e1fe2094cef0f075d631cf9c06219acb78e96923368063e955769194e9c9c31"
+        }
+      ]
+    },
+    {
+      "id": "E24",
+      "title": "Observasi live satelit speed 60",
+      "artifacts": [
+        {
+          "path": "infrastructure/docs/evidence/m2-required-scenarios/problem4/live-observation-20261122.json",
+          "bytes": 38645,
+          "sha256": "1056df8fb0545298ba6330de4a3c12861d709c50391a152db52b323766aad38a"
+        }
+      ]
+    },
+    {
+      "id": "E25",
+      "title": "Cassandra crash sebelum checkpoint",
+      "artifacts": [
+        {
+          "path": "infrastructure/docs/evidence/m2-required-scenarios/problem4/cassandra-recovery-20261122.txt",
+          "bytes": 2169,
+          "sha256": "1558fecc12c82c37ab75ae12cd8423374284ab776c8c2268b853f731c70d3043"
+        }
+      ]
+    },
+    {
+      "id": "E26",
+      "title": "Kemajuan checkpoint satelit live",
+      "artifacts": [
+        {
+          "path": "infrastructure/docs/evidence/m2-required-scenarios/problem4/live-checkpoints-20261122.json",
+          "bytes": 1092,
+          "sha256": "1fd4a24858c0f4b56211577ff43ff39f82f1211a97eefecfafdadcd7db8a275c"
+        }
+      ]
+    },
+    {
+      "id": "E27",
+      "title": "Karantina coastal, priority load, percobaan awal",
+      "artifacts": [
+        {
+          "path": "infrastructure/docs/evidence/m2-required-scenarios/problem5/practice-recovery-20261122.json",
+          "bytes": 469711,
+          "sha256": "0d7f6099868a0ff70cecce5e3e15e4ff870c539f59c72af8c1c2635494fc3531"
+        }
+      ]
+    },
+    {
+      "id": "E28",
+      "title": "Sensor network outage dan recovery otomatis",
+      "artifacts": [
+        {
+          "path": "infrastructure/docs/evidence/m2-required-scenarios/problem5/practice-network-outage-20261122.json",
+          "bytes": 824537,
+          "sha256": "e676cd97c47bc1e9f135464e422ab10febd73abc4bba51a621d45d369c7e8e46"
+        }
+      ]
+    },
+    {
+      "id": "E29",
+      "title": "Journal lengkap dan signature tiga critical",
+      "artifacts": [
+        {
+          "path": "infrastructure/docs/evidence/m2-required-scenarios/problem5/critical-reconciliation-20261122/report.json",
+          "bytes": 2690,
+          "sha256": "8c59643363a31cd8144626f8ff495596698a88d9227ac2909302625151eeb9b6"
+        }
+      ]
+    },
+    {
+      "id": "E30",
+      "title": "Critical journal setelah recovery storage",
+      "artifacts": [
+        {
+          "path": "infrastructure/docs/evidence/m2-required-scenarios/problem5/critical-reconciliation-20261122/post-storage-comparison.json",
+          "bytes": 468,
+          "sha256": "d0d2b53bcc13be1fe15812668ecc782c9d99e6687debe4bcacba2617b143247c"
+        }
+      ]
+    },
+    {
+      "id": "E31",
+      "title": "Trace 45 span lintas enam layanan",
+      "artifacts": [
+        {
+          "path": "infrastructure/docs/evidence/m2-required-scenarios/telemetry/critical-trace-dc95832b.json",
+          "bytes": 19876,
+          "sha256": "e5359c18b1c2656bf3af1c830c5923209a517458130a6c57361a2c230d1a5264"
+        }
+      ]
+    }
+  ],
+  "sources": [
+    {
+      "path": "IF4031 - Tugas Besar - M2.pdf",
+      "bytes": 2371679,
+      "sha256": "cce1dfde707842852576668429563dc944dc19f2771062005b3588d526ff38b6"
+    },
+    {
+      "path": "Tugas-Besar-AAT-M1/docs/tex/main.tex",
+      "bytes": 1501,
+      "sha256": "d0a0d952dceaf51dc45506942f534d8eb267d635df749a251c4244facc923706"
+    },
+    {
+      "path": "Tugas-Besar-AAT-M1/docs/tex/IF4031_M1_nasigoreng.pdf",
+      "bytes": 3448583,
+      "sha256": "03e3c84cd1ce19a8b819fddc9f04c54cddcc9743777458389c0f4c66a2d1b4f1"
+    },
+    {
+      "path": "Tugas-Besar-AAT-M1/docs/tex/contents/01-sistem.tex",
+      "bytes": 12843,
+      "sha256": "4f7cac83f0268c3108251ed6a08b41da4df7f9f1b10ed443924429701260a400"
+    },
+    {
+      "path": "services/README.md",
+      "bytes": 26026,
+      "sha256": "50564f7df92e6dcce8683269f3a001fdc147fb5c4d1fe13f00ec807e802b38df"
+    },
+    {
+      "path": "infrastructure/README.md",
+      "bytes": 11870,
+      "sha256": "3c050f002bbcfdeb5fed2d14793187d69170825842bf1cd85022e6b07fbe57c4"
+    },
+    {
+      "path": "infrastructure/docs/m2-report-evidence-2026-11-22.md",
+      "bytes": 19256,
+      "sha256": "f62cb59babf2c1dfc38c7dffb7cef45ccaf1bb2d0cbd9609255a2b340485682e"
+    },
+    {
+      "path": "infrastructure/m2/sources.yaml",
+      "bytes": 2668,
+      "sha256": "67f8f41a89fbb4d23deb386e55e780fbd59ec9fa43aaacfe7799449bcbdce4b5"
+    },
+    {
+      "path": "infrastructure/m2/scaling.md",
+      "bytes": 2463,
+      "sha256": "53e67a5fb43a901d53496a163a4805f53fde0fe5250c98b8d92419488b343a51"
+    },
+    {
+      "path": "infrastructure/m2/k3s/nodes/README.md",
+      "bytes": 7472,
+      "sha256": "6591ce7b170f736ecedff97a7e074d9962008c402792c574d0e39ad8e68f3b56"
+    },
+    {
+      "path": "services/docs/m2-write-authority.md",
+      "bytes": 6577,
+      "sha256": "275e2c2f2779e10b122dc6433fe385393bf8aaa2b663d96c0262dd4512fd81f8"
+    },
+    {
+      "path": "services/docs/m2-audit.md",
+      "bytes": 2883,
+      "sha256": "06a09a12ea9c974764e323931f258ecbe669d6314d0e99f35eed8eddb46c4a4d"
+    },
+    {
+      "path": "services/docs/m2-analytics.md",
+      "bytes": 3545,
+      "sha256": "1c0439e3e3bdf31024c49d7bcda89ecb256b01cde181fdcf43c9012bb2de7ec4"
+    },
+    {
+      "path": "services/docs/m2-partial-reads.md",
+      "bytes": 2173,
+      "sha256": "1be27f91bef0c9fa45aa3da343d1ca2c4ad49c4fdb6005a3a419bc01d97f57bb"
+    },
+    {
+      "path": "services/docs/m2-problem-3.md",
+      "bytes": 9330,
+      "sha256": "55097d99122d509ed6b500ca849627a008f29ed01eb25d5faf6994898cbdfd34"
+    },
+    {
+      "path": "services/docs/m2-problems-4-5.md",
+      "bytes": 17324,
+      "sha256": "2c1d284f4df81fba56bf041ff2bf99776a841961c6885d9abf6ef6fb9151f729"
+    },
+    {
+      "path": "services/docs/m2-satellite-state.md",
+      "bytes": 5873,
+      "sha256": "e0b9623c0019edc0ebee825cfe7c98eabc97228575df458d53915e89c6da44b5"
+    },
+    {
+      "path": "services/docs/m2-disk-state-plan.md",
+      "bytes": 7036,
+      "sha256": "82ca2d58d39619a8346576f41ee620e88938bb39866aae1093a9c0665ec78554"
+    },
+    {
+      "path": "services/docs/m2-streaming-snapshots.md",
+      "bytes": 2807,
+      "sha256": "c7240e76116e6e0d3643c79bfafd881c918e1e4552267f1564c9c98aa8557dc7"
+    },
+    {
+      "path": "services/docs/m2-critical-delivery.md",
+      "bytes": 12439,
+      "sha256": "fa1614b463ed8e641aa284f8677f70b5497b370b002f3d2d470533cf56c09f85"
+    },
+    {
+      "path": "services/docs/m2-read-admission.md",
+      "bytes": 4841,
+      "sha256": "f39094a594d08d25d4b53cdf65e45698c8a811f7ed839e5aac8fbdb87de6f68b"
+    },
+    {
+      "path": "services/docs/m2-stream-admission.md",
+      "bytes": 5254,
+      "sha256": "d0f3b757a5d228201f6b3d575be46ce8734cdd180f9facf252eb5e9f2194d88d"
+    },
+    {
+      "path": "services/services/aggregator/internal/config/config.go",
+      "bytes": 13196,
+      "sha256": "381f663512a1e345f329caa5fa3b0ec88ffd7753d5fd3a2d42f7ce5eccf9838f"
+    },
+    {
+      "path": "services/services/aggregator/internal/storage/cassandra/canonical.go",
+      "bytes": 1628,
+      "sha256": "99559239547444d6f7bb97288a74fb4da0c48af3f5fd995b9e2eba1171fb6345"
+    },
+    {
+      "path": "services/services/aggregator/internal/storage/cassandra/cassandra.go",
+      "bytes": 15335,
+      "sha256": "ccdb20be9e3c7d1bdeef54548abacfd692899dac5feb126084b78fe8a6a349a2"
+    },
+    {
+      "path": "services/services/aggregator/internal/storage/cassandra/authority.go",
+      "bytes": 7897,
+      "sha256": "0984b813c655b61bfb49fbfd49c9a66de55112a4883e521834c7ee97c13da807"
+    },
+    {
+      "path": "services/services/aggregator/internal/storage/cassandra/audit.go",
+      "bytes": 11181,
+      "sha256": "fa331a991ef58437f89f433f0b3a8efb148aced4e93b51fc3e5f78810c57cb2c"
+    },
+    {
+      "path": "services/services/aggregator/internal/storage/cassandra/analytics.go",
+      "bytes": 2518,
+      "sha256": "2a6851a30a490ab47a87eb2baae96206f0d260073c86dadc0d6b6cec9dbf8425"
+    },
+    {
+      "path": "services/services/aggregator/internal/m2/capture.go",
+      "bytes": 1601,
+      "sha256": "302be4717354464b828ac159ab88cf8f594dc2ab0da0c9dd32963e4b9b8675af"
+    },
+    {
+      "path": "services/services/aggregator/internal/ingest/pipeline_test.go",
+      "bytes": 7449,
+      "sha256": "9602180716a9087d472651399d1ce10278e2f0887af044a37fa3b43fd7be2aff"
+    },
+    {
+      "path": "services/services/api-gateway/internal/config/config.go",
+      "bytes": 2238,
+      "sha256": "ba70654122741b3d7e97972a82b7080b2e75bc67fdf148eaafd87b88cc5e9aaa"
+    },
+    {
+      "path": "services/tests/load/aggregator.js",
+      "bytes": 3888,
+      "sha256": "6b427376dc15160f43830c76072f32035068adcfe3a697eb0151c488313ae4d1"
+    }
+  ]
+}

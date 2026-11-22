@@ -1,0 +1,81 @@
+\chapter{P2: Dua Nakhoda, Satu Kapal}
+\section{Identifikasi Masalah}
+Beberapa replika dapat menjalankan polling yang sama, sehingga terjadi \emph{duplicate work} dan commit ganda. Lease mengatur mutual exclusion dalam jangka waktu tertentu, tetapi penghentian timer lokal tidak mencegah proses lama melanjutkan kerja setelah freeze. Persoalan tersebut dikenal sebagai \emph{stale leader}, \emph{split brain}, dan kebutuhan \emph{fencing}. Pembatasan hak harus ditegakkan oleh pihak yang menerima operasi, bukan hanya kepercayaan diri pemegang lock. Konsep sequencer pada Chubby memisahkan kepemilikan lock dari validitas permintaan tertunda~\cite{chubby}.
+
+\section{Lease dan Fencing Berbasis Storage}
+Setiap job mempunyai lease tersendiri: BMKG, PVMBG, satellite-stream dan coastal-poller. Identitas term memadukan pod dan suffix acak, sehingga memperoleh lease kembali pada pod yang sama tidak menghidupkan konteks lama. Akuisisi menggunakan epoch yang naik monoton. Waktu kedaluwarsa dinilai menggunakan waktu server Cassandra, bukan wall clock Aggregator.
+
+Sebelum job baru berjalan, otoritas epoch/holder/expiry dipasang pada seluruh partisi mutasi yang diperlukan: 16 kanonik, 32 inbox, 16 journal/checkpoint dan satu source state. Empat worker berbatas menjalankan barrier, kemudian lease divalidasi kembali. Write melakukan conditional batch satu partisi yang sekaligus memeriksa authority dan menyimpan perubahan. Epoch yang lebih tinggi menolak writer lama; release memasang versi pencabutan ganjil sehingga aktivasi tertunda dari term yang sama tidak memulihkan izin.
+
+Pemeriksaan sebelum HTTP fetch mengurangi permintaan dari term yang sudah diketahui kedaluwarsa. Namun HTTP upstream tidak berada dalam transaksi Cassandra. Proses dapat terhenti setelah pemeriksaan atau respons dapat hilang; karena itu kode tidak menjanjikan exactly-once untuk setiap paket HTTP. Pembuktian fetch tunggal tetap membutuhkan log upstream, sedangkan jaminan efek kanonik memerlukan fencing dan deduplikasi.
+
+Pergeseran jam pada node aplikasi tidak langsung mengubah perhitungan kedaluwarsa berdasarkan database. Freeze lebih lama dari TTL membuat writer lama tidak berhak; term pengganti memasang epoch baru sebelum mulai menulis. Karena database sendiri juga berjalan di node yang jamnya dapat berubah, sinkronisasi jam storage tetap bagian asumsi. Bukti latihan yang menolak stale writer tidak diperluas menjadi teorema toleransi pergeseran jam arbitrer semua replika.
+
+\begin{table}[htbp]\centering
+\begin{tabularx}{\textwidth}{@{}P{5cm}P{2.4cm}Y@{}}
+\toprule Parameter & Nilai & Pertimbangan\\\midrule
+Lease TTL deployment M2 & 30 s & Memberi ruang untuk barrier lintas 65 partisi pada jaringan tailnet. Default kode tanpa override adalah 15 s.\\
+Renew interval & 5 s & Beberapa kesempatan renew sebelum expiry; lebih sering menambah koordinasi.\\
+Acquire retry interval & 5 s & Mengurangi polling lock; menambah waktu failover dibanding retry rapat.\\
+Fence margin & 5 s & Pengaman operasional menjelang expiry; bukan pengganti conditional write.\\
+Release cooldown & 2 $\times$ TTL & Mengurangi perebutan ulang; default maksimum 5 menit.\\
+HPA normal & min 3, max 5 & Kapasitas adaptif tersedia, namun scaling saja tidak membuktikan throughput naik linear.\\\bottomrule
+\end{tabularx}
+\caption{Nilai \code{m2/sources.yaml} dan default kode \code{internal/config/config.go}. Failover aktual juga bergantung pada quorum, barrier, scheduler dan jaringan.}
+\end{table}
+
+\section{Alternatif dan Alasan Pemilihan}
+\begin{longtable}{@{}P{3.6cm}P{5.3cm}P{6.6cm}@{}}
+\toprule Pendekatan & Kelebihan & Alasan pemilihan / penolakan\\\midrule\endhead
+Leader statis per sumber & Sangat sederhana, tidak ada kontensi lock. & Tidak pulih otomatis bila node pemilik mati; pembagian ulang memerlukan operator.\\
+Kubernetes Lease saja & Memakai API koordinasi yang sudah tersedia. & Lease tidak otomatis melindungi write Cassandra dari proses yang kembali setelah freeze. Memerlukan fencing di store pula.\\
+Database lease + fencing (dipilih) & Otoritas dan perubahan data diperiksa pada boundary persistensi yang sama. & Barrier/Paxos menambah latency; quorum hilang menghentikan write. Safety diprioritaskan terhadap liveness.\\
+Semua instance polling + dedup & Pembaca aktif dapat mengambil alih segera. & Deduplikasi storage tidak menghindari request berlipat ke upstream, sehingga tidak memenuhi kriteria fetch tunggal.\\\bottomrule
+\end{longtable}
+
+\section{Routing, Scaling dan Rolling Update}
+Replika Aggregator awal tersebar pada node berbeda. Endpoint discovery gRPC hanya menyertakan pod Ready. Readiness bergantung pada konektivitas store, sedangkan liveness tidak digunakan untuk me-restart proses hanya karena dependensi terganggu. Gateway melakukan retry terbatas terhadap pembacaan idempoten saat drain. Deployment mengatur rollout dengan nol pod unavailable, tetapi konfigurasi ini tidak cukup menjamin tidak ada request gagal pada semua dependensi.
+
+Helper \code{infrastructure/m2/scale.py} menonaktifkan arah HPA sementara, mengubah replika 3 $\rightarrow$ 5 $\rightarrow$ 2, memeriksa EndpointSlice dan distribusi node, menahan setiap tahap 40 detik, lalu memulihkan konfigurasi awal. Skenario ini harus berjalan di dalam jendela load yang mencakup waktu konvergensi, bukan sekadar total 120 detik yang berakhir sebelum seluruh transisi selesai.
+
+\section{Konfigurasi Uji Beban dan Hasil}
+Harness \code{tests/load/aggregator.js} memiliki profil M2: \code{constant-vus}, default 10.000 VU, fase ukur 120 detik, warmup 10 detik, dan kombinasi 60\% list, 30\% detail, 10\% source status. Request menuju edge publik dan identitas diperoleh melalui jalur autentikasi. Threshold membedakan penolakan 429 dengan \code{Retry-After} dari kegagalan tidak terkendali; kegagalan token tetap dilaporkan. Contoh perintah konfigurasi, yang \textbf{belum menjadi hasil 10.000 VU}, adalah:
+\begin{lstlisting}
+k6 run -e LOAD_PROFILE=m2 -e LOAD_DURATION=240s \
+  tests/load/aggregator.js
+python m2/scale.py --context k3s-dev \
+  --output .cache/m2/scale-evidence.json --hold-seconds 40
+\end{lstlisting}
+Perintah k6 dijalankan dari repository layanan; helper scaling dari repository infrastruktur. Nilai 240 s memberi ruang lebih dari 120 s untuk transisi, namun tetap harus diperiksa terhadap waktu konvergensi aktual. Laporan ini memakai hasil yang telah tersimpan dan tidak menjalankan perintah beban tersebut.
+
+\begin{longtable}{@{}P{3.4cm}P{6.2cm}P{5.9cm}@{}}
+\toprule Uji & Hasil tersimpan & Interpretasi\\\midrule\endhead
+Failover BMKG & Pengganti mengambil alih dalam 31,9 s \bukti{E11}. & Di bawah 60 s pada latihan; kelengkapan historis seluruh sumber belum dibandingkan referensi resmi.\\
+Clock skew +45/-30 s & Refusal fencing, tidak terlihat concurrent accepted write; gap polling sekitar 99/76 s \bukti{E12}. & Safety dalam window teramati; liveness menurun dan gap melewati 60 s.\\
+Freeze/resume & Skenario c menunjukkan refusal writer lama \bukti{E13}. & Skenario b terdahulu juga membekukan mock sehingga tidak dipakai sebagai bukti bersih.\\
+Throughput 1 vs 3 & 27,73/s vs 32,60/s pada window 45 s; fase satu replika memiliki 14 HTTP 503 \bukti{E14}. & Rasio 1,1756 (dibulatkan 1,176), di bawah target 2,0. Workload 40 worker tidak setara 10.000 VU.\\
+Rollout versi nyata & \code{c6c3341 -> 7ccc9d0}; 10.796 HTTP 200, 112 HTTP 502, 180 HTTP 503, 6 HTTP 403, 5 kegagalan token/setup \bukti{E15}. & Target tanpa kegagalan tidak tercapai. Error terjadi sebelum dan selama transisi; semuanya tetap dicatat.\\
+k6 50 VU / 15 s & 359/359 HTTP 200; p95 2,415 s \bukti{E16}. & Sampel singkat, bukan bukti sustained capacity.\\
+k6 100 VU / 15 s & 520/520 HTTP 200; p95 3,540 s \bukti{E16}. & Nol error pada sampel ini tidak memenuhi durasi/beban target.\\
+k6 400 VU / 120 s & 3.622 request API; 34 HTTP 200, 3.588 status 0; error 99,06\%; p95 4,947 s \bukti{E17}. & Token diperbarui, tetapi token broker lokal mengalami connection abort. Hasil gagal dan terpengaruh generator; tidak mengisolasi kapasitas layanan.\\\bottomrule
+\end{longtable}
+
+Uji 400 VU memakai request BMKG summary lima item, think time 1 s, timeout 5 s, bukan komposisi harness utama di atas. Metrik API dipisahkan dari request token lokal. Upaya sebelumnya yang tidak memperbarui JWT 60 detik tersimpan sebagai bukti terpengaruh kedaluwarsa autentikasi. Langkah 800 VU ditolak oleh guard cadangan memori generator; itu kebijakan konservatif, bukan pengukuran kapasitas maksimum perangkat.
+
+Diagnosis dari host fisik kedua dan tiga entry node menemukan rentang sukses sekitar 30--40 request/s pada sampel singkat. Trace menunjukkan pertukaran token per request: p50 sekitar 0,66 s pada 100 VU dan 4,27 s pada window 200--400 VU, dengan p95 mencapai timeout 5 s. Jalur list menambah sekitar 0,6--1,5 s untuk fanout quorum dan pembacaan kesegaran. Sekitar 22\% shard read dalam sampel trace mencapai deadline 1 s \bukti{E22}.
+
+Penempatan Zitadel/Auth DB di VM b dengan 2 vCPU dan kurva latensi mengindikasikan kontensi CPU, tetapi CPU tidak diukur langsung karena sampel metrics-server stale. Perbaikan yang mungkin adalah cache JWT dengan konsekuensi jendela revokasi, penyebaran Auth, paralelisasi freshness reads, dan penolakan overload lebih cepat. Semua masih kandidat; laporan tidak memasukkannya sebagai implementasi yang selesai.
+
+\section{Bukti per Kriteria dan Batasan}
+\begin{longtable}{@{}P{.9cm}P{7.2cm}P{7.3cm}@{}}
+\toprule No. & Bukti & Status\\\midrule\endhead
+1 & Replika siap dan discovery pada tiga node berbeda \bukti{E14}. & Teramati pada tahap tiga replika; penempatan dapat berubah oleh HPA.\\
+2 & Log upstream/poller dan fencing pada drill BMKG \bukti{E11}. & Bukti berbatas; tidak membuktikan tidak ada gap/permintaan ganda di seluruh riwayat.\\
+3 & Failover 31,9 s \bukti{E11}. & Target waktu tercapai pada latihan tersebut; referensi kontinuitas resmi belum tersedia.\\
+4 & Skew +45/-30 s \bukti{E12}. & Writer lama ditolak dalam scope bukti; gap polling tetap dilaporkan.\\
+5 & Freeze/resume node c \bukti{E13}. & Fencing term lama teramati.\\
+6 & Scaling berbatas dan k6 sampai 400 VU \bukti{E14,E16,E17}. & 10.000 VU selama 120 s dengan transisi 3--5--2 belum dilaksanakan; hasil 400 VU gagal.\\
+7 & 32,60/27,73 = 1,176 \bukti{E14}. & Target minimal 2,0 belum tercapai.\\
+8 & Rollout dengan error 502/503/403 dan setup \bukti{E15}. & Target tanpa request gagal belum tercapai.\\\bottomrule
+\end{longtable}
+\sumber{\code{docs/m2-write-authority.md}; \code{internal/storage/cassandra/authority.go}; \code{internal/leader/}; \code{m2/sources.yaml}; \code{tests/load/aggregator.js}.}

@@ -1,0 +1,21 @@
+\chapter{Indeks Bukti dan Sumber Implementasi}\label{app:evidence}
+Path pada tabel menggunakan root workspace yang memuat \code{services/} dan \code{infrastructure/}. Manifest lengkap \code{docs/tex-m2/evidence/manifest.json} menyimpan SHA-256, ukuran, serta lokasi sumber. \code{measurements.json} menyalin field pengukuran terpilih untuk memudahkan pemeriksaan; ini bukan run pengujian baru. Indeks berikut juga memuat satu bukti pendamping bila satu kriteria membutuhkan lebih dari satu artefak.
+
+Tidak ada file screenshot M2 yang diekspor pada bukti browser yang tersedia. Karena itu angka browser disajikan sebagai tabel transkripsi dengan timestamp, bukan gambar UI yang direka. Bukti M1 pada \code{docs/tex/evidence/} tetap historis dan tidak diberi label hasil M2.
+\input{evidence/index}
+
+\section{Peta Kode yang Mendukung Penjelasan}
+Semua path berikut relatif terhadap repository \code{services}, kecuali dinyatakan lain.
+\begin{longtable}{@{}P{2cm}P{8cm}P{5.5cm}@{}}
+\toprule Cakupan & Path & Peran\\\midrule\endhead
+P1 & \code{services/aggregator/internal/storage/cassandra/} & Canonical, audit, analytics, list, authority dan proyeksi.\\
+P2 & \code{services/aggregator/internal/leader/}; \code{services/aggregator/internal/config/config.go} & Term, renewal, pembatalan, pemilihan dan konfigurasi lease.\\
+P3 & \code{services/aggregator/internal/ingest/}; \code{services/aggregator/internal/problem3/} & Parser/validasi, inbox/replay dan field-report worker.\\
+P4 & \code{services/aggregator/internal/m2/} & SSE, graf disk, fire lineage, snapshot dan recovery.\\
+P5 & \code{services/aggregator/internal/criticaldelivery/}; \code{services/aggregator/cmd/critical-receiver/} & Delivery, receiver receipt, export dan rekonsiliasi.\\
+Gateway & \code{services/api-gateway/internal/server/} & Role/scopes, prioritas dan lifetime admission HTTP/SSE.\\
+Consumer & \code{services/event-live-feed/}; \code{services/danger-notification/}; \code{services/webhook-provider/} & Replay, deduplikasi, push/webhook dan proyeksi.\\
+Frontend & \code{services/frontend/src/} & Analitik seluruh katalog, warning partial dan tampilan hazard.\\
+Load & \code{tests/load/aggregator.js}; \code{tests/load/lib.js} & Profile M2, status counter dan autentikasi generator.\\
+Platform & Infrastruktur: \code{m2/}, \code{charts/}, \code{environments/}, \code{gitops/} & Topologi, Cassandra, source config, deployment, Secret/ConfigMap dan policy.\\\bottomrule
+\end{longtable}

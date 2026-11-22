@@ -1,0 +1,70 @@
+\chapter{P3: Surat dari Tetangga}
+\section{Identifikasi Masalah}
+Perubahan field adalah persoalan \emph{schema evolution} dan kompatibilitas antarprodusen-konsumen. Pesan yang tidak bisa diproses memerlukan durable inbox/dead-letter handling. Pesan rusak yang terus dicoba dapat menjadi \emph{poison message} dan menghambat item sehat. Replay membawa persoalan deduplikasi, \emph{per-key ordering}, serta efek samping berulang. Balasan 202 pada laporan lapangan memerlukan \emph{durable acceptance}: pengakuan penerimaan hanya diberikan setelah data dapat ditemukan lagi ketika proses penerima mati.
+
+Transport yang mengulang setelah hasil tidak diketahui membutuhkan consumer idempoten. Menyimpan identitas pemrosesan bersama perubahan bisnis mencegah pengulangan pesan menimbulkan perubahan kedua~\cite{idempotent}. Sistem ini menerapkan prinsip tersebut pada receipt, urutan input, dan canonical revision; tidak menyatakan jaringan mengirim setiap pesan tepat sekali.
+
+\section{Kebijakan Perubahan Skema}
+\begin{longtable}{@{}P{3.6cm}P{5.8cm}P{6.1cm}@{}}
+\toprule Perubahan & Kebijakan & Alasan\\\midrule\endhead
+Field tambahan & Diterima bila field wajib dan tipe yang diketahui tetap valid; dipertahankan sesuai pemetaan attributes. & Produsen dapat menambah informasi tanpa mengubah arti field lama.\\
+PVMBG v3: rename & \code{alert_level} menjadi \code{volcano_alert}; hanya diterima oleh adapter v3 yang diaktifkan. & Mapping dideklarasikan, tidak menebak semua nama yang mirip.\\
+PVMBG v4: angka menjadi teks & \code{eruption_count_24h} teks dikonversi oleh adapter v4, lalu divalidasi ulang. & Konversi eksplisit mencegah nilai ambigu diterima diam-diam.\\
+PVMBG v5: field hilang & Ash height nol yang dihilangkan pada laporan Normal ditangani khusus oleh adapter v5. & Nilai default berlaku pada kondisi yang diketahui, bukan semua field wajib yang hilang.\\
+Perubahan tidak dikenal & Parked dengan alasan skema; menunggu perbaikan dan replay. & Salah menafsirkan tingkat bahaya lebih berisiko daripada menandai data belum tersedia.\\
+JSON/UTF-8/struktur/ukuran tidak valid & Arsip byte yang diterima; tidak dimasukkan sebagai hazard; item sehat tetap diproses. & Parser tidak boleh crash atau menghabiskan memori akibat satu payload.\\\bottomrule
+\end{longtable}
+Flag \code{PVMBG_SCHEMA_ADAPTERS=true} mengaktifkan transformasi yang sudah dideklarasikan. Snapshot 15 mengaktifkannya pada latihan pemulihan. Validasi dilakukan lagi sesudah transformasi; mengaktifkan adapter bukan mengabaikan validasi.
+
+\section{Penyimpanan Pesan Gagal dan Replay}
+Inbox Cassandra menyimpan raw bytes, sumber, waktu diterima, versi skema, alasan kegagalan, correlation ID dan status. Envelope rusak diarsipkan sebagai body utuh yang berhasil diterima. Payload besar dibaca ke spool dan chunk 64 KiB untuk membatasi memori. Bila koneksi putus, hanya byte yang benar-benar tiba yang dapat diarsipkan; alasan \code{incomplete_response} dan checkpoint yang tertahan mengungkap ketidaklengkapan tersebut. Sistem tidak menyatakan dapat menyimpan byte yang tidak pernah dikirim oleh upstream.
+
+Error transient seperti kegagalan write diproses sebagai \code{retrying}, dengan exponential backoff sampai 30 s. Error skema dan poison menjadi \code{parked}, sehingga tidak berulang tanpa perubahan parser/kebijakan. Head yang parked menahan revisi berikutnya untuk \code{source_ref_id} yang sama, tetapi tidak menghentikan key atau sumber lain. Input tanpa referensi yang dapat diekstrak tidak memperoleh jaminan urutan per-key; raw bytes tetap dapat diperiksa.
+
+Lease poller mengurutkan intake sumber. Revisi untuk satu referensi masuk ke partisi inbox yang sama; conditional batch menyimpan sequence dan item bersama. Canonical CAS membandingkan urutan input dengan urutan yang telah diterapkan. Retry memperbaiki proyeksi/outbox dari revisi yang sama, bukan membuat identitas hazard baru. Byte identik pada stream/representasi/versi skema yang sama diperlakukan sebagai delivery yang sama.
+
+Internal Ops membuka metadata, mengunduh payload, menyesuaikan adapter, lalu meminta replay. Pesan resolved hilang dari daftar Audit unprocessed. Discovery inbox memakai halaman fisik maksimal 64 metadata record per shard. Record resolved atau dari sumber lain tetap menghabiskan halaman fisik; karena itu \code{items: []} dengan \code{next_cursor} bukan akhir traversal. Ini penting agar riwayat resolved tidak menyembunyikan pesan yang masih pending.
+
+\begin{table}[htbp]\centering
+\begin{tabularx}{\textwidth}{@{}P{4.4cm}Y@{}}
+\toprule Identitas & Operasi yang diizinkan\\\midrule
+BNPB\_INTERNAL + \code{ingest:inspect} & Metadata/detail/raw pada \code{/internal/ops/ingest}, \code{/{id}}, \code{/{id}/payload}.\\
+BNPB\_INTERNAL + \code{ingest:replay} & \code{POST /internal/ops/ingest/{id}/replay}.\\
+FIELD\_TEAM + \code{field-reports:write} & \code{POST /field-reports} dengan idempotency key.\\
+BNPB\_INTERNAL + \code{field-reports:read} & Pemeriksaan hasil pada \code{/internal/ops/field-reports/{id}}.\\
+Token Audit & Listing metadata \code{/internal/audit/unprocessed}; tidak memberi hak download raw/replay Ops.\\\bottomrule
+\end{tabularx}
+\caption{Pemisahan akses pada listener HTTP internal dan gateway. Role/scopes berasal dari token terverifikasi.}
+\end{table}
+
+\section{Laporan Tim Lapangan dan Jaminan Pengiriman}
+Gateway memverifikasi JWT dan memanggil RPC Aggregator. Conditional insert yang dikonfirmasi quorum menyimpan receipt sebelum HTTP 202 dikirim. Kunci idempotensi terikat subjek JWT, sehingga dua pengguna yang memakai teks key sama tidak berbagi receipt. Retry key yang sama dapat mengambil receipt semula ketika response awal hilang.
+
+Field-report worker terpisah memindai pending rows dan menyimpan hasil normalisasi serta status terminal secara kondisional. Worker boleh menjalankan percobaan lebih dari sekali, tetapi satu receipt mempunyai satu hasil yang commit. Setelah ACK 202, keberlanjutan bergantung pada quorum/replica store, bukan memori gateway. Jika quorum tidak dapat dicapai, sistem memberikan 503 untuk intake baru; menerima data di memori lalu membalas 202 akan melanggar jaminan ini.
+
+Jaminannya adalah at-least-once attempt dengan efek tersimpan idempoten, selama state quorum dan idempotency key dipertahankan. Tidak ada janji bahwa proses worker tidak pernah mengeksekusi ulang kode. Di dalam cohort latihan, 12 laporan yang mendapat 202 ketika worker dimatikan tetap dapat diproses setelah pod gateway/Aggregator penerima dihapus. Retry mengembalikan receipt yang sama, semua ID ditemukan, dan timestamp terminal tidak berubah pada pemeriksaan ulang \bukti{E20}.
+
+\section{Alternatif dan Trade-off}
+\begin{longtable}{@{}P{3.6cm}P{5.5cm}P{6.4cm}@{}}
+\toprule Pendekatan & Keuntungan & Trade-off\\\midrule\endhead
+Strict reject tanpa arsip & Implementasi sederhana, resource penyimpanan rendah. & Pesan hilang dari sudut pandang pemulihan; tidak dapat diperiksa/replay setelah parser diperbaiki.\\
+Konversi skema heuristik & Lebih banyak payload terlihat berhasil diproses. & Risiko salah menafsirkan informasi bahaya; perubahan tak dikenal tidak dapat dipertanggungjawabkan.\\
+Durable inbox + adapter eksplisit (dipilih) & Byte, alasan dan urutan tetap tersedia; replay dapat diaudit. & Memerlukan ruang raw archive, discovery backlog, pengelolaan retention dan alat Ops.\\
+Proses field report sinkron & 200 dapat langsung membawa hasil akhir. & Latensi hilir masuk jalur intake dan kehilangan koneksi mempersulit penentuan hasil.\\
+Durable 202 + worker (dipilih) & Intake terpisah dari kecepatan pemrosesan; receipt dapat diulang secara idempoten. & 202 bukan tanda pekerjaan selesai; client/Ops perlu melihat status akhir.\\\bottomrule
+\end{longtable}
+
+\section{Hasil per Kriteria}
+\begin{longtable}{@{}P{.9cm}P{7.2cm}P{7.3cm}@{}}
+\toprule No. & Bukti dan hasil & Batas pembuktian\\\midrule\endhead
+1 & Kebijakan v1/v2 dan adapter v3--v5; adapter diaktifkan pada deployment pemulihan. & Transformasi terbatas pada deklarasi; perilaku skema lain tidak diterima otomatis.\\
+2 & Tujuh payload v4/v5 dan tiga belas v3 cocok raw/hash, alasan tersimpan \bukti{E18}. & Cohort 20 pesan, bukan sensus seluruh inbox. Capture awal incomplete envelope tidak dianggap bukti raw skema lengkap.\\
+3 & Test production pipeline \code{67587d6}: truncated JSON, depth berlebih, UTF-8 invalid, oversize; bytes tersimpan dan key sehat berlanjut. & Bukti lokal melalui test kode; belum injection ke semua pod live dengan observasi restart loop.\\
+4 & Dua puluh pesan resolved dan tidak berubah saat replay diulang \bukti{E19}. & Referensi cohort live berbeda-beda. Urutan revisi key yang sama dibuktikan oleh test pipeline terpisah, bukan cohort ini.\\
+5 & Token role nyata: Ops diizinkan, identitas yang tidak berhak/anonim ditolak pada metadata dan raw \bukti{E21}. & Cakupan endpoint yang direkam; raw tidak dibuka oleh Audit token.\\
+6 & 12 ACK 202 bertahan saat worker berhenti dan penerima mati; retry/hasil stabil \bukti{E20}. & Intake p95 1,658 s. Target internal 300 ms tidak tercapai; spesifikasi hanya menyebut ``cepat'', tanpa angka 300 ms.\\\bottomrule
+\end{longtable}
+
+\section{Batasan yang Disadari}
+Arsip memerlukan sizing/retention untuk penggunaan jangka panjang; laporan ini tidak membuktikan beban tak terbatas. Parked head menunda key tersebut sampai perbaikan eksplisit demi mempertahankan urutan. Empat jenis poison baru diuji lokal, sehingga tidak dapat dipakai untuk menyimpulkan seluruh komponen cluster bebas restart pada setiap serangan ukuran/format. Intake 202 tetap bergantung pada penyimpanan quorum dan latensinya; memisahkan worker tidak menghapus biaya autentikasi dan persistensi.
+\sumber{\code{docs/m2-problem-3.md}; \code{internal/ingest/}; \code{internal/problem3/}; \code{internal/storage/cassandra/ingest_inbox.go}; \code{docs/evidence/m2-inbox-paging/integration.txt}.}

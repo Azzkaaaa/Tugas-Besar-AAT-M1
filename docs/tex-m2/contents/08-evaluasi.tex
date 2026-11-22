@@ -1,0 +1,26 @@
+\chapter{Evaluasi dan Bagian yang Belum Lengkap}
+\section{Capaian pada Checkpoint Laporan}
+M2 sudah mempunyai jalur implementasi untuk kelima problem: canonical store terpartisi dan bereplikasi, koordinasi penulis dengan fencing, durable inbox/field-report intake, pemrosesan satelit event time, serta isolasi dan pengiriman sensor kritis. Cluster empat kernel terpisah dan snapshot deployment terverifikasi mendukung pembuktian runtime berbatas. Ini berbeda dari hanya memiliki desain, tetapi belum merupakan kelulusan seluruh kontrak tugas.
+
+Hasil yang paling kuat adalah survival identitas pada scoped disk fault, failover BMKG 31,9 s, receipt 202 yang bertahan setelah penerima mati, replay cohort schema, algoritme/recovery satelit pada fixture, dan receipt bertanda tangan tiga critical latihan. Batas utama terletak pada kapasitas end-to-end, pemulihan otonom menyeluruh dan pembandingan dengan referensi resmi.
+
+\section{Kesenjangan yang Perlu Dilengkapi}
+\begin{longtable}{@{}P{1.3cm}P{7cm}P{7.2cm}@{}}
+\toprule Bagian & Yang belum selesai / belum terbukti & Bukti yang diperlukan berikutnya\\\midrule\endhead
+Umum & Kontribusi M2 kosong; form AI hanya memuat penggunaan yang diketahui. & Isian anggota dan penyesuaian template resmi M1 bila diberikan.\\
+P1 & Katalog/checksum resmi; penghapusan seluruh worker; replacement tanpa intervensi; fault kedua; semua request terjawab. & Baseline tertutup, log Tester Agent, checksum lengkap dan capture baca selama dua siklus fault.\\
+P1 & Kesetaraan analytics seluruh scope pada konkurensi/fault. & Audit lengkap dengan window/versi katalog yang sebanding, bukan count partial.\\
+P2 & 10.000 VU/120 s; scaling 3--5--2 pada window sama; throughput $\geq2\times$ dan rollout tanpa error. & Hasil load/generator yang valid beserta token, distribusi status, topology stage dan trace bottleneck. Hasil yang ada masih gagal atau di bawah target.\\
+P3 & Injection empat poison pada deployment dan observasi semua komponen. & Raw byte/hash, restart count, healthy-key progress; replay dua revisi key sama pada cluster.\\
+P4 & Catch-up 60\(\times\) dalam 60 s; seluruh feed cocok referensi; crash/reconnect live lintas kernel. & Capture offset/checkpoint sampai selesai, p95 storage, referensi asisten dan perbandingan akhir tanpa gangguan.\\
+P5 & Nol critical hilang pada window lengkap; p95 sejak emisi; latency M1 saat fault gabungan; budget game day. & Expected set independen, emitted\_at nyata, sinkronisasi jam, signed receipt seluruh revisi dan log ujian tanpa intervensi.\\
+Demo & Hasil auditor ujian, rekaman anggota, dan tautan video. & Artefak asli setelah bahan ujian tersedia; tidak diisi dengan hasil fixture atau latihan.\\\bottomrule
+\end{longtable}
+
+\section{Bonus dan Batas Klaim}
+Topologi tiga host fisik sudah dideklarasikan, tetapi bonus host berbeda juga meminta pengukuran jaringan nyata dan pemutusan jaringan fisik. Tailscale dan fault policy tidak dengan sendirinya memenuhi seluruh bukti bonus itu. HPA min 3/max 5 tersedia, tetapi skala 3--5--2 yang disengaja bukan bukti kapasitas naik/turun otomatis akibat beban. Bukti autoscaling Redis pada tahap infrastruktur M1 tidak dianggap pengganti bukti M2 terbaru. Komponen AI-native tidak ditemukan sebagai jalur produk yang dibuktikan, sehingga bonus tersebut tidak diklaim.
+
+\section{Integritas Hasil dan Keterulangan}
+Hasil lokal tidak dijalankan ulang saat penulisan. Dokumentasi awal yang telah tertinggal dikoreksi terhadap kode/snapshot terbaru, misalnya disk-state satelit, FULL SSE admission, halaman Audit 1.024 record dan query shard 1 s. Tabel pengukuran merujuk artefak asli melalui kode bukti dan manifest SHA-256. Diagram disusun dari konfigurasi/placement, tidak dipresentasikan sebagai screenshot demonstrasi.
+
+Laporan M1 tetap disimpan pada \code{docs/tex/}; laporan ini memakai source \code{docs/tex-m2/}. Kontribusi dan hasil resmi yang belum tersedia dapat ditambahkan tanpa mengubah catatan hasil latihan historis. Nama keluaran mengikuti spesifikasi: \code{IF4031_M2_nasigoreng.pdf}.

@@ -1,0 +1,35 @@
+\chapter{Perubahan dari Milestone 1}
+\section{Baseline yang Dibandingkan}
+Perbandingan ini menggunakan laporan M1 10 Oktober 2026 di \code{docs/tex/}, penjelasan kode pada commit \code{122ca7b}, serta bukti commit \code{4a1973b}. M1 telah mempunyai kontrak kanonik, polling terpisah, outbox, pembagian scope, dan fanout. Masalah M2 bukan membangun ulang fungsi tersebut, melainkan mempertahankan perilakunya ketika terdapat replikasi, crash, backlog, dan sumber baru.
+
+Checkout \code{Tugas-Besar-AAT-M1} saat ini sudah berada pada \code{36303a7}, sama dengan checkout \code{services}. Karena itu, perubahan tidak dihitung hanya dengan membandingkan kedua direktori saat ini. Riwayat Git dan dokumen M1 digunakan untuk menghindari kesimpulan keliru bahwa tidak ada perubahan. Infrastruktur juga mempunyai tahap Kind/Flux sebelum M2; diagram deployment laporan ini secara khusus menggambarkan k3s M2.
+
+\section{Matriks Keputusan}
+\begin{longtable}{@{}P{2.2cm}P{3.65cm}P{4.2cm}P{5.05cm}@{}}
+\toprule Keputusan & M1 & M2 dan status & Alasan / konsekuensi\\\midrule\endhead
+Kontrak data & \code{HazardEvent} gempa/volkanik; attributes untuk variasi sumber. & \textbf{Dipertahankan dan diperluas}: WILDFIRE, COASTAL; sumber SATELIT, SENSOR\_PANTAI. & Klien dan consumer tetap memakai bentuk kanonik; adapter baru tidak mengubah kepemilikan data.\\
+Boundary integrasi & Normalisasi/validasi di Aggregator, tolerant reader untuk field tambahan. & \textbf{Dipertahankan}, ditambah adapter eksplisit v3--v5, inbox, raw archive dan replay. & Rename/perubahan tipe tidak boleh ditebak tanpa deklarasi; pesan gagal tetap bisa diperiksa.\\
+Cara mengambil data & BMKG/PVMBG dipoll terpisah. & \textbf{Dipertahankan} untuk mock dan Sensor Pantai; \textbf{dibatalkan untuk satelit}, diganti SSE ber-offset. & Satelit mengandung koreksi/retract dan burst berurutan; posisi stream lebih tepat daripada polling snapshot.\\
+Penulis tunggal & Satu Aggregator pada satu host. & \textbf{Diubah}: beberapa replika pembaca; satu lease per job; epoch/fencing pada write. & Replikasi pod tidak boleh menggandakan polling/commit; proses lama dapat hidup kembali setelah suspend.\\
+Store kanonik & PostgreSQL lokal dengan transaksi event/outbox. & \textbf{Diubah}: Cassandra empat anggota, RF=3 dan LWT/Paxos. PostgreSQL tetap alternatif lokal. & Partisi dan replikasi memenuhi kebutuhan kehilangan node. Transaksi SQL tidak dapat diasumsikan berlaku lintas partisi Cassandra.\\
+Partisi data & Indeks relasional pada satu store. & \textbf{Diubah}: hash ID ke 16 shard kanonik; token ring memetakan shard ke replika. & Sebaran tidak bergantung pada provinsi yang timpang; pembacaan global perlu fanout dan merge.\\
+Store consumer & SQLite lokal pada Webhook/Notification; replay feed di memori. & \textbf{Diubah}: PostgreSQL untuk state layanan terkait; Redis untuk replay/cache/sesi yang diperlukan. & State tidak bergantung pada satu proses consumer; tetap ada batas ketahanan store pendukung yang perlu diuji.\\
+Pemilik storage & Kepemilikan logis; jaringan Compose belum menghalangi semua akses silang. & \textbf{Diperkuat}: kredensial per layanan dan NetworkPolicy pada platform. & M2 menuntut pembatasan koneksi teknis, bukan hanya konvensi kode.\\
+Orkestrasi & Docker Compose pada laporan M1. & \textbf{Diubah}: k3s empat kernel; Helm/Flux, Secret/ConfigMap dan disk node. & Menguji kegagalan mesin serta penempatan replika; Compose/Kind tetap jalur pengembangan.\\
+Otorisasi & Envoy, token exchange, JWT, role dan scope. & \textbf{Dipertahankan}; scope Internal Ops/Audit/field reports ditambah. & Boundary keamanan tidak dipindah ke browser; raw payload gagal tidak dibuka kepada semua pembaca hazard.\\
+Fanout & Outbox, RabbitMQ dan consumer idempoten. & \textbf{Dipertahankan}; rute queue notifikasi wajib, retry dan budget payload diperkuat. & Redelivery tetap mungkin; efek yang sudah commit harus idempoten.\\
+Bukti notifikasi & Publikasi broker dan push provider. & \textbf{Asumsi kecukupan dibatalkan}: ditambah journal kritis immutable dan receipt penerima. & Broker/FCM ACK tidak menunjukkan waktu tiba pada Tim Lapangan.\\
+Jalur tulis pengguna & Klien terutama membaca hazard/mengelola subscription. & \textbf{Ditambah}: \code{POST /field-reports}, 202 setelah quorum durable intake. & Putus koneksi atau kematian receiver setelah ACK tidak boleh menghilangkan laporan.\\
+Pembacaan UI & Daftar/detail dan status sumber. & \textbf{Diperluas}: indeks global, analytics lintas katalog, partial/cursor eksplisit. & Kegagalan shard tidak boleh ditampilkan sebagai nol kejadian atau hasil lengkap palsu.\\
+Observa\-bilitas & OTel, LGTM, probe, correlation ID. & \textbf{Dipertahankan dan diperluas}: lag offset, fencing, breaker, inbox dan receipt. & Diagnosis M2 membutuhkan hubungan lintas node dan jalur asinkron, bukan hanya health endpoint.\\
+Keadaan satelit & Belum ada. & \textbf{Ditambah}: graf disk, event time, lateness, journal dan snapshot. & Pengelompokan berantai dan update/retract membutuhkan state tahan crash yang muat dalam budget memori.\\
+Load testing & Bukti 50 VU/60 detik pada M1. & \textbf{Target diubah}: 10.000 VU/120 detik, 3--5--2 replika dan rollout. & Angka M1 tidak dapat dipakai untuk menyatakan M2 lulus; hasil M2 aktual masih di bawah target.\\\bottomrule
+\end{longtable}
+
+\section{Perubahan Jaminan yang Perlu Diperhatikan}
+Pada PostgreSQL M1, penulisan hazard dan outbox berada dalam satu transaksi. Di Cassandra M2, write kanonik dan pemeriksaan otoritas berada pada conditional batch satu partisi; proyeksi indeks/outbox diselesaikan melalui mekanisme pemulihan idempoten. Hasil baca lintas partisi tidak diberi klaim serializable global. Hal ini menentukan cara menafsirkan Audit, pagination, dan angka analytics.
+
+Publikasi memakai jaminan \emph{at-least-once} dengan efek commit idempoten, bukan pengiriman jaringan exactly-once. Poller yang baru mengambil alih dapat mengulangi fetch yang hasilnya belum diketahui. Guard storage mencegah efek lama diterima setelah term baru berwenang. Penerima kritis sendiri menyimpan receipt agar duplikasi kiriman tidak menghasilkan penerimaan baru.
+
+Keputusan mempertahankan pertukaran token per request mempunyai biaya nyata: diagnosis M2 menemukan kenaikan latensi di jalur Zitadel. Kandidat perbaikan cache token belum diimplementasikan pada checkpoint laporan. Perubahan keputusan harus mengikuti bukti, sehingga laporan tidak menggambarkan kandidat tersebut seolah sudah menjadi perilaku sistem.
+\sumber{Laporan M1 \code{contents/01-sistem.tex} dan bab P1--P5; riwayat Git \code{122ca7b..36303a7}; dokumen M2 write authority, replay feed, critical delivery dan analisis beban \bukti{E22}.}

@@ -1,0 +1,76 @@
+\chapter{P4: Atap Seng di Siang Bolong}
+\section{Identifikasi Masalah}
+Deteksi terlambat dan tidak berurutan memerlukan pembedaan \emph{event time} dari \emph{processing time}, batas lateness, serta kebijakan finalisasi. Lonjakan 60 kali kecepatan memunculkan backlog dan backpressure. Crash di tengah pengelompokan membutuhkan state, checkpoint, dan replay deterministik. Update/retract membuat persoalan lebih kompleks daripada menghitung jumlah titik pada jendela tetap: keterhubungan berantai dapat menggabungkan atau memisahkan komponen.
+
+Model Dataflow menekankan bahwa kapan data diproses dan kapan kejadian berlangsung adalah dua dimensi berbeda; watermark dan kebijakan data terlambat mengatur kapan hasil boleh dianggap cukup lengkap~\cite{dataflow}. Implementasi ARLOW menggunakan prinsip itu, namun algoritme pengelompokan dan persistensinya merupakan kode Go milik kelompok, bukan deployment layanan Google Dataflow/Flink.
+
+\section{Definisi Kebakaran dan Identitas}
+Kunci satu deteksi adalah gabungan \code{satellite|acq_date|acq_time|latitude|longitude}. Representasi asli feed dipertahankan pada detection key, tanpa pembulatan koordinat atau penambahan nol jam yang mengubah teks kunci. Event time dihitung dari tanggal/jam VIIRS dalam UTC. Deteksi confidence low tidak masuk graf dan jumlahnya tetap dicatat; duplikat deteksi tidak menambah jumlah.
+
+Dua deteksi $a,b$ bertetangga bila:
+\[
+ d_{\mathrm{Haversine}}(a,b)\leq 1\text{ km}
+ \quad\land\quad |t_a-t_b|\leq 6\text{ jam}.
+\]
+Satu connected component dengan minimal dua deteksi menjadi satu kebakaran, termasuk lintas satelit. Satu titik terisolasi dihitung sebagai singleton. Engine referensi menggunakan indeks ECEF 1 km/bucket 6 jam. Engine disk produksi memakai cell ECEF 250 m/3 jam: titik dalam satu cell pasti bertetangga, sedangkan hubungan antar-cell tetap diperiksa terhadap ambang 1 km dan 6 jam. Keterhubungan A--B--C cukup untuk satu fire walaupun A tidak langsung bertetangga dengan C.
+
+Centroid dihitung pada bola; provinsi dipilih dari titik referensi statis BNPB yang terdekat. \code{occurred_at} adalah deteksi paling awal. Severity AWAS bila jumlah deteksi $\geq20$ atau FRP total $\geq100$ MW; SIAGA bila $\geq6$ atau FRP $\geq30$ MW; selainnya WASPADA. Attributes mencakup jumlah, daftar satelit, confidence tertinggi, FRP total dan kunci deteksi terurut.
+
+ID menggunakan hash deterministik dan lineage komponen. Merge mempertahankan satu ID lama dan menarik komponen lain; split mempertahankan ID lama pada satu bagian dan memberi ID baru pada bagian yang benar-benar terpisah. Update tidak otomatis membuat event baru. Komponen yang hilang/menjadi singleton diberi revisi \code{withdrawn=true}; List/Audit tidak lagi menampilkan hazard aktif tersebut, sementara outbox mengirim revisi pembatalannya.
+
+Replay urutan offset yang sama harus menghasilkan ID/revisi yang sama. Implementasi tidak menjanjikan ID lineage yang identik untuk segala permutasi urutan kedatangan yang berbeda. Tabel provinsi adalah keputusan PoC kelompok; kesesuaiannya dengan hasil referensi asisten belum dibandingkan.
+
+\section{Lateness dan Kapan Hasil Difinalisasi}
+Nilai acuan $W$ adalah maksimum event time yang sudah terlihat, termasuk \code{virtual_now} heartbeat yang dijournal. Deteksi baru dengan waktu lebih tua dari $W-24$ jam diparkir sebagai \code{late_beyond_allowed_lateness} dan dihitung. Deteksi dalam batas tetap dapat memperbarui komponen. Koreksi/retract terhadap titik yang sudah dikenal diterima selama komponen masih dalam horizon koreksi 48 jam.
+
+Finalisasi terjadi jika deteksi terbaru komponen lebih tua dari $W-48$ jam. Konfigurasi retention minimal lateness ditambah 6 jam: deteksi baru yang masih diizinkan tidak dapat membentuk sisi dengan komponen yang lebih tua dari batas tersebut. Cutoff berasal dari input journal dan bergerak deterministik, bukan timer kedatangan proses. Koreksi terhadap komponen yang sudah final tidak diabaikan: diparkir dan dihitung sebagai expired correction.
+
+\begin{table}[htbp]\centering
+\begin{tabularx}{\textwidth}{@{}P{6.2cm}P{2cm}Y@{}}
+\toprule Konfigurasi & Nilai & Arti\\\midrule
+\code{SATELLITE_ALLOWED_LATENESS} & 24 h & Batas deteksi baru terlambat.\\
+\code{SATELLITE_STATE_RETENTION} & 48 h & Horizon koreksi state aktif.\\
+\code{SATELLITE_MAX_DETECTIONS} & 200.000 & Ambang tekanan lunak; tidak memotong horizon lebih dini.\\
+\code{SATELLITE_SNAPSHOT_EVERY} & 2.000 & Jarak input commit antar-snapshot.\\
+\code{SATELLITE_STATE_DIR} & Volume disk & SQLite graph/cache kerja privat pod; dapat dibangun kembali.\\
+\code{SATELLITE_STREAM_ID} & practice-v1 & Nama lengkap deployment \code{satellite-practice-v1}; ganti untuk sesi baru, bukan setiap reconnect.\\\bottomrule
+\end{tabularx}
+\caption{Kebijakan deployment dan pemulihan satelit. Angka konfigurasi bukan hasil throughput.}
+\end{table}
+
+\section{Stream, Persistensi, dan Pemulihan}
+Pola polling M1 ditinggalkan untuk sumber satelit. SSE menyediakan offset monoton, koreksi, retraksi dan heartbeat. Client menggunakan \code{from} dan \code{Last-Event-ID}; offset berulang diabaikan, celah offset memicu koneksi ulang, dan frame terpotong tidak di-commit. Cursor hanya maju setelah efek input tersimpan. Mengganti nama sesi atau melompati offset untuk menghilangkan backlog tidak digunakan sebagai solusi.
+
+Urutan pemrosesan adalah: (1) menyimpan input immutable ke journal, (2) menghitung dan menyimpan perubahan kanonik/outbox, (3) commit checkpoint dengan CAS. Journal/checkpoint pada Cassandra menggunakan partisi yang dilindungi authority (migrasi fencing); tidak boleh disamakan dengan deskripsi tabel lama sebelum upgrade. Kegagalan setelah langkah 2 mengulang input yang sama saat restart. Identitas event/revisi serta \code{stream_sequence} mencegah efek commit kedua dan overwrite dari replay lama.
+
+State produksi berupa graf SQLite privat di disk dengan cache berbatas, bukan seluruh graf di heap. Connected component padat diproses melalui traversal cell untuk menghindari penyimpanan semua sisi kuadratik. Engine memori dipertahankan sebagai comparator lokal. Snapshot berupa logical rows terkompresi dan chunk immutable di canonical store, diverifikasi SHA-256; dua sequence snapshot dipertahankan. Term baru memulihkan snapshot valid terbaru yang tidak melewati checkpoint, lalu mengulang ekor journal. Snapshot hilang/korup atau versi kebijakan tidak cocok menyebabkan full replay, bukan kehilangan input.
+
+Pengiriman adalah at-least-once dengan efek idempoten. Tidak ada satu transaksi lintas SSE, semua partisi Cassandra, RabbitMQ dan penerima. Bukti harus membandingkan keadaan akhir setelah pemulihan, bukan hanya menghitung berapa kali worker berjalan.
+
+\section{Alternatif dan Trade-off}
+\begin{longtable}{@{}P{3.5cm}P{5.7cm}P{6.3cm}@{}}
+\toprule Alternatif & Manfaat & Konsekuensi\\\midrule\endhead
+Polling snapshot seperti M1 & Integrasi sederhana dengan client REST yang sudah ada. & Tidak memanfaatkan urutan offset/koreksi SSE; burst dan resume lebih sulit dibuktikan.\\
+Framework stream (mis. Flink) & Abstraksi checkpoint, event time dan state terkelola. & Komponen/platform tambahan dan kebutuhan integrasi graf custom; tidak dipilih untuk PoC dengan anggaran pod yang ketat.\\
+Engine Go + journal (dipilih) & Memakai lease, storage dan outbox yang sudah tersedia; aturan lineage dapat diuji langsung. & Kelompok menanggung kompleksitas split/merge, snapshot, replay dan sizing state.\\
+State hanya di memori & Akses cepat dan kode sederhana. & RSS meningkat pada feed padat; proses mati menghilangkan state kecuali dibangun kembali dari journal. Disk state mengurangi heap dengan biaya I/O.\\\bottomrule
+\end{longtable}
+
+\section{Pengukuran dan Bukti per Kriteria}
+\begin{longtable}{@{}P{.9cm}P{7.2cm}P{7.3cm}@{}}
+\toprule No. & Bukti yang tersedia & Hasil dan batas\\\midrule\endhead
+1 & Test engine: chain, multi-satelit, confidence, dedup dan mapping \bukti{E23}. & Fixture lokal lulus; referensi seluruh feed belum tersedia.\\
+2 & Test event time, lateness, snapshot pada beberapa cut point \bukti{E23}. & Kebijakan 24 h/48 h eksplisit; late dan koreksi kedaluwarsa dicatat.\\
+3 & Test update/retract, split/merge, withdrawal \bukti{E23}. & Efek deterministik pada fixture; identitas lineage lintas urutan arbitrer tidak diklaim.\\
+4 & Sesi live speed=60; histogram p95 ingest sekitar 1,5--1,6 s; lag sekitar 4,49 juta offset \bukti{E24}. & Target catch-up $\leq60$ s belum tercapai. Waktu ingest mengecualikan antrean upstream; bukan umur data keseluruhan.\\
+5 & Real Cassandra recovery: gagal setelah canonical save sebelum checkpoint; snapshot+tail restore; identitas/count/revision sama \bukti{E25}. & Integrasi satu instance 36,314 s; bukan crash terkontrol cluster kernel terpisah. Fixture memakai 1.280 MiB, lebih besar dari limit store demo 1 GiB.\\
+6 & Belum ada hasil referensi asisten. & Selisih terhadap referensi resmi belum dapat dihitung. Comparator lokal tidak diberi label referensi asisten.\\
+7 & Tujuh sampel selama lebih dari tiga menit; checkpoint 53.383 $\rightarrow$ 53.402 dalam sekitar satu menit \bukti{E24,E26}. & Stream latihan benar-benar maju; tidak menunjukkan sanggup mengejar laju sumber.\\
+8 & Test SSE terpotong, offset, journal dan snapshot \bukti{E23,E25}. & Mekanisme reconnect terbukti pada fixture berbatas; perbandingan seluruh feed resmi sesudah putus belum ada.\\\bottomrule
+\end{longtable}
+
+Nilai p95 live berasal dari estimasi histogram lima menit, bukan percentile presisi per-event seluruh sesi. Metrik \code{bnpb.satellite.offset.lag}, offset, jumlah fire/singleton/late serta \code{bnpb.m2.ingest.duration} memperlihatkan perbedaan antara waktu pemrosesan input yang telah diterima dan backlog yang masih menunggu. Tidak ada offset yang dilompati untuk memperbaiki angka lag.
+
+\section{Batasan yang Disadari}
+Retention membatasi koreksi yang sangat lama dan mencatatnya eksplisit. Journal memerlukan pengelolaan kapasitas disk jangka panjang. Snapshot mempercepat recovery tetapi full replay tetap mahal jika snapshot tidak tersedia. Batas payload FULL/unary/SSE membatasi konsumsi memori dengan admission; pengujian fixture besar tidak membuktikan kombinasi seluruh jalur ingest, broker, consumer dan client sekaligus pada cluster. Target throughput/catch-up dan kesetaraan resmi tetap pekerjaan terbuka, meskipun logika algoritmik dan pemulihan lokal sudah memiliki bukti.
+\sumber{\code{docs/m2-satellite-state.md}, \code{docs/m2-disk-state-plan.md}, \code{docs/m2-streaming-snapshots.md}; \code{internal/m2/disk_state.go}, \code{disk_fire.go}, \code{runner.go}; bukti P4 infrastruktur.}

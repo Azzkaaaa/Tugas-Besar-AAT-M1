@@ -1,0 +1,138 @@
+\chapter{Gambaran Sistem dan Deployment}
+\section{Tujuan dan Ruang Lingkup}
+ARLOW mengubah data kebencanaan dari beberapa instansi menjadi \code{HazardEvent} kanonik, lalu menyediakannya melalui REST, live feed SSE, webhook, dan notifikasi. M1 membuktikan integrasi BMKG/PVMBG, isolasi kegagalan sumber, autentikasi, pemisahan layanan, serta distribusi event. M2 membawa sistem tersebut ke beberapa node, menambah penyimpanan terdistribusi, koordinasi beberapa Aggregator, penerimaan laporan lapangan yang tahan kegagalan, serta sumber satelit dan sensor pantai~\cite{spec,m1}.
+
+Pengguna terdiri atas Media, Tim Lapangan, dan BNPB Internal. Media memperoleh ringkasan sesuai scope; Tim Lapangan dapat mengirim laporan dan menerima peringatan; Internal Ops dapat memeriksa serta memproses ulang pesan gagal dengan scope khusus. Token Audit terpisah dipakai untuk pemeriksaan oleh asisten. Semua data uji merupakan data simulasi/latihan.
+
+\section{Arsitektur Logis}
+\begin{figure}[htbp]
+\centering
+\resizebox{\textwidth}{!}{\begin{tikzpicture}
+\node[box,text width=4cm] (clients) at (0,0) {Media / Tim Lapangan\\BNPB Internal\\Browser dan klien API};
+\node[box,text width=4cm] (edge) at (5.7,0) {Envoy + API Gateway\\REST, SSE, admission};
+\node[box,text width=4cm] (auth) at (11.4,0) {Zitadel + Auth Bridge\\Token Exchange\\Claims};
+\node[box,text width=4cm] (sources) at (0,-3) {BMKG / PVMBG: polling\\Satelit: SSE ber-offset\\Sensor Pantai: polling};
+\node[box,text width=4cm] (agg) at (5.7,-3) {Aggregator beberapa replika\\Adapter, lease, fencing\\Field-report intake / Audit};
+\node[box,text width=4cm] (store) at (11.4,-3) {Cassandra, 4 anggota, RF=3\\Kanonik, inbox, outbox,\\journal, checkpoint, receipt};
+\node[box,text width=4cm] (broker) at (0,-6.1) {RabbitMQ fanout\\Feed / Webhook / Notification\\Store privat tiap consumer};
+\node[box,text width=4cm] (critical) at (5.7,-6.1) {Critical notifier\\Membaca journal lewat API\\Verifikasi receipt Ed25519};
+\node[box,text width=4cm] (receiver) at (11.4,-6.1) {Penerima Tim Lapangan\\SQLite persisten\\Receipt setelah commit};
+\draw[arr] (clients) -- (edge);
+\draw[arr] (edge) -- node[above,font=\tiny]{identitas} (auth);
+\draw[arr] (edge) -- node[right,font=\scriptsize]{gRPC} (agg);
+\draw[arr] (agg) -- node[above,font=\tiny,align=center]{ambil\\data} (sources);
+\draw[arr] (agg) -- node[above,font=\tiny,align=center]{CQL /\\Paxos} (store);
+\draw[arr] (agg.south west) -- node[above,sloped,font=\scriptsize]{outbox AMQP} (broker.north east);
+\draw[arr] (critical) -- node[left,font=\scriptsize]{HTTP internal} (agg);
+\draw[arr] (critical) -- node[above,font=\tiny,align=center]{warning /\\receipt} (receiver);
+\end{tikzpicture}}
+\caption{Arsitektur M2. Panah menunjukkan arah pemanggilan/pengiriman; jawaban mengalir kembali. Telemetri seluruh jalur dikumpulkan oleh OpenTelemetry dan Grafana LGTM. Diagram dibuat dari kode dan konfigurasi, bukan tangkapan layar runtime.}
+\label{fig:architecture}
+\end{figure}
+
+Envoy menyediakan pintu masuk publik. Token Exchange menjalankan \code{ext_authz} dan pertukaran token ke Zitadel; API Gateway menerjemahkan HTTP menjadi gRPC dan membatasi konkurensi. Layanan bisnis memverifikasi identitas/scopes. Pembacaan hazard memakai penyimpanan BNPB sehingga permintaan client tidak memanggil sumber yang sedang bermasalah secara sinkron.
+
+Setiap job pengambilan sumber mempunyai lease sendiri. Semua replika Aggregator melayani pembacaan, tetapi satu term yang berwenang menjalankan job sumber tertentu. Cassandra menyimpan event, otoritas penulis, journal input, checkpoint, inbox gagal, serta keadaan pengiriman. SQLite privat pada pemroses satelit hanyalah keadaan kerja turunan; sumber pemulihannya tetap journal dan snapshot di Cassandra.
+
+Publikasi biasa melalui outbox dan RabbitMQ menuju tiga consumer independen. Jalur kritis memiliki journal immutable tambahan: notifier mengambilnya melalui API Aggregator, mengirim byte yang sama ke penerima Tim Lapangan, lalu menyimpan receipt bertanda tangan. ACK broker atau FCM tidak dipakai sebagai bukti bahwa penerima telah menerima peringatan.
+\sumber{\code{services/README.md}; \code{docs/m2-write-authority.md}; \code{docs/m2-critical-delivery.md}; kode adapter, storage, dan gateway pada manifest sumber.}
+
+\section{Teknologi Terpilih}
+\begin{longtable}{@{}P{3.1cm}P{3.4cm}P{8.9cm}@{}}
+\toprule Komponen & Teknologi & Alasan dan peran\\\midrule\endhead
+Aggregator dan worker & Go, gRPC & Mempertahankan implementasi M1; konkurensi job, stream, RPC, dan worker terpisah dengan konteks pembatalan.\\
+Penyimpanan kanonik & Cassandra 5.0.9, RF=3, Paxos v2 & Partisi, replikasi, pembacaan quorum dan conditional write; konsekuensinya koordinasi lintas node menambah latensi. PostgreSQL tetap backend alternatif pengembangan.\\
+Satelit & Go, SQLite keadaan kerja & Graf deteksi disimpan di disk agar payload besar tidak memaksa seluruh graf tinggal di heap; snapshot/journal direplikasi di canonical store.\\
+Event Live Feed & Rust, Redis & Streaming asinkron; replay lintas restart dengan buffer persisten berbatas.\\
+Webhook / Notification & Go / .NET 10; PostgreSQL, Redis sesuai layanan & Penyimpanan langganan, status delivery, deduplikasi dan push outbox tidak berbagi tabel kanonik.\\
+Mock sumber & Python, SQLite & Mock BMKG/PVMBG tetap mandiri; PVMBG menambah mode skema tidak kompatibel.\\
+Identitas dan edge & Zitadel, Node.js Auth Bridge, Rust sidecar, Envoy & Mempertahankan OIDC, cookie sesi, pertukaran token, role dan scope M1.\\
+Frontend & React, TypeScript, nginx & Daftar/detail/live hazard dan dashboard analitik lintas katalog.\\
+Broker & RabbitMQ 4, AMQP, Protobuf & Fanout, confirmation, acknowledgement, dan queue consumer independen.\\
+Platform & k3s, Calico, Helm, Flux, SOPS/age & Kernel node terpisah, policy jaringan, konfigurasi deklaratif dan snapshot deployment.\\
+Observabilitas / uji & OpenTelemetry, Grafana LGTM, k6 & Trace, metrik dan log berkorelasi; pembebanan HTTP dari luar pod aplikasi.\\\bottomrule
+\end{longtable}
+
+\section{Deklarasi Topologi dan Penempatan}
+Empat node k3s berjalan dengan empat kernel Linux terpisah pada tiga host fisik. Jenis guest dan kapasitas berikut berasal dari deklarasi operator serta pengamatan node yang tersimpan, bukan spesifikasi perangkat yang diperkirakan dari nama mesin \bukti{E01,E02}. Node b dan c berbagi host sehingga kegagalan host tersebut menghilangkan dua node sekaligus.
+
+\begin{longtable}{@{}P{1.5cm}P{4.2cm}P{3.3cm}P{6.3cm}@{}}
+\toprule Node & Peran dan jenis guest & Kapasitas guest & Host fisik dan spesifikasi\\\midrule\endhead
+\code{bnpb-a} & Control plane + worker; Ubuntu 22.04 WSL2 VM & 8 vCPU; 5,8 GiB & ROG-RIZA, Windows 11; Ryzen 9 6900HS, 8 core/16 thread; RAM 16 GB (15,24 GiB terlapor).\\
+\code{bnpb-b} & Worker; Ubuntu 26.04 QEMU VM & 2 vCPU; 5,8 GiB & Linux-BC, Gentoo; 4 core/8 thread; RAM 16 GB. Model CPU belum dicatat.\\
+\code{bnpb-c} & Worker; Ubuntu 26.04 QEMU VM & 2 vCPU; 5,8 GiB & Host Linux-BC yang sama dengan b.\\
+\code{bnpb-d} & Worker; Ubuntu 24.04 WSL2 VM & 16 vCPU; 7,6 GiB & Windows-11-D, host terpisah; CPU/RAM sama dengan host a menurut operator.\\\bottomrule
+\end{longtable}
+
+Kapasitas guest merupakan alokasi/kapasitas yang terlihat oleh Kubernetes, bukan penjumlahan kapasitas fisik tambahan. Jaringan antar-node memakai Tailscale dan Calico VXLAN dengan MTU pod 1230. Versi k3s pada pengamatan akhir adalah \code{v1.34.13+k3s1}. Empat node akhir berstatus Ready. Kendali HPA Aggregator kembali pada minimum 3 dan maksimum 5; pengamatan akhir memuat empat pod Aggregator berjalan. Skenario gangguan diarahkan ke worker non-control-plane.
+
+\begin{figure}[p]
+\centering
+\resizebox{\textwidth}{!}{\begin{tikzpicture}
+\node[box,text width=6.4cm,minimum height=4.5cm] (a) at (0,0) {\textbf{Host Windows ROG-RIZA}\\\textbf{bnpb-a: control plane + worker}\\Aggregator; Cassandra-0 + disk lokal\\Critical notifier\\Notification DB; Webhook DB/Redis\\\smallskip Penerima Tim Lapangan: proses host\\di luar pod BNPB (failure domain host sama)};
+\node[box,text width=6.4cm,minimum height=4.5cm] (d) at (8.1,0) {\textbf{Host Windows-11-D}\\\textbf{bnpb-d: worker}\\Edge Envoy; API Gateway; Frontend\\Aggregator; Cassandra-3 + disk lokal\\Field-report worker; Sensor Pantai\\Notification; Webhook; Telemetry};
+\node[box,text width=6.4cm,minimum height=4.5cm] (b) at (0,-5.9) {\textbf{bnpb-b: QEMU worker}\\Aggregator; Cassandra-2 + disk lokal\\Zitadel; Auth DB\\BMKG/PVMBG mock; RabbitMQ\\Feed Redis};
+\node[box,text width=6.4cm,minimum height=4.5cm] (c) at (8.1,-5.9) {\textbf{bnpb-c: QEMU worker}\\Aggregator; Cassandra-1 + disk lokal\\Token Exchange; Auth Bridge/Redis\\Claims; Login; Event Live Feed\\Notification; Critical notifier};
+\begin{scope}[on background layer]
+\node[draw=reportorange,dashed,rounded corners,fit=(b)(c),inner sep=10pt,label={[text=reportorange]below:Host fisik Linux-BC bersama: satu failure domain untuk b dan c}] {};
+\end{scope}
+\draw[arr,<->] (a) -- node[above,font=\scriptsize]{data} (d);
+\draw[arr,<->] (b) -- node[above,font=\scriptsize]{data} (c);
+\draw[arr,<->] (a) -- node[right,font=\scriptsize]{Tailscale + Calico} (b);
+\draw[arr,<->] (d) -- node[right,font=\scriptsize]{Tailscale + Calico} (c);
+\end{tikzpicture}}
+\caption{Penempatan komponen utama pada pengamatan akhir 22 November \bukti{E02}; lokasi edge dan receiver dilengkapi dari bukti diagnosis serta konfigurasi receiver. Panah merangkum jalur jaringan antar-node, bukan pembatas bahwa koneksi hanya boleh mengikuti sisi kotak. Job migrasi/debug sementara tidak ditampilkan. Penempatan dapat berubah karena scheduler/HPA.}
+\label{fig:deployment}
+\end{figure}
+
+Replikasi Cassandra menoleransi satu anggota hilang selama dua dari tiga replika tiap partisi tetap tersedia. Hal ini tidak menjamin quorum bila seluruh host Linux-BC yang memuat dua anggota mati. Receiver latihan pada host a berada di luar pod/worker sasaran b atau c, tetapi belum merupakan perangkat fisik terpisah dari seluruh host BNPB. Auth DB, broker dan beberapa store layanan juga belum ditunjukkan memiliki toleransi kehilangan host setara canonical store.
+
+\section{Kontrak Platform, Sumber Daya, dan Isolasi}
+Namespace aplikasi adalah \code{sistem-informasi-kebencanaan-bnpb}. Label \code{role} mengikuti kelas Aggregator, store, broker, consumer, API, mock, sensor, dan other. Tester Agent dipasang sebagai DaemonSet terpisah dengan image/digest dari spesifikasi; Sensor Pantai memakai digest resmi yang dipin di \code{m2/sources.yaml}. Tidak ada modifikasi image asisten yang dijadikan dasar solusi.
+
+\begin{table}[htbp]\centering
+\begin{tabularx}{\textwidth}{@{}Yrr@{}}
+\toprule Kelas komponen & Request memori & Limit memori\\\midrule
+Aggregator & 256 MiB & 512 MiB\\
+Store (per instance) & 512 MiB & 1 GiB\\
+Broker/pemroses stream & 512 MiB & 1 GiB\\
+Consumer/pemroses event & 128 MiB & 256 MiB\\
+Auth dan client-facing API & 128 MiB & 256 MiB\\
+Mock BMKG/PVMBG & 64 MiB & 128 MiB\\
+Komponen lain & 128 MiB & 256 MiB\\\bottomrule
+\end{tabularx}
+\caption{Anggaran memori menurut Lampiran B spesifikasi yang digunakan chart M2. CPU juga dideklarasikan pada workload, tetapi tidak diwajibkan nilainya oleh Lampiran B. Anggaran fixture lokal dapat berbeda dan disebutkan pada bab bukti.}
+\end{table}
+
+Secret menyimpan token sumber, Audit, autentikasi dan pengiriman kritis. ConfigMap menyimpan URL, timeout, kebijakan lateness, serta konfigurasi Cassandra. SOPS/age mengenkripsi Secret dalam Git; kunci privat tidak dimuat dalam laporan. \code{.env.example} dan \code{.env.auth.example} tetap mendukung pengembangan lokal.
+
+Calico NetworkPolicy membatasi koneksi store ke workload pemilik: layanan lain membaca kanonik lewat Aggregator, bukan CQL langsung. Field-report worker merupakan mode layanan Aggregator yang diberi akses ke inbox miliknya. Critical notifier memakai API internal, bukan kredensial CQL. Data pod \code{role=store} menggunakan disk lokal/hostPath/PV yang terikat node. Isolasi ini lebih kuat daripada kepemilikan logis M1, tetapi status policy tetap perlu diverifikasi pada namespace demo; bukti M1/dev yang memakai namespace berbeda tidak otomatis membuktikan konfigurasi M2.
+
+\section{Menjalankan Sistem}
+Siapkan checkout kedua repo, node Linux terhubung, kubeconfig, image/snapshot GitOps, Secret dan receiver persisten. Jalankan \code{m2/k3s/nodes/setup-bnpb-<node>.sh} pada setiap node, dimulai dari a, sebelum deployment aplikasi.
+
+Dari root repository \code{infrastructure}, deployment M2 yang didokumentasikan adalah:
+\begin{lstlisting}
+python m2/k3s/deploy.py dev \
+  --kubeconfig .cache/k3s-dev.kubeconfig \
+  --context k3s-dev --sha <snapshot-commit> \
+  --topology .cache/topology.json \
+  --receiver-keys .cache/receiver-keys.json \
+  --receiver-url https://field-team.example/notifications \
+  --prepare-list-index
+\end{lstlisting}
+Di PowerShell, tulis satu baris atau ganti backslash dengan backtick. Isi parameter sesuai lingkungan. Perintah memasang integrasi platform, credential receiver, Tester Agent dan workload; opsi terakhir mengisi indeks setelah semua writer diperbarui. Panduan lengkap: README infrastruktur dan \code{m2/k3s/README.md}. Instalasi node kosong belum diuji ulang saat penulisan.
+
+Audit dapat diakses melalui port-forward berikut; token diambil dari lingkungan privat operator:
+\begin{lstlisting}
+kubectl -n sistem-informasi-kebencanaan-bnpb \
+  port-forward svc/aggregator-service 9092:9092
+curl -H "Authorization: Bearer $AUDIT_API_TOKEN" \
+  'http://127.0.0.1:9092/internal/audit/checksum?source=BMKG'
+\end{lstlisting}
+UI/analitik SPA diakses melalui edge (NodePort 30080 pada latihan); dashboard operasional melalui Grafana. Kind/Compose hanya untuk pengembangan, bukan bukti kernel terpisah.
+
+\section{Asumsi dan Metode Pembuktian}
+Identitas stabil dan offset feed menjadi dasar deduplikasi. Waktu bukti/satelit memakai UTC; WIB berarti UTC+7. Jam storage tetap perlu disinkronkan; fencing tidak membuktikan toleransi pergeseran jam arbitrer semua server.
+
+Audit/analytics membaca proyeksi lintas partisi tanpa snapshot atomik. Count pada dua waktu berbeda tidak cukup membuktikan kehilangan; gunakan ID/hash dan scope/window setara. Indeks bukti E01 dan seterusnya serta manifest SHA-256 dijelaskan pada Lampiran~\ref{app:evidence}.

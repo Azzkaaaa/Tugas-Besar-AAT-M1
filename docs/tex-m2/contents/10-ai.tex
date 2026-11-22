@@ -1,0 +1,35 @@
+\chapter{Form Penggunaan AI}\label{app:ai}
+Form ini mencatat penggunaan AI yang diketahui pada penyusunan laporan tanggal 22 November 2026. Template resmi M1 tidak tersedia dalam berkas masukan. Form berikut perlu dipindahkan ke template resmi apabila diwajibkan, dan riwayat penggunaan AI pada implementasi perlu diisi oleh anggota yang bersangkutan.
+
+\begin{longtable}{@{}P{4cm}P{11.7cm}@{}}
+\toprule Butir & Deklarasi\\\midrule\endhead
+Alat & OpenAI Codex.\\
+Tanggal dan lingkup & 22 November 2026; penyusunan source LaTeX, diagram dari konfigurasi, tabel bukti, dan build PDF laporan M2.\\
+Tujuan & Menelusuri spesifikasi, laporan/commit M1, source M2 dan bukti tersimpan; menyusun perubahan M1--M2 serta jawaban per problem.\\
+Masukan & PDF spesifikasi M2, laporan M1, checkout \code{services}, \code{infrastructure}, dan checkout bernama M1 yang ternyata sudah memuat M2; arahan pengguna untuk hanya mengisi bagian yang sudah didukung bukti.\\
+Ringkasan instruksi & Buat laporan dalam \code{services/docs}; periksa folder TeX lama, bandingkan M1 dengan M2, dan kosongkan kontribusi anggota terlebih dahulu.\\
+Keluaran yang digunakan & Struktur/narasi laporan, diagram arsitektur/deployment, transkripsi tabel pengukuran, indeks sumber/manifest, dan skrip kompilasi.\\
+Verifikasi berbantuan alat & Baca PDF; periksa riwayat Git, kode dan manifest; cocokkan angka dengan JSON/log tersimpan; kompilasi LaTeX dan periksa hasil PDF. Tidak menjalankan ulang fault/load/ujian.\\
+Pembatasan klaim & Tidak mengarang hasil pengujian, kontribusi anggota, screenshot UI, timestamp emisi sensor, atau referensi asisten. Bukti gagal dan data belum lengkap tetap dilaporkan.\\
+\bottomrule
+\end{longtable}
+
+\clearpage
+\section*{Pelengkapan oleh Anggota Kelompok}
+\begin{tabularx}{\textwidth}{@{}P{5cm}Y@{}}
+\toprule Butir & Isian anggota\\\midrule
+Peninjauan anggota & \rule{8cm}{.4pt}\\[1cm]
+Riwayat AI untuk implementasi & \rule{8cm}{.4pt}\\[1cm]
+Alat/model/tanggal tambahan & \rule{8cm}{.4pt}\\[1cm]
+Bagian kode yang dibantu AI & \rule{8cm}{.4pt}\\[1cm]\bottomrule
+\end{tabularx}
+
+\noindent\textbf{Persetujuan setelah peninjauan anggota}\par
+Anggota kelompok meninjau dan bertanggung jawab atas ketepatan materi serta hasil yang dikumpulkan. Kolom ini disediakan untuk diisi setelah pemeriksaan; tidak dianggap sudah disetujui hanya karena laporan telah dihasilkan.
+
+\vspace{.5cm}
+\begin{tabularx}{\textwidth}{@{}YYY@{}}
+Muhammad Aulia Azka & Arlow Emmanuel Hergara & Fachriza Ahmad Setiyono\\[1.6cm]
+\rule{4.5cm}{.4pt} & \rule{4.5cm}{.4pt} & \rule{4.5cm}{.4pt}\\
+Tanggal: & Tanggal: & Tanggal:
+\end{tabularx}

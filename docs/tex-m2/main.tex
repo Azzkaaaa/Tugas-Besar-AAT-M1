@@ -1,0 +1,65 @@
+\documentclass[11pt,a4paper]{report}
+\input{metadata}
+\input{preamble}
+\begin{document}
+\hypersetup{pageanchor=false}
+\begin{titlepage}
+\centering
+{\Large Tugas Besar IF4031\\[.2cm]Arsitektur Aplikasi Terdistribusi\par}
+\vspace{2.3cm}
+{\Huge\bfseries\color{reportblue} ARLOW\par}
+\vspace{.4cm}
+{\LARGE\bfseries Agregasi Real-time\\Layanan Operasi Waspada\par}
+\vspace{.9cm}
+{\Large Laporan Milestone 2\\[.2cm]Sistem Terdistribusi Skalabel\par}
+\vspace{.9cm}
+\rule{.7\textwidth}{.6pt}\\[.8cm]
+{\large Kelompok \textbf{nasigoreng}\par}
+\vspace{.7cm}
+\begin{tabular}{ll}
+Muhammad Aulia Azka & 13523137\\
+Arlow Emmanuel Hergara & 13523161\\
+Fachriza Ahmad Setiyono & 13523162
+\end{tabular}
+\vfill
+{\large Program Studi Teknik Informatika\\
+Sekolah Teknik Elektro dan Informatika\\
+Institut Teknologi Bandung\\[.5cm]\TanggalLaporan\par}
+\end{titlepage}
+\hypersetup{pageanchor=true}
+\pagenumbering{roman}
+\chapter*{Kontribusi Anggota}
+\addcontentsline{toc}{chapter}{Kontribusi Anggota}
+\begin{tabularx}{\textwidth}{@{}P{2cm}P{5cm}Y@{}}
+\toprule NIM & Nama & Kontribusi Milestone 2\\\midrule
+13523137 & Muhammad Aulia Azka & \KontribusiAzka\\[1.1cm]
+13523161 & Arlow Emmanuel Hergara & \KontribusiArlow\\[1.1cm]
+13523162 & Fachriza Ahmad Setiyono & \KontribusiFachriza\\[1.1cm]\bottomrule
+\end{tabularx}
+\vspace{.5cm}
+\noindent\textit{Kolom kontribusi M2 sengaja dikosongkan untuk diisi oleh anggota kelompok.}
+\chapter*{Catatan Cakupan Laporan}
+\addcontentsline{toc}{chapter}{Catatan Cakupan Laporan}
+Laporan ini menyajikan implementasi dan bukti yang tersedia hingga 22 November 2026. Penyusunan laporan tidak menjalankan ulang beban, gangguan node, maupun sesi ujian. Angka hasil pengujian diambil dari artefak tersimpan; hasil lokal, latihan pada cluster, dan kriteria ujian dibedakan pada setiap bab. Pernyataan ``belum terbukti'' berarti bukti yang diperlukan belum tersedia, sedangkan ``target belum tercapai'' berarti hasil yang tersedia memang berada di luar target.
+
+Kode layanan yang diperiksa berada pada commit \code{36303a7}; Aggregator dalam snapshot deployment 18 menggunakan image dari commit \code{d773970}. Komponen lain mengikuti digest masing-masing pada snapshot. Snapshot infrastruktur tersebut adalah \code{4b6f5096eb380f6d09b65fe8824a801919f3061f}. Bukti pengujian dapat berasal dari versi sebelumnya dan identitas versinya dipertahankan pada artefak asal. Laporan ini tidak menyatakan bahwa revisi atau bukti tanggal 22 November merupakan artefak yang telah dikumpulkan pada tenggat 20 November.
+
+Baseline M1 adalah laporan bertanggal 10 Oktober 2026 beserta commit \code{122ca7b} dan bukti \code{4a1973b}. Checkout bernama \code{Tugas-Besar-AAT-M1} yang tersedia saat penyusunan sudah menunjuk commit M2 yang sama dengan repository \code{services}; nama folder tersebut tidak dipakai sebagai bukti bahwa kode di dalamnya masih versi M1.
+
+Dataset historis/checksum resmi, hasil referensi satelit, dan bahan ujian belum tersedia menurut catatan bukti yang diperiksa. Form penggunaan AI terdapat pada Lampiran~\ref{app:ai}; format resmi M1 tidak terdapat dalam berkas yang diberikan sehingga formulir ini mendokumentasikan penggunaan yang diketahui dan menyediakan kolom pelengkap.
+\tableofcontents
+\clearpage
+\pagenumbering{arabic}
+\input{contents/01-sistem}
+\input{contents/02-perubahan}
+\input{contents/03-p1}
+\input{contents/04-p2}
+\input{contents/05-p3}
+\input{contents/06-p4}
+\input{contents/07-p5}
+\input{contents/08-evaluasi}
+\input{references}
+\appendix
+\input{contents/09-bukti}
+\input{contents/10-ai}
+\end{document}

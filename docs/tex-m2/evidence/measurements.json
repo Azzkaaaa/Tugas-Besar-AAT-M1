@@ -1,0 +1,283 @@
+{
+  "scope": "Selected fields extracted from retained evidence; timestamps remain in the source artifacts.",
+  "placement": {
+    "observed_at": "2026-11-21T13:19:10.932927+00:00",
+    "canonical_records_observed": 20514,
+    "replica_record_counts": {
+      "bnpb-b": 14091,
+      "bnpb-c": 15373,
+      "bnpb-d": 16601,
+      "bnpb-a": 15477
+    },
+    "limits": "Full available live canonical metadata scan, not a frozen official catalog or independent SSTable census. Placement API derives natural replica locations from the current ring; this is not an independent SSTable census or full fault/load acceptance."
+  },
+  "ring": [
+    {
+      "kubernetes_node": "bnpb-d",
+      "pod": "aggregator-cassandra-3",
+      "state": "UN",
+      "owns_effective": "73.2%",
+      "load": "158.21 MiB",
+      "tokens": 16
+    },
+    {
+      "kubernetes_node": "bnpb-b",
+      "pod": "aggregator-cassandra-2",
+      "state": "UN",
+      "owns_effective": "77.4%",
+      "load": "167.4 MiB",
+      "tokens": 16
+    },
+    {
+      "kubernetes_node": "bnpb-c",
+      "pod": "aggregator-cassandra-1",
+      "state": "UN",
+      "owns_effective": "74.7%",
+      "load": "160.58 MiB",
+      "tokens": 16
+    },
+    {
+      "kubernetes_node": "bnpb-a",
+      "pod": "aggregator-cassandra-0",
+      "state": "UN",
+      "owns_effective": "74.7%",
+      "load": "149.35 MiB",
+      "tokens": 16
+    }
+  ],
+  "write_windows": {
+    "natural": {
+      "seconds": 300,
+      "per_member": {
+        "aggregator-cassandra-0": {
+          "node": "bnpb-a",
+          "writes": 26553,
+          "share": 0.212
+        },
+        "aggregator-cassandra-1": {
+          "node": "bnpb-c",
+          "writes": 33200,
+          "share": 0.266
+        },
+        "aggregator-cassandra-2": {
+          "node": "bnpb-b",
+          "writes": 34101,
+          "share": 0.273
+        },
+        "aggregator-cassandra-3": {
+          "node": "bnpb-d",
+          "writes": 31142,
+          "share": 0.249
+        }
+      }
+    },
+    "burst": {
+      "ingested_by": "2026-11-21T18:12:54.265759+00:00",
+      "seconds": 299.8,
+      "audit_bmkg_after": 4971,
+      "audit_partial": false,
+      "per_member": {
+        "aggregator-cassandra-0": {
+          "node": "bnpb-a",
+          "writes": 32167,
+          "share": 0.219
+        },
+        "aggregator-cassandra-1": {
+          "node": "bnpb-c",
+          "writes": 39545,
+          "share": 0.269
+        },
+        "aggregator-cassandra-2": {
+          "node": "bnpb-b",
+          "writes": 40229,
+          "share": 0.274
+        },
+        "aggregator-cassandra-3": {
+          "node": "bnpb-d",
+          "writes": 34972,
+          "share": 0.238
+        }
+      }
+    },
+    "burst_placement": {
+      "burst_hazards_found": 300,
+      "areas": [
+        "Laut Banda"
+      ],
+      "located": 300,
+      "partial_locations": 0,
+      "replica_counts_per_node": {
+        "bnpb-c": 229,
+        "bnpb-d": 237,
+        "bnpb-b": 221,
+        "bnpb-a": 213
+      },
+      "max_share": 0.79
+    }
+  },
+  "analytics": {
+    "observed_at": "2026-11-21T23:48:00Z",
+    "surface": "Existing Codex side-browser tab 1; user logged in as BNPB. Session retry succeeded after the full Flux rollout.",
+    "application_image": "7ccc9d0164f95b2978615dffbd56eaf02a00c03d",
+    "range": "all time",
+    "interval": "day",
+    "as_of_utc": "2026-11-21T23:45:59Z",
+    "partial_warning_visible": false,
+    "total": 121246,
+    "categories": {
+      "SEISMIC": 6988,
+      "TSUNAMI": 1679,
+      "VOLCANIC": 6649,
+      "WILDFIRE": 875,
+      "COASTAL": 106734
+    },
+    "severity": {
+      "NORMAL": 5204,
+      "WASPADA": 110705,
+      "SIAGA": 2268,
+      "AWAS": 3069
+    },
+    "areas_count": 48,
+    "area_pagination_visible": true,
+    "category_nonoverlap_sum_matches_total": true,
+    "severity_sum_matches_total": true,
+    "before_fix_warning_observed": "analytics-deadline, analytics-shard-09 with 82,470 read hazards",
+    "screenshot": "Captured inline in the task chat; no filesystem image export was made.",
+    "limits": [
+      "This complete browser response does not imply all concurrent API scans complete; the separate API run retained partial deadline results.",
+      "BMKG/PVMBG/SATELIT source totals matched unchanged complete Audit counts in the separate before/after run; coastal Audit was explicitly partial.",
+      "This is not an atomic cross-shard or official reference comparison."
+    ]
+  },
+  "storage_loss": {
+    "at": "2026-11-22T03:20:59.914410+00:00",
+    "scope": "Scoped Cassandra member1 process loss and empty active data directory on bnpb-c. Worker OS and unrelated volumes remain online; an offline local backup is retained and never used for bootstrap. Does not prove erasure of an entire worker VM or an official catalog checksum.",
+    "fault_started_at": "2026-11-22T02:49:18.816904+00:00",
+    "original_observer_timed_out": true,
+    "operator_intervention_required": true,
+    "intervention": "Startup budget and durable replacement-intent chart fix, applied then reconciled through Flux18. Prior Flux17 drift correction overwrote the first live ConfigMap patch before pod recreation; recreated pod used the old normal-restart plan, became a seed, and ran marker-triggered full repair (including Paxos). Thus this drill does not validate uninterrupted autonomous bootstrap or the new intent code in a live recreation. Preserve this limitation.",
+    "recovery_complete": true,
+    "read_sample_count": 548,
+    "read_status_counts": {
+      "200": 545,
+      "502": 3
+    },
+    "partial_read_count": 489,
+    "unavailable_units_read_count": 19,
+    "read_seconds_max": 5.391318499983754,
+    "read_seconds_p95": 1.5694925999850966,
+    "cleanup_errors": [],
+    "offline_backup_path": "/var/lib/bnpb/cassandra.offline-before-m2-20261122",
+    "backup_used_for_recovery": false,
+    "entire_worker_os_erased": false,
+    "official_checksum_verified": false,
+    "second_loss_exercised": false,
+    "repair_complete_at": "2026-11-22T03:10:51.025261+00:00",
+    "before_catalog_count": 146960,
+    "after_catalog_count": 148099,
+    "missing_baseline_hazard_ids": [],
+    "new_hazard_ids_count": 1139,
+    "new_hazards_ingested_during_fault": 900,
+    "passed_scoped_identity_survival": true
+  },
+  "critical_receipts": {
+    "observed_at": "2026-11-22T03:12:41.412786+00:00",
+    "scope": "Complete immutable canonical journal plus receiver-signed receipts, matched against the bounded independently captured three practice observations. Not a complete official source/exam window.",
+    "manifest": {
+      "kind": "critical-journal-manifest",
+      "complete": true,
+      "versions": [
+        1,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        2,
+        0
+      ],
+      "count": 3,
+      "captured_at": "2026-11-22T03:12:39.588408416Z"
+    },
+    "journal_complete": true,
+    "expected_known_practice_observations": [
+      "obs-000120",
+      "obs-000362",
+      "obs-000601"
+    ],
+    "missing_known_observations": [],
+    "unexpected_journal_observations": [],
+    "events": [
+      {
+        "event_id": "pub-8ab5b366-dc3e-5132-8c85-3eef5e1ca699",
+        "observation_id": "obs-000601",
+        "shard": 0,
+        "generation": 1,
+        "payload_hash_matches": true,
+        "receipt_matches_event": true,
+        "ingested_at": "2026-11-21T07:13:20.141Z",
+        "receipt_received_at": "2026-11-21T07:13:26.21249623Z",
+        "ingest_to_receipt_seconds": 6.071496,
+        "signature_valid": true
+      },
+      {
+        "event_id": "pub-96954583-5dda-5fe1-881d-950588f51ac1",
+        "observation_id": "obs-000120",
+        "shard": 14,
+        "generation": 1,
+        "payload_hash_matches": true,
+        "receipt_matches_event": true,
+        "ingested_at": "2026-11-21T05:38:04.582Z",
+        "receipt_received_at": "2026-11-21T05:38:11.577299934Z",
+        "ingest_to_receipt_seconds": 6.995299,
+        "signature_valid": true
+      },
+      {
+        "event_id": "pub-e2a41754-ce9c-5914-b34a-04aeb9b66da8",
+        "observation_id": "obs-000362",
+        "shard": 14,
+        "generation": 2,
+        "payload_hash_matches": true,
+        "receipt_matches_event": true,
+        "ingested_at": "2026-11-21T07:06:23.082Z",
+        "receipt_received_at": "2026-11-21T07:06:25.297375345Z",
+        "ingest_to_receipt_seconds": 2.215375,
+        "signature_valid": true
+      }
+    ],
+    "all_payloads_and_signatures_valid": true,
+    "ingest_to_receipt_p95_diagnostic_seconds": 6.995299,
+    "source_emission_to_receipt_p95_seconds": null,
+    "source_emission_latency_verified": false,
+    "official_slo_pass_claimed": false,
+    "reason": "Independent capture has accelerated observed_at, but no independently measured real emitted_at. Do not fabricate emitted_at or claim the <=5s source-emission SLO from ingest-to-receipt timings. The known capture contains three criticals in the first40000 observations; a later120000-observation scan found no additional criticals, but neither establishes an official complete source window."
+  },
+  "trace": {
+    "trace_id": "dc95832bfc641d4910d5bc1ebdee31b8",
+    "services": [
+      "aggregator-service",
+      "critical-notifier",
+      "danger-notification",
+      "event-live-feed",
+      "field-team-receiver",
+      "webhook-provider"
+    ],
+    "span_count": 45,
+    "orphan_spans": 0,
+    "critical_path_ms": {
+      "ingest_start": 0,
+      "rabbitmq_publish": 4084.2,
+      "critical_deliver_start": 4618.1,
+      "field_team_receiver_200": 4688.9,
+      "receipt_post_start": 4734.1
+    }
+  }
+}
