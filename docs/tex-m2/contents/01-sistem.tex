@@ -71,14 +71,15 @@ Kapasitas guest merupakan alokasi/kapasitas yang terlihat oleh Kubernetes, bukan
 \resizebox{\textwidth}{!}{\begin{tikzpicture}
 \node[box,text width=6.4cm,minimum height=4.5cm] (a) at (0,0) {\textbf{Host Windows ROG-RIZA}\\\textbf{bnpb-a: control plane + worker}\\Aggregator; Cassandra-0 + disk lokal\\Critical notifier\\Notification DB; Webhook DB/Redis\\\smallskip Penerima Tim Lapangan: proses host\\di luar pod BNPB (failure domain host sama)};
 \node[box,text width=6.4cm,minimum height=4.5cm] (d) at (8.1,0) {\textbf{Host Windows-11-D}\\\textbf{bnpb-d: worker}\\Edge Envoy; API Gateway; Frontend\\Aggregator; Cassandra-3 + disk lokal\\Field-report worker; Sensor Pantai\\Notification; Webhook; Telemetry};
-\node[box,text width=6.4cm,minimum height=4.5cm] (b) at (0,-5.9) {\textbf{bnpb-b: QEMU worker}\\Aggregator; Cassandra-2 + disk lokal\\Zitadel; Auth DB\\BMKG/PVMBG mock; RabbitMQ\\Feed Redis};
-\node[box,text width=6.4cm,minimum height=4.5cm] (c) at (8.1,-5.9) {\textbf{bnpb-c: QEMU worker}\\Aggregator; Cassandra-1 + disk lokal\\Token Exchange; Auth Bridge/Redis\\Claims; Login; Event Live Feed\\Notification; Critical notifier};
-\draw[arr,<->] (a) -- node[above,font=\scriptsize]{data} (d);
-\draw[arr,<->] (b) -- node[above,font=\scriptsize]{data} (c);
-\draw[arr,<->] (a) -- node[right,font=\scriptsize]{Tailscale + Calico} (b);
-\draw[arr,<->] (d) -- node[right,font=\scriptsize]{Tailscale + Calico} (c);
+\node[box,text width=6.4cm,minimum height=4.5cm] (b) at (0,-6.9) {\textbf{bnpb-b: QEMU worker}\\Aggregator; Cassandra-2 + disk lokal\\Zitadel; Auth DB\\BMKG/PVMBG mock; RabbitMQ\\Feed Redis};
+\node[box,text width=6.4cm,minimum height=4.5cm] (c) at (8.1,-6.9) {\textbf{bnpb-c: QEMU worker}\\Aggregator; Cassandra-1 + disk lokal\\Token Exchange; Auth Bridge/Redis\\Claims; Login; Event Live Feed\\Notification; Critical notifier};
+\node[draw,rounded corners,fill=white,minimum width=14.5cm,minimum height=.8cm,font=\small,align=center] (t) at (4.05,-3.45) {Tailnet Tailscale (Calico VXLAN di atas \code{tailscale0})};
+\draw[arr,<->] (a.south) -- (a.south |- t.north);
+\draw[arr,<->] (d.south) -- (d.south |- t.north);
+\draw[arr,<->] (b.north) -- (b.north |- t.south);
+\draw[arr,<->] (c.north) -- (c.north |- t.south);
 \end{tikzpicture}}
-\caption{Penempatan komponen utama pada pengamatan akhir 22 November \bukti{E02}; lokasi edge dan receiver dilengkapi dari bukti diagnosis serta konfigurasi receiver. Panah merangkum jalur jaringan antar-node, bukan pembatas bahwa koneksi hanya boleh mengikuti sisi kotak. Job migrasi/debug sementara tidak ditampilkan. Penempatan dapat berubah karena scheduler/HPA.}
+\caption{Penempatan komponen utama pada pengamatan akhir 22 November \bukti{E02}; lokasi edge dan receiver dilengkapi dari bukti diagnosis serta konfigurasi receiver. Tidak ada koneksi langsung antar-host: setiap node terhubung ke tailnet Tailscale, dan seluruh lalu lintas antar-node (termasuk Calico VXLAN) melewatinya. Job migrasi/debug sementara tidak ditampilkan. Penempatan dapat berubah karena scheduler/HPA.}
 \label{fig:deployment}
 \end{figure}
 
