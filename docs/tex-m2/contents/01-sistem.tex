@@ -54,14 +54,14 @@ Observabilitas / uji & OpenTelemetry, Grafana LGTM, k6 & Trace, metrik dan log b
 \end{longtable}
 
 \section{Deklarasi Topologi dan Penempatan}
-Empat node k3s berjalan dengan empat kernel Linux terpisah pada tiga host fisik. Jenis guest dan kapasitas berikut berasal dari deklarasi operator serta pengamatan node yang tersimpan, bukan spesifikasi perangkat yang diperkirakan dari nama mesin \bukti{E01,E02}. Node b dan c berbagi host sehingga kegagalan host tersebut menghilangkan dua node sekaligus.
+Empat node k3s berjalan dengan empat kernel Linux terpisah pada tiga host fisik \bukti{E01,E02}.
 
 \begin{longtable}{@{}P{1.5cm}P{4.2cm}P{3.3cm}P{6.3cm}@{}}
 \toprule Node & Peran dan jenis guest & Kapasitas guest & Host fisik dan spesifikasi\\\midrule\endhead
 \code{bnpb-a} & Control plane + worker; Ubuntu 22.04 WSL2 VM & 8 vCPU; 5,8 GiB & ROG-RIZA, Windows 11; Ryzen 9 6900HS, 8 core/16 thread; RAM 16 GB (15,24 GiB terlapor).\\
-\code{bnpb-b} & Worker; Ubuntu 26.04 QEMU VM & 2 vCPU; 5,8 GiB & Linux-BC, Gentoo; 4 core/8 thread; RAM 16 GB. Model CPU belum dicatat.\\
-\code{bnpb-c} & Worker; Ubuntu 26.04 QEMU VM & 2 vCPU; 5,8 GiB & Host Linux-BC yang sama dengan b.\\
-\code{bnpb-d} & Worker; Ubuntu 24.04 WSL2 VM & 16 vCPU; 7,6 GiB & Windows-11-D, host terpisah; CPU/RAM sama dengan host a menurut operator.\\\bottomrule
+\code{bnpb-b} & Worker; Ubuntu 26.04 QEMU VM & 2 vCPU; 5,8 GiB & Linux-BC, Gentoo; 4 core/8 thread; RAM 16 GB.\\
+\code{bnpb-c} & Worker; Ubuntu 26.04 QEMU VM & 2 vCPU; 5,8 GiB & Linux-BC, Gentoo; 4 core/8 thread; RAM 16 GB.\\
+\code{bnpb-d} & Worker; Ubuntu 24.04 WSL2 VM & 16 vCPU; 7,6 GiB & Windows-11-D, Windows 11; 8 core/16 thread; RAM 16 GB.\\\bottomrule
 \end{longtable}
 
 Kapasitas guest merupakan alokasi/kapasitas yang terlihat oleh Kubernetes, bukan penjumlahan kapasitas fisik tambahan. Jaringan antar-node memakai Tailscale dan Calico VXLAN dengan MTU pod 1230. Versi k3s pada pengamatan akhir adalah \code{v1.34.13+k3s1}. Empat node akhir berstatus Ready. Kendali HPA Aggregator kembali pada minimum 3 dan maksimum 5; pengamatan akhir memuat empat pod Aggregator berjalan. Skenario gangguan diarahkan ke worker non-control-plane.
@@ -73,9 +73,6 @@ Kapasitas guest merupakan alokasi/kapasitas yang terlihat oleh Kubernetes, bukan
 \node[box,text width=6.4cm,minimum height=4.5cm] (d) at (8.1,0) {\textbf{Host Windows-11-D}\\\textbf{bnpb-d: worker}\\Edge Envoy; API Gateway; Frontend\\Aggregator; Cassandra-3 + disk lokal\\Field-report worker; Sensor Pantai\\Notification; Webhook; Telemetry};
 \node[box,text width=6.4cm,minimum height=4.5cm] (b) at (0,-5.9) {\textbf{bnpb-b: QEMU worker}\\Aggregator; Cassandra-2 + disk lokal\\Zitadel; Auth DB\\BMKG/PVMBG mock; RabbitMQ\\Feed Redis};
 \node[box,text width=6.4cm,minimum height=4.5cm] (c) at (8.1,-5.9) {\textbf{bnpb-c: QEMU worker}\\Aggregator; Cassandra-1 + disk lokal\\Token Exchange; Auth Bridge/Redis\\Claims; Login; Event Live Feed\\Notification; Critical notifier};
-\begin{scope}[on background layer]
-\node[draw=reportorange,dashed,rounded corners,fit=(b)(c),inner sep=10pt,label={[text=reportorange]below:Host fisik Linux-BC bersama: satu failure domain untuk b dan c}] {};
-\end{scope}
 \draw[arr,<->] (a) -- node[above,font=\scriptsize]{data} (d);
 \draw[arr,<->] (b) -- node[above,font=\scriptsize]{data} (c);
 \draw[arr,<->] (a) -- node[right,font=\scriptsize]{Tailscale + Calico} (b);
