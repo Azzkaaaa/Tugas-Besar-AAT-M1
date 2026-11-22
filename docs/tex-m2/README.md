@@ -38,6 +38,5 @@ Build PDF biasa tidak memerlukan checkout infrastruktur; daftar bukti LaTeX suda
 ## Pelengkapan oleh kelompok
 
 1. Lengkapi riwayat penggunaan AI pada implementasi.
-2. Tambahkan tautan video demo.
 
 Hasil utama yang masih terbatas: P1 belum membuktikan kehilangan seluruh worker/pemulihan tanpa intervensi; P2 belum menjalankan 10.000 VU dan gagal mencapai rasio throughput 2×/rollout tanpa error; P4 belum mengejar backlog dalam 60 detik; P5 belum memiliki timestamp emisi independen untuk menghitung SLO penerima. Rincian dan sumber ada di PDF.
