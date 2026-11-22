@@ -1,8 +1,8 @@
 # Skenario Problem Set Milestone 1 (regresi lokal)
 
-Dipindahkan dari README utama pada 22 November 2026 tanpa perubahan isi. Berlaku untuk
-stack Docker Compose lokal (lihat README, "Pengembangan lokal"). Skenario Milestone 2
-dijalankan di cluster k3s; lihat repository infrastructure.
+Skenario Problem Set Milestone 1 untuk stack Docker Compose lokal (lihat README,
+"Pengembangan lokal"). Skenario Milestone 2 dijalankan di cluster k3s; lihat repository
+infrastructure.
 
 Pastikan sistem sudah berjalan. Ikuti petunjuk untuk membangun dan menjalankan sistem dari awal.
 
